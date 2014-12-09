@@ -9,48 +9,62 @@ import spray.json._
 import akka.actor._
 import DB.driver.simple._
 
-class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
+class ServiceManager extends Actor with RemoteCallDispatcher {
   val serviceCalls = Map[String, RemoteCall](
     LoginService
   )
 
-  private val db = Database.forConfig("weez-mercury.database-connection", system.settings.config)
-  private val simpleWorker = system.actorOf(Props(new QueryWorkerActor), "simple-worker")
-  private val queryWorker = system.actorOf(Props(new QueryWorkerActor), "query-worker")
-  private val persistWorker = system.actorOf(Props(new PersistWorkerActor), "persist-worker")
+  val tables = Seq(
+    com.weez.mercury.common.Staffs,
+    com.weez.mercury.product.Products,
+    com.weez.mercury.product.ProductPrices
+  )
+
+  private val db = Database.forConfig("weez-mercury.database", context.system.settings.config)
+  private val simpleWorker = context.system.actorOf(Props(new QueryWorkerActor), "simple-worker")
+  private val queryWorker = context.system.actorOf(Props(new QueryWorkerActor), "query-worker")
+  private val persistWorker = context.system.actorOf(Props(new PersistWorkerActor), "persist-worker")
 
   private implicit def call2tuple(rc: RemoteCall): (String, RemoteCall) = {
     rc.getClass.getName -> rc
   }
 
-  def call(clazz: String, in: JsObject): Future[JsValue] = {
-    import ErrorCode._
-    try {
-      val req = in.fields.getOrElse("value", throw new ProcessException(InvalidRequest))
-      val rc = serviceCalls.getOrElse(clazz, throw new ProcessException(NotAcceptable))
-      rc.dispatch(this, req)
-    } catch {
-      case x: ProcessException =>
-        Future.successful(JsObject("error" -> JsNumber(x.err.code)))
-    }
+  import ServiceCommand._
+
+  def receive = {
+    case WebRequest(sid, clazz, in, p) =>
+      import ErrorCode._
+      try {
+        val req = in.fields.getOrElse("request", InvalidRequest.raise)
+        val rc = serviceCalls.getOrElse(clazz, NotAcceptable.raise)
+        rc.dispatch(this, req, p)
+      } catch {
+        case ex: Throwable => Future.failed(ex)
+      }
+    case Setup =>
+      db.withTransaction { implicit session =>
+        tables foreach { x =>
+          try {
+            x.ddl.drop
+          } catch {
+            case _: Throwable =>
+          }
+          x.ddl.create
+        }
+
+      }
   }
 
-  def postSimpleTask(f: SimpleContext => JsValue): Future[JsValue] = {
-    val p = Promise[JsValue]
-    simpleWorker ! SimpleTask(f, p)
-    p.future
+  def postSimpleTask(f: SimpleContext => JsValue, promise: Promise[JsValue]) = {
+    simpleWorker ! SimpleTask(f, promise)
   }
 
-  def postQueryTask(f: QueryContext => JsValue): Future[JsValue] = {
-    val p = Promise[JsValue]
-    queryWorker ! QueryTask(f, p)
-    p.future
+  def postQueryTask(f: QueryContext => JsValue, promise: Promise[JsValue]) = {
+    queryWorker ! QueryTask(f, promise)
   }
 
-  def postPersistTask(f: PersistContext => JsValue): Future[JsValue] = {
-    val p = Promise[JsValue]
-    persistWorker ! PersistTask(f, p)
-    p.future
+  def postPersistTask(f: PersistContext => JsValue, promise: Promise[JsValue]) = {
+    persistWorker ! PersistTask(f, promise)
   }
 
   class SimpleWorkerActor extends Actor {
@@ -66,7 +80,7 @@ class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
             self ! Done
           }
         } else {
-          p.failure(ExceedLimitException)
+          p.failure(ErrorCode.Reject)
         }
       case Done =>
         workerCount -= 1
@@ -90,10 +104,10 @@ class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
           val worker = context.actorOf(Props(new WorkerActor))
           worker ! x
           workerCount += 1
-        } else if (queue.size + workerCount <= requestCountLimit) {
+        } else if (queue.size + workerCount < requestCountLimit) {
           queue.enqueue(x)
         } else {
-          x.p.failure(ExceedLimitException)
+          x.p.failure(ErrorCode.Reject)
         }
       case Done =>
         if (queue.nonEmpty) {
@@ -117,7 +131,7 @@ class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
         case QueryTask(f, p) =>
           p.complete(Try {
             val c = new QueryContext {
-              val dbsession = session
+              val dbSession = session
             }
             session.withTransaction {
               f(c)
@@ -140,7 +154,7 @@ class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
       case PersistTask(f, p) =>
         p.complete(Try {
           val c = new PersistContext {
-            val dbsession = session
+            val dbSession = session
           }
           session.withTransaction {
             f(c)
@@ -157,9 +171,10 @@ class ServiceManager(system: ActorSystem) extends RemoteCallDispatcher {
 
   case class PersistTask(f: PersistContext => JsValue, p: Promise[JsValue])
 
-  object ExceedLimitException extends NoStackTrace
-
-  class ProcessException(val err: ErrorCode) extends Exception(err.message)
-
 }
 
+case class WebRequest(sid: String, clazz: String, in: JsObject, promise: Promise[JsValue])
+
+object ServiceCommand extends Enumeration {
+  val Setup = Value
+}

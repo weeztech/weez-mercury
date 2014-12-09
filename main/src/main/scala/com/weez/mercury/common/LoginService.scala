@@ -16,7 +16,7 @@ object LoginService extends ServiceCall[QueryContext, LoginRequest, LoginRespons
     import c._
     import Staffs._
     import java.util.Arrays
-    val q = for (s <- staffs if s.code === req.username) yield s.password
+    val q = for (s <- Staffs if s.code === req.username) yield s.password
     q.firstOption match {
       case Some(pass) =>
         val password = makePassword(req.password)
@@ -40,9 +40,7 @@ class Staffs(tag: Tag) extends Table[(String, String, Array[Byte])](tag, "biz_st
   def * = (code, name, password)
 }
 
-object Staffs {
-  val staffs = TableQuery[Staffs]
-
+object Staffs extends TableQuery(new Staffs(_)) {
   def makePassword(password: String) = {
     import java.security.MessageDigest
     MessageDigest.getInstance("MD5").digest(password.getBytes)
