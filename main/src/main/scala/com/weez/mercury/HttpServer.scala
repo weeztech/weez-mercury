@@ -1,13 +1,15 @@
 package com.weez.mercury
 
-import spray.http.StatusCodes
+import java.security.SecureRandom
+import org.parboiled.common.Base64
 
+import scala.annotation.tailrec
 import scala.util.{Failure, Success}
-
 import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.io.{IO, Tcp}
 import spray.can.Http
 import spray.routing.HttpServiceActor
+import spray.http.StatusCodes
 import spray.json._
 
 import com.weez.mercury.common.ServiceManager
@@ -34,21 +36,31 @@ object HttpServer {
       case Tcp.CommandFailed(_: Http.Bind) => context.stop(self)
     }
 
+    private val secureRandom = SecureRandom.getInstance("NativePRNG", "SUN")
+    secureRandom.setSeed(System.currentTimeMillis())
+    private val base64 = Base64.rfc2045()
+    private val sessions = Map.empty[String, HttpSession]
+
+    @tailrec
+    private def newSessionId: String = {
+      val arr = new Array[Byte](16)
+      secureRandom.nextBytes(arr)
+      val sid = base64.encodeToString(arr, false)
+      if (sessions.contains(sid))
+        newSessionId
+      else
+        sid
+    }
+
     def route: Receive = runRoute {
       path("service" / Rest) { clazz =>
         post { ctx =>
           import context.dispatcher
-          val jsonAst = ctx.request.entity.asString.parseJson.asJsObject
-          val req = jsonAst.fields("request")
-          serviceManager.call(clazz, req).onComplete { result =>
-            val ret =
-              result match {
-                case Success(resp) =>
-                  JsObject("result" -> resp)
-                case Failure(ex) =>
-                  JsObject("error" -> JsString(ex.getMessage))
-              }
-            ctx.complete(ret.toString())
+          val in = ctx.request.entity.asString.parseJson.asJsObject
+
+          serviceManager.call(clazz, in).onComplete {
+            case Success(out) => ctx.complete(out.toString())
+            case Failure(ex) => ctx.complete(StatusCodes.InternalServerError)
           }
         }
       } ~
@@ -67,5 +79,7 @@ object HttpServer {
   }
 
 }
+
+class HttpSession
 
 class HttpServer(actor: ActorRef)
