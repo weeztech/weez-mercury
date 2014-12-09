@@ -1,0 +1,18 @@
+<script>
+  (function () {
+    window.remoteCall = function (path, obj, callback) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/service/com.weez.mercury.' + path);
+      xhr.send(obj);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState == 4) {
+          if (xhr.status != 200)
+            throw 'error: ' + xhr.status + ' - ' + xhr.statusText;
+          var json = JSON.parse(xhr.responseText);
+          // TODO 错误处理
+          callback(json);
+        }
+      };
+    };
+  })();
+</script>

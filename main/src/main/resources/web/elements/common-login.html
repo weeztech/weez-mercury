@@ -1,0 +1,46 @@
+<link rel="import" href="../bower_components/paper-input/paper-input.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../common/common-remote.html">
+
+<polymer-element name="common-login">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      paper-input,
+      paper-button {
+        display: block;
+        margin: 5px 15px;
+      }
+      .back
+      .login-form {
+        width: 300px;
+      }
+      .login-form > h1 {
+        
+      }
+    </style>
+    <div class="banner">
+    
+    </div>
+    <div class="login-form">
+      <h1>登录</h1>
+      <paper-input label="工号" floatingLabel type="text" value="{{username}}"></paper-input>
+      <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
+      <paper-button on-tap="{{loginAction}}">登录</paper-button>
+    </div>
+  </template>
+  <script>
+    Polymer({
+      loginAction: function () {
+        remoteCall('common.LoginService', {
+          username: username,
+          password: password
+        }, function (result) {
+          alert(result);
+        });
+      }
+    });
+  </script>
+</polymer-element>
