@@ -6,7 +6,7 @@ version := "0.0.1-SNAPSHOT"
 
 scalaVersion in ThisBuild := "2.11.4"
 
-scalacOptions ++= Seq(
+scalacOptions in ThisBuild ++= Seq(
   "-feature",
   "-unchecked",
   "-deprecation",
@@ -27,14 +27,7 @@ publishArtifact in Test := false
 
 pomIncludeRepository in ThisBuild := { _ => false }
 
-resolvers += "spray repo" at "http://repo.spray.io"
+lazy val macros = project in file("macros")
 
-libraryDependencies ++= Seq(
-  "org.scala-lang" %% "scala-pickling" % "0.9.0" withSources() withJavadoc(),
-  "com.typesafe.akka" %% "akka-actor" % "2.3.7" withSources() withJavadoc(),
-  "io.spray" %% "spray-can" % "1.3.2" withSources() withJavadoc(),
-  "io.spray" %% "spray-routing" % "1.3.2" withSources() withJavadoc(),
-  "com.typesafe.slick" %% "slick" % "2.1.0" withSources() withJavadoc(),
-  "org.slf4j" % "slf4j-nop" % "1.6.4" withSources() withJavadoc(),
-  "org.apache.commons" % "commons-dbcp2" % "2.0.1" withSources() withJavadoc()
-)
+lazy val main = project in file("main")
+

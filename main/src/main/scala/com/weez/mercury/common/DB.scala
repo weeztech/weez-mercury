@@ -1,5 +1,7 @@
 package com.weez.mercury.common
 
-class DB {
+import scala.slick.driver._
 
+object DB {
+  val driver = MySQLDriver
 }
