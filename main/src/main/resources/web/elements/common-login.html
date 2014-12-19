@@ -13,20 +13,21 @@
         display: block;
         margin: 5px 15px;
       }
-      .back
       .login-form {
         width: 300px;
       }
-      .login-form > h1 {
-        
+      .form-title {
+        display: block;
+        font-size: 1.2em;
+        border-bottom: 1px solid #777;
       }
     </style>
     <div class="banner">
-    
+
     </div>
     <div class="login-form">
-      <h1>登录</h1>
-      <paper-input label="工号" floatingLabel type="text" value="{{username}}"></paper-input>
+      <span class="form-title">登录</span>
+      <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
       <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
       <paper-button on-tap="{{loginAction}}">登录</paper-button>
     </div>
@@ -35,10 +36,17 @@
     Polymer({
       loginAction: function () {
         remoteCall('common.LoginService', {
-          username: username,
-          password: password
-        }, function (result) {
-          alert(result);
+          username: this.username,
+          password: this.password
+        }, function (resp) {
+          switch (resp.result) {
+          case 0: // success
+            remoteCall.usid = resp.usid;
+            break;
+          default:
+            alert('用户名或密码错误');
+            break;
+          }
         });
       }
     });

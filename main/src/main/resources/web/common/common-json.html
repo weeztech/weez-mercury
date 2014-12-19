@@ -1,0 +1,227 @@
+<script>
+  (function () {
+    function skipWS(c) {
+      switch (c.input.peek()) {
+      case '\t':
+      case '\r':
+      case '\n':
+      case ' ':
+        c.offset++;
+        break;
+      }
+    }
+
+    function parseHex(c) {
+      var i = c.offset;
+      for (;;) {
+        var ch = c.peek();
+        if (/[0-9a-fA-F]/.test(ch)) {
+          c.offset++;
+        } else {
+          return parseInt(c.input.slice(i, c.offset), 16);
+        }
+      }
+    }
+
+    function parseOct(c) {
+      var i = c.offset;
+      for (;;) {
+        var ch = c.peek();
+        if (/[0-7]/.test(ch)) {
+          c.offset++;
+        } else {
+          return parseInt(c.input.slice(i, c.offset), 8);
+        }
+      }
+    }
+
+    function parseDec(c) {
+      var dot = false;
+      var i = c.offset;
+      for (;;) {
+        ch = c.peek();
+        if (ch >= '0' && ch <= '9') {
+          c.offset++;
+        } else if (ch == '.' && !dot) {
+          dot = true;
+          c.offset++;
+        } else {
+          var s = c.input.slice(i, c.offset);
+          return dot ? parseFloat(s) : parseInt(s, 10);
+        }
+      }
+    }
+
+    function parseNumber(c) {
+      var start = c.offset,
+        i = start;
+      var ch = c.peek();
+      if (ch == '0') {
+        c.offset++;
+        ch = c.peek();
+        if (ch == 'x') { // 16
+          c.offset++;
+          return parseHex(c);
+        } else if (ch == '.') {
+          c.offset--;
+          return parseDec(c);
+        } else {
+          return parseOct(c);
+        }
+      } else {
+        return parseDec(c);
+      }
+    }
+
+    function parseString(c) {
+      var quote = c.read();
+      if (quote != '"' && quote != "'") throw 'not a string';
+      var sb = [];
+      for (;;) {
+        var ch = c.read();
+        if (ch == quote)
+          return sb.join('');
+        switch (ch) {
+        case '\\':
+          ch = c.read();
+          switch (ch) {
+          case quote:
+            break;
+          case 't':
+            ch = '\t';
+            break;
+          case 'n':
+            ch = '\n';
+            break;
+          case 'r':
+            ch = '\r';
+            break;
+          case '\\':
+            ch = '\\';
+            break;
+          default:
+            throw 'invalid escape charater: \\' + ch;
+          }
+          break;
+        case '\r':
+        case '\n':
+          throw 'invalid character';
+        }
+        sb.push(ch);
+      }
+    }
+
+    function parseObject(c) {
+      var i = c.offset,
+        obj = {},
+        field;
+      var ch = c.read();
+      if (ch != '{') throw 'not object';
+      skipWS(c);
+      if (c.peek() == '}') return obj;
+      for (;;) {
+        ch = c.peek();
+        if (ch == '"' || ch == "'") {
+          field = parseString(c);
+        } else {
+          var start = c.offset;
+          while (/[a-zA-Z0-9_$]/.test(c.input[c.offset]))
+            c.offset++;
+          field = c.input.slice(start, c.offset);
+        }
+        skipWS(c);
+        if (c.read() != ':')
+          throw 'missing :';
+        obj[field] = parseValue(c);
+        skipWS(c);
+        switch (c.read()) {
+        case '}':
+          return obj;
+        case ',':
+          skipWS(c);
+          break;
+        default:
+          throw 'missing }';
+        }
+      }
+    }
+
+    function parseArray(c) {
+      var ch = c.read();
+      if (ch != '[')
+        throw 'not array';
+      var arr = [];
+      skipWS(c);
+      if (c.peek() == ']')
+        return arr;
+      arr.push(parseValue(c));
+      for (;;) {
+        skipWS(c);
+        switch (c.read()) {
+        case ']':
+          return arr;
+        case ',':
+          skipWS(c);
+          arr.push(parseValue(c));
+          break;
+        default:
+          throw 'missing ]';
+        }
+      }
+    }
+
+    function parseValue(c) {
+      skipWS(c);
+      var ch = c.read();
+      if (ch == '{')
+        return parseObject(c);
+      if (ch == '[')
+        return parseArray(c);
+      if (ch >= '0' && ch <= '9')
+        return parseNumber(c);
+      if (ch == '"' || ch == "'")
+        return parseString(c);
+      if (/[a-zA-Z_$]/.test(ch))
+        return parseId(c);
+    }
+
+    function parseId(c) {
+      var start = c.offset;
+      if (!/[a-zA-Z_$]/.test(c.read())) throw 'not identifier';
+      while (/[a-zA-Z0-9_$]/.test(c.peek()))
+        c.offset++;
+      var id = c.input.slice(start, c.offset);
+      switch (id) {
+      case 'null':
+        return null;
+      case 'undefined':
+        return undefined;
+      default:
+        throw 'undefined identifier';
+      }
+    }
+
+    function parse(s) {
+      return parseValue(new Context(s));
+    }
+
+    function Context(input) {
+      this.input = input;
+      this.offset = 0;
+    }
+
+    Context.prototype.read = function () {
+      if (this.offset >= this.input.length)
+        throw 'eof';
+      return this.input[this.offset++];
+    };
+
+    Context.prototype.peek = function () {
+      if (this.offset >= this.input.length)
+        throw 'eof';
+      return this.input[this.offset];
+    };
+
+    window.JSON.parseUnsafe = parse;
+  })();
+</script>

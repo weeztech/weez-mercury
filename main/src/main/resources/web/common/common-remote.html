@@ -1,18 +1,56 @@
 <script>
   (function () {
-    window.remoteCall = function (path, obj, callback) {
+    function remoteCall(path, obj, callback) {
+      if (typeof obj == 'function') {
+        obj = null;
+        callback = obj;
+      }
+      var rc = {};
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/service/com.weez.mercury.' + path);
-      xhr.send(obj);
+      xhr.send(JSON.stringify({
+        usid: remoteCall.usid || "",
+        request: obj
+      }));
       xhr.onreadystatechange = function () {
         if (xhr.readyState == 4) {
+          if (rc.cancel) return;
           if (xhr.status != 200)
             throw 'error: ' + xhr.status + ' - ' + xhr.statusText;
           var json = JSON.parse(xhr.responseText);
           // TODO 错误处理
-          callback(json);
+          if (json.error) {
+            processError(json.error);
+          } else {
+            callback(json.response);
+          }
+          rc.running = false;
         }
       };
-    };
+      rc.xhr = xhr;
+      rc.abort = remoteCallAbort;
+      rc.running = true;
+      return rc;
+    }
+
+    function remoteCallAbort() {
+      this.cancel = true;
+    }
+
+    window.remoteCall = remoteCall;
+
+    function processError(code) {
+      switch (code) {
+      case 800: // InvalidRequest: the request contains characters cannot be parsed or has invalid format
+        alert('请求无法被服务器处理');
+        break;
+      case 801: // NotAcceptable: the request is not acceptable becuase cannot find RemoteCall
+        alert('请求无法被服务器处理');
+        break;
+      case 802: // Reject: the request is not acceptable because too many requests are waiting
+        alert('服务器忙,请稍后重试');
+        break;
+      }
+    }
   })();
 </script>

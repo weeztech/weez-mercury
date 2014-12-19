@@ -4,26 +4,29 @@ import scala.language.higherKinds
 import scala.slick.lifted.CompiledFunction
 import DB.driver.simple._
 
-trait SimpleContext
+trait Context {
+  def sessionManager: SessionManager
 
-trait QueryContext extends SimpleContext {
-  protected[common] implicit val dbSession: Session
+  def clientUsid: String
 
-  def select[E, U, C[_]](query: Query[E, U, C]) = query.list
+  private var _userSession: Option[UserSession] = sessionManager.findSession(clientUsid)
 
-  def select[PU, RU](query: CompiledFunction[_, _, PU, _, RU])(params: PU): RU = query(params).run
+  def userSession = _userSession
+
+  def userId = _userSession.map(_.userId).getOrElse(0L)
+
+  def changeUser(userId: Long) = {
+    val us = sessionManager.createSession(userId)
+    _userSession = Some(us)
+    us.id
+  }
 }
 
-trait PersistContext extends QueryContext {
-  def insert[E, U, C[_]](query: Query[E, U, C], value: U) = query.insert(value)
+trait DBQuery {
+  self: Context =>
+  implicit val dbSession: Session
+}
 
-  def update[E, U, C[_]](query: Query[E, U, C], value: U) = query.update(value)
-
-  def delete[E <: Table[_], U, C[_]](query: Query[E, U, C], value: U) = query.delete
-
-  def update[PU, R <: Query[_, _, C], C[_], RU](query: CompiledFunction[_, _, PU, R, C[RU]])(cond: PU)(set: RU): Int =
-    query(cond).update(set)
-
-  def delete[PU, R <: Query[_, _, C], C[_], RU](query: CompiledFunction[_, _, PU, R, C[RU]])(cond: PU): Int =
-    query(cond).delete
+trait DBPersist extends DBQuery {
+  self: Context =>
 }

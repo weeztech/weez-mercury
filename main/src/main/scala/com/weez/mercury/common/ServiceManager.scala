@@ -4,14 +4,14 @@ import scala.language.implicitConversions
 import scala.language.existentials
 import scala.concurrent._
 import scala.util._
-import scala.util.control.NoStackTrace
 import spray.json._
 import akka.actor._
 import DB.driver.simple._
 
-class ServiceManager extends Actor with RemoteCallDispatcher {
+class ServiceManager extends Actor {
+  serviceManager =>
   val serviceCalls = Map[String, RemoteCall](
-    LoginService
+    call2tuple(LoginService)
   )
 
   val tables = Seq(
@@ -24,9 +24,13 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
   private val simpleWorker = context.system.actorOf(Props(new QueryWorkerActor), "simple-worker")
   private val queryWorker = context.system.actorOf(Props(new QueryWorkerActor), "query-worker")
   private val persistWorker = context.system.actorOf(Props(new PersistWorkerActor), "persist-worker")
+  private val sessionManager = new SessionManager
 
-  private implicit def call2tuple(rc: RemoteCall): (String, RemoteCall) = {
-    rc.getClass.getName -> rc
+  import scala.reflect.runtime.universe.TypeTag
+
+  private def call2tuple[T <: RemoteCall : TypeTag](rc: T): (String, RemoteCall) = {
+    val tag = implicitly[TypeTag[T]]
+    tag.tpe.typeSymbol.fullName -> rc
   }
 
   import ServiceCommand._
@@ -34,12 +38,31 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
   def receive = {
     case WebRequest(sid, clazz, in, p) =>
       import ErrorCode._
+      import context.dispatcher
       try {
+        val usid = in.fields.get("usid") match {
+          case Some(JsString(x)) => x
+          case _ => InvalidRequest.raise
+        }
         val req = in.fields.getOrElse("request", InvalidRequest.raise)
         val rc = serviceCalls.getOrElse(clazz, NotAcceptable.raise)
-        rc.dispatch(this, req, p)
+        val p2 = Promise[JsValue]
+        val task = rc.dispatch(req)
+        task.promise = p2
+        task.usid = usid
+        task match {
+          case x: SimpleTask => simpleWorker ! task
+          case x: QueryTask => queryWorker ! task
+          case x: PersistTask => persistWorker ! task
+        }
+        p2.future.onComplete {
+          case Success(x) =>
+            p.success(JsObject("response" -> x))
+          case Failure(ex) =>
+            p.failure(ex)
+        }
       } catch {
-        case ex: Throwable => Future.failed(ex)
+        case ex: Throwable => p.failure(ex)
       }
     case Setup =>
       db.withTransaction { implicit session =>
@@ -52,19 +75,9 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
           x.ddl.create
         }
 
+        Staffs +=(1L, "000", "admin", Staffs.makePassword("admin"))
       }
-  }
-
-  def postSimpleTask(f: SimpleContext => JsValue, promise: Promise[JsValue]) = {
-    simpleWorker ! SimpleTask(f, promise)
-  }
-
-  def postQueryTask(f: QueryContext => JsValue, promise: Promise[JsValue]) = {
-    queryWorker ! QueryTask(f, promise)
-  }
-
-  def postPersistTask(f: PersistContext => JsValue, promise: Promise[JsValue]) = {
-    persistWorker ! PersistTask(f, promise)
+      context.system.shutdown()
   }
 
   class SimpleWorkerActor extends Actor {
@@ -72,15 +85,19 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
     private var workerCount = 0
 
     def receive = {
-      case SimpleTask(f, p) =>
+      case task: SimpleTask =>
+        import context.dispatcher
         if (workerCount < requestCountLimit) {
-          import context.dispatcher
           Future {
-            p.complete(Try(f(new SimpleContext {})))
+            task.promise.complete(Try(task.call(new Context {
+              def clientUsid = task.usid
+
+              def sessionManager = serviceManager.sessionManager
+            })))
             self ! Done
           }
         } else {
-          p.failure(ErrorCode.Reject)
+          task.promise.failure(ErrorCode.Reject)
         }
       case Done =>
         workerCount -= 1
@@ -97,17 +114,17 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
     private var workerCount = 0
 
     def receive = {
-      case x: QueryTask =>
+      case task: QueryTask =>
         if (idle.nonEmpty) {
-          idle.dequeue() ! x
+          idle.dequeue() ! task
         } else if (workerCount < maxWorkerCount) {
           val worker = context.actorOf(Props(new WorkerActor))
-          worker ! x
+          worker ! task
           workerCount += 1
         } else if (queue.size + workerCount < requestCountLimit) {
-          queue.enqueue(x)
+          queue.enqueue(task)
         } else {
-          x.p.failure(ErrorCode.Reject)
+          task.promise.failure(ErrorCode.Reject)
         }
       case Done =>
         if (queue.nonEmpty) {
@@ -128,13 +145,17 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
       }
 
       def receive = {
-        case QueryTask(f, p) =>
-          p.complete(Try {
-            val c = new QueryContext {
+        case task: QueryTask =>
+          task.promise.complete(Try {
+            val c = new Context with DBQuery {
+              def clientUsid = task.usid
+
+              def sessionManager = serviceManager.sessionManager
+
               val dbSession = session
             }
             session.withTransaction {
-              f(c)
+              task.call(c)
             }
           })
           sender ! Done
@@ -151,13 +172,17 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
     }
 
     def receive = {
-      case PersistTask(f, p) =>
-        p.complete(Try {
-          val c = new PersistContext {
+      case task: PersistTask =>
+        task.promise.complete(Try {
+          val c = new Context with DBPersist {
+            def clientUsid = task.usid
+
+            def sessionManager = serviceManager.sessionManager
+
             val dbSession = session
           }
           session.withTransaction {
-            f(c)
+            task.call(c)
           }
         })
     }
@@ -165,13 +190,18 @@ class ServiceManager extends Actor with RemoteCallDispatcher {
 
   case object Done
 
-  case class SimpleTask(f: SimpleContext => JsValue, p: Promise[JsValue])
-
-  case class QueryTask(f: QueryContext => JsValue, p: Promise[JsValue])
-
-  case class PersistTask(f: PersistContext => JsValue, p: Promise[JsValue])
-
 }
+
+trait Task {
+  var usid: String = _
+  var promise: Promise[JsValue] = _
+}
+
+case class SimpleTask(call: Context => JsValue) extends Task
+
+case class QueryTask(call: Context with DBQuery => JsValue) extends Task
+
+case class PersistTask(call: Context with DBPersist => JsValue) extends Task
 
 case class WebRequest(sid: String, clazz: String, in: JsObject, promise: Promise[JsValue])
 

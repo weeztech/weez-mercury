@@ -1,0 +1,23 @@
+{
+  "name": "weez-mercury",
+  "version": "0.1.0",
+  "homepage": "https://github.com/weeztech/weez-mercury",
+  "authors": [
+    "niuhaifeng <niuhf0452@gmail.com>"
+  ],
+  "description": "open source ERP framework",
+  "main": "index.html",
+  "moduleType": [
+    "globals"
+  ],
+  "keywords": [
+    "weez",
+    "mercury"
+  ],
+  "license": "Apache 2.0",
+  "private": true,
+  "dependencies": {
+    "paper-elements": "polymer/paper-elements#~0.5.2",
+    "core-scroll-threshold": "polymer/core-scroll-threshold#~0.5.2"
+  }
+}

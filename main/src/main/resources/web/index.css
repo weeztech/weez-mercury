@@ -5,3 +5,9 @@ body {
 html /deep/ * {
   box-sizing: border-box;
 }
+html /deep/[hide] {
+  display: none !important;
+}
+html /deep/ .tap {
+  cursor: pointer;
+}

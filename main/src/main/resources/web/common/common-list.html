@@ -1,0 +1,275 @@
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
+
+<polymer-element name="common-pager" horizontal layout>
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      core-scroll-threshold {
+        display: block;
+        overflow: auto;
+      }
+    </style>
+    <content id="content" select="template"></content>
+    <core-scroll-threshold id="scrollThreshold" lowerThreshold="20" on-lower-trigger="{{loadMore}}" flex>
+      <div id="list"></div>
+      <div vertical layout center hide?="{{!loading}}">
+        <paper-spinner active></paper-spinner>
+      </div>
+    </core-scroll-threshold>
+  </template>
+  <script>
+    Polymer({
+      loading: false,
+      hasMore: true,
+      domReady: function () {
+        var arr = this.$.content.getDistributedNodes();
+        if (arr.length > 1) throw new Error('multiple templates found');
+        if (arr.length == 0) throw new Error('cannot find template');
+        var tpl = arr[0];
+        if (tpl.hasAttribute('repeat') || tpl.hasAttribute('bind') || tpl.hasAttribute('if'))
+          throw new Error('cannot use template with repeat/if/bind attribute');
+        var clone = this.ownerDocument.importNode(tpl, false);
+        clone.setAttribute('repeat', '{{items}}');
+        this.$.list.appendChild(clone);
+        HTMLTemplateElement.decorate(clone, tpl);
+        clone.bindingDelegate = this.element.syntax;
+        clone.model = this;
+        this.isReady = true;
+        this.reload();
+      },
+      reload: function () {
+        if (!this.isReady) return;
+        this.hasMore = true;
+        this.items = null;
+        this.loadMore();
+      },
+      loadMore: function () {
+        if (!this.hasMore) return;
+        var self = this;
+        var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+        var detail = {
+          start: this.items ? this.items.length : 0,
+          get hasExpire() {
+            return self.msgId != msgId;
+          },
+          load: function (result) {
+            if (detail.hasExpire) return;
+            self.afterQuery(result);
+          }
+        };
+        this.beforeQuery(detail);
+        this.asyncFire('query', detail);
+      },
+      beforeQuery: function (detail) {
+        this.loading = true;
+      },
+      afterQuery: function (result) {
+        this.hasMore = result.hasMore;
+        if (this.items)
+          Array.prototype.push.apply(this.items, result.items);
+        else
+          this.items = result.items;
+        this.loading = false;
+        this.$.scrollThreshold.clearLower();
+        this.async(function () {
+          if (this.loading) return;
+          var el = this.$.scrollThreshold;
+          if (el.scrollHeight <= el.clientHeight) {
+            this.loadMore();
+          }
+        });
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="common-selector" extends="common-pager">
+  <script>
+    Polymer({
+      publish: {
+        selection: null
+      },
+      domReady: function () {
+        this.super();
+        Polymer.addEventListener(this.$.list, 'tap', this.tapAction.bind(this));
+      },
+      selectionChanged: function () {
+        if (this._selection) {
+          this._selection.clear();
+        }
+        this._selection = this.selection;
+        this.reload();
+      },
+      tapAction: function (e) {
+        if (!this._selection || !this.$.list.contains(e.target)) return;
+        var el = e.target;
+        while (el && el.parentNode != this.$.list)
+          el = el.parentNode;
+        if (el && el.localName != 'template') {
+          if (this._selection.multi) {
+            this.multiSelectAction(e, el);
+          } else {
+            this.singleSelectAction(e, el);
+          }
+        }
+      },
+      singleSelectAction: function (e, el) {
+        var box = this.boxOf(el);
+        this._selection.select(box);
+        this.lastTap = el;
+      },
+      multiSelectAction: function (e, el) {
+        var modifier = 0;
+        if (e.metaKey) modifier |= 1;
+        if (e.ctrlKey) modifier |= 2;
+        if (e.altKey) modifier |= 4;
+        if (e.shiftKey) modifier |= 8;
+        if (modifier == 0) {
+          var box = this.boxOf(el);
+          if (box.selected)
+            this._selection.deselect(box);
+          else
+            this._selection.select(box);
+        } else if (modifier == 8) {
+          var lastEl = this.lastTap || this.$.list.children[1]; // skip template
+          if (lastEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
+
+          }
+        }
+        this.lastTap = el;
+      },
+      boxOf: function (el) {
+        return el.templateInstance.model;
+      },
+      afterQuery: function (result) {
+        if (!this._selection) return;
+        result.items = this._selection.packup(result.items);
+        this.super([result]);
+      },
+      reload: function () {
+        if (!this._selection) return;
+        this.super();
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="common-selection">
+  <script>
+    Polymer({
+      publish: {
+        selected: null,
+        selectedBox: null,
+        multi: false,
+        keyprop: ''
+      },
+      observe: {
+        'keyprop multi': 'clearAndChange'
+      },
+      clearAndChange: function (oval) {
+        this.clear();
+        this._multi = this.multi;
+        this._keyprop = this.keyprop;
+      },
+      packup: function (items) {
+        if (!this._keyprop) return;
+        var boxes = [];
+        if (this._multi) {
+          var selbox = this.selectedBox || (this.selectedBox = {});
+          for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var key = item[this._keyprop];
+            var box = selbox[key];
+            if (box) {
+              box.value = item;
+            } else {
+              box = {
+                key: key,
+                value: item,
+                selected: false
+              };
+            }
+            boxes.push(box);
+          }
+        } else {
+          var selkey = this.selectedBox && this.selectedBox.key;
+          for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var key = item[this._keyprop];
+            var box = this.selectedBox;
+            if (box && box.key == key) {
+              box.value = item;
+            } else {
+              box = {
+                key: key,
+                value: item,
+                selected: false
+              };
+            }
+            boxes.push(box);
+          }
+        }
+        return boxes;
+      },
+      clear: function () {
+        if (this.selectedBox) {
+          if (this._multi) {
+            for (var key in this.selectedBox)
+              this.selectedBox[key].selected = false;
+          } else {
+            this.selectedBox.selected = false;
+          }
+        }
+        this.selectedBox = null;
+        this.selected = null;
+      },
+      select: function () {
+        this._select(arguments, 0);
+      },
+      deselect: function () {
+        this._select(arguments, 1);
+      },
+      toggle: function () {
+        this._select(arguments, 2);
+      },
+      _select: function (args, act) {
+        if (this._multi) {
+          var selbox = this.selectedBox || (this.selectedBox = {});
+          var sel = this.selected || (this.selected = []);
+          for (var i = 0; i < args.length; i++) {
+            var box = args[i];
+            var toggle = act == 2 || act == 1 && box.selected || !box.selected;
+            if (!toggle) continue;
+            if (box.selected) {
+              box.selected = false;
+              delete selbox[box.key];
+              sel.splice(sel.indexOf(box.value), 1);
+            } else {
+              box.selected = true;
+              selbox[box.key] = box;
+              sel.push(box.value);
+            }
+          }
+        } else {
+          var box = args[0];
+          if (act == 2 && (!box || this.selectedBox !== box))
+            return;
+          if (this.selectedBox) {
+            this.selectedBox.selected = false;
+            this.selectedBox = null;
+            this.selected = null;
+          }
+          if (act == 0 || act == 2 && !box.selected) {
+            box.selected = true;
+            this.selectedBox = box;
+            this.selected = box.value;
+          }
+        }
+      }
+    });
+  </script>
+</polymer-element>
+

@@ -1,0 +1,159 @@
+<link rel="import" href="../bower_components/paper-input/paper-input.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
+
+<polymer-element name="sale-order">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <div class="toolbar"></div>
+    <div class="body">
+      <span class="title">录入租出订单</span>
+      <div>
+        <paper-input label="租赁人" floatingLabel></paper-input>
+        <paper-input label="拍摄类型" floatingLabel></paper-input>
+        <paper-input label="租用起始时间" floatingLabel></paper-input>
+      </div>
+      <div>
+        <assistant-selector selectedModel="{{assistants}}"></assistant-selector>
+      </div>
+      <div>
+        <room-selector selectedModel="{{rooms}}"></room-selector>
+      </div>
+      <div>
+        <device-selector></device-selector>
+      </div>
+    </div>
+  </template>
+  <script>
+    Polymer({});
+  </script>
+</polymer-element>
+
+
+<link rel="import" href="../bower_components/core-selector/core-selector.html">
+
+<polymer-element name="assistant-selector" extends="core-selector">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <shadow>
+      <template repeat="{{assistants}}">
+        <div class="item">
+          <img src="{{imgUrl}}">
+          <span>{{name}}</span>
+        </div>
+      </template>
+    </shadow>
+  </template>
+  <script>
+    Polymer({
+      ready: function () {
+        var self = this;
+        remoteCall('product.AssistantSelectService', {}, function (resp) {
+          resp.items.forEach(function (i) {
+            i.imgUrl = '/photo/staffs/' + i.id + '/small.jpg';
+          });
+          self.assistants = resp.items;
+        });
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="room-selector" extends="core-selector">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <shadow>
+      <template repeat="{{rooms}}">
+        <div class="item">
+          <img src="{{imgUrl}}">
+          <span>{{title}}</span>
+        </div>
+      </template>
+    </shadow>
+  </template>
+  <script>
+    Polymer({
+      ready: function () {
+        var self = this;
+        remoteCall('product.RoomSelectService', {}, function (resp) {
+          resp.items.forEach(function (i) {
+            i.imgUrl = '/photo/rooms/' + i.id + '/small.jpg';
+          });
+          self.rooms = resp.items;
+        });
+      }
+    });
+  </script>
+</polymer-element>
+
+<link rel="import" href="../common/common-search.html">
+
+<polymer-element name="device-selector">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <common-search-list keywords="{{keywords}}" on-query="{{queryAction}}">
+      <core-selector></core-selector>
+    </common-search-list>
+  </template>
+  <script>
+    Polymer({
+      queryAction: function (e, detail) {
+        var self = this;
+        remoteCall('product.DeviceSelectService', {
+          keywords: this.keywords,
+          start: detail.start,
+          count: 10,
+        }, function (resp) {
+          self.items = resp.items;
+          detail.load(resp.items.length, resp.hasMore);
+        });
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="device-item-selector" extends="core-selector">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <shadow>
+      <template repeat="{{devices}}">
+        <div class="item">
+          <img src="{{imgUrl}}">
+          <span>{{title}}</span>
+        </div>
+      </template>
+    </shadow>
+  </template>
+  <script>
+    Polymer({
+      ready: function () {
+        var self = this;
+        remoteCall('product.DeviceSelectService', {}, function (resp) {
+          resp.items.forEach(function (i) {
+            i.imgUrl = '/photo/device/' + i.id + '/small.jpg';
+          });
+          self.rooms = resp.items;
+        });
+      }
+    });
+  </script>
+</polymer-element>

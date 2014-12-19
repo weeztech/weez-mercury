@@ -2,6 +2,7 @@ package com.weez.mercury
 
 import java.security.SecureRandom
 
+import com.weez.mercury.common.Util.RandomIdGenerator
 import org.parboiled.common.Base64
 
 import scala.concurrent.Promise
@@ -25,6 +26,7 @@ object HttpServer {
     val config = context.system.settings.config.getConfig("weez-mercury.http")
     val host = config.getString("host")
     val port = config.getInt("port")
+    val seedGen = new RandomIdGenerator(12)
 
     override def preStart = {
       implicit val system = context.system
@@ -36,25 +38,7 @@ object HttpServer {
       case Tcp.CommandFailed(_: Http.Bind) => context.stop(self)
     }
 
-    private val secureRandom = {
-      val sr = SecureRandom.getInstance("NativePRNG", "SUN")
-      sr.setSeed(System.currentTimeMillis())
-      sr
-    }
-    private val base64 = Base64.rfc2045()
-    private var sessionSeed = 0
     private val CookieName_SID = "sid"
-
-    private def newSessionId: String = {
-      val arr = new Array[Byte](16)
-      secureRandom.nextBytes(arr)
-      sessionSeed += 1
-      arr(12) = (sessionSeed >> 24).asInstanceOf[Byte]
-      arr(13) = (sessionSeed >> 16).asInstanceOf[Byte]
-      arr(14) = (sessionSeed >> 8).asInstanceOf[Byte]
-      arr(15) = sessionSeed.asInstanceOf[Byte]
-      base64.encodeToString(arr, false)
-    }
 
     def route: Receive = runRoute {
       path("service" / Rest) { clazz =>
@@ -81,6 +65,11 @@ object HttpServer {
           }
         }
       } ~
+        path("resource" / Rest) { resourceid =>
+          get {
+            ???
+          }
+        } ~
         pathSingleSlash {
           get {
             redirect("/index.html", StatusCodes.PermanentRedirect)
@@ -88,12 +77,26 @@ object HttpServer {
         } ~
         get {
           path("index.html") {
-            setCookie(HttpCookie(CookieName_SID, newSessionId)) {
-              getFromResource("web/index.html")
+            setCookie(HttpCookie(CookieName_SID, seedGen.newId)) {
+              if (webRoot.length == 0)
+                getFromResource("web/index.html")
+              else
+                getFromFile(webRoot + "index.html")
             }
-          } ~
-            getFromResourceDirectory("web")
+          } ~ {
+            if (webRoot.length == 0)
+              getFromResourceDirectory("web")
+            else
+              getFromDirectory(webRoot)
+          }
         }
+    }
+
+    val webRoot = {
+      var s = System.getProperty("weez.web")
+      if (s == null) s = ""
+      if (!s.endsWith("/")) s += "/"
+      s
     }
 
     case class ServiceRequest(path: String, args: Array[Any])

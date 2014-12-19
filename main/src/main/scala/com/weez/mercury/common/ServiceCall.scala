@@ -4,15 +4,7 @@ import scala.concurrent._
 import spray.json._
 
 trait RemoteCall {
-  def dispatch(dispatcher: RemoteCallDispatcher, req: JsValue, promise: Promise[JsValue]): Unit
-}
-
-trait RemoteCallDispatcher {
-  def postSimpleTask(f: SimpleContext => JsValue, promise: Promise[JsValue]): Unit
-
-  def postQueryTask(f: QueryContext => JsValue, promise: Promise[JsValue]): Unit
-
-  def postPersistTask(f: PersistContext => JsValue, promise: Promise[JsValue]): Unit
+  def dispatch(req: JsValue): Task
 }
 
 abstract class ServiceCall[T: ContextBinding, I, O] extends RemoteCall with DefaultJsonProtocol {
@@ -23,33 +15,30 @@ abstract class ServiceCall[T: ContextBinding, I, O] extends RemoteCall with Defa
 
   def call(c: Context, req: I): O
 
-  def dispatch(dispatcher: RemoteCallDispatcher, req: JsValue, promise: Promise[JsValue]) = {
+  def dispatch(req: JsValue) = {
     val contextBinding = implicitly[ContextBinding[T]]
-    contextBinding.dispatch(dispatcher, c => {
+    contextBinding.dispatch(c => {
       call(c, req.convertTo[I](jsonRequest)).toJson(jsonResponse)
-    }, promise)
+    })
   }
 }
 
 sealed trait ContextBinding[C] {
-  def dispatch(dispatcher: RemoteCallDispatcher, f: C => JsValue, promise: Promise[JsValue]): Unit
+  def dispatch(f: C => JsValue): Task
 }
 
 object ContextBinding {
 
-  implicit object SimpleContextBinding extends ContextBinding[SimpleContext] {
-    def dispatch(dispatcher: RemoteCallDispatcher, f: SimpleContext => JsValue, promise: Promise[JsValue]) =
-      dispatcher.postSimpleTask(f, promise)
+  implicit object SimpleContextBinding extends ContextBinding[Context] {
+    def dispatch(f: Context => JsValue) = SimpleTask(f)
   }
 
-  implicit object QueryContextBinding extends ContextBinding[QueryContext] {
-    def dispatch(dispatcher: RemoteCallDispatcher, f: QueryContext => JsValue, promise: Promise[JsValue]) =
-      dispatcher.postQueryTask(f, promise)
+  implicit object QueryContextBinding extends ContextBinding[Context with DBQuery] {
+    def dispatch(f: Context with DBQuery => JsValue) = QueryTask(f)
   }
 
-  implicit object PersistContextBinding extends ContextBinding[PersistContext] {
-    def dispatch(dispatcher: RemoteCallDispatcher, f: PersistContext => JsValue, promise: Promise[JsValue]) =
-      dispatcher.postPersistTask(f, promise)
+  implicit object PersistContextBinding extends ContextBinding[Context with DBPersist] {
+    def dispatch(f: Context with DBPersist => JsValue) = PersistTask(f)
   }
 
 }
