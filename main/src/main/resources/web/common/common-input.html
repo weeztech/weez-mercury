@@ -1,35 +1,4 @@
 <link rel="import" href="../bower_components/paper-button/paper-button.html">
-
-<polymer-element name="common-action">
-  <template>
-    <style>
-      :host {
-        display: inline-block;
-        cursor: pointer;
-      }
-    </style>
-    <content></content>
-  </template>
-  <script>
-    Polymer({
-      publish: {
-        type: '',
-        args: null
-      },
-      eventDelegates: {
-        'tap': 'tapAction'
-      },
-      tapAction: function (e, detail) {
-        if (typeof detail != 'object') {
-          detail = {};
-        }
-        detail.action = this.action;
-        detail.actionArgs = this.args;
-      }
-    });
-  </script>
-</polymer-element>
-
 <link rel="import" href="common-search.html">
 
 <polymer-element name="common-input-selector" vertical layout>

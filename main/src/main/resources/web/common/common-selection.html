@@ -1,0 +1,206 @@
+<polymer-element name="common-selection">
+  <script>
+    Polymer({
+      publish: {
+        selected: null,
+        selectedBox: null,
+        multi: false,
+        keyprop: ''
+      },
+      observe: {
+        'keyprop multi': 'clearAndChange'
+      },
+      clearAndChange: function (oval) {
+        this.clear();
+        this._multi = this.multi;
+        this._keyprop = this.keyprop;
+      },
+      packup: function (items) {
+        if (!this._keyprop) return;
+        var boxes = [];
+        if (this._multi) {
+          var selbox = this.selectedBox || (this.selectedBox = {});
+          for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var key = item[this._keyprop];
+            var box = selbox[key];
+            if (box) {
+              box.value = item;
+            } else {
+              box = {
+                key: key,
+                value: item,
+                selected: false
+              };
+            }
+            boxes.push(box);
+          }
+        } else {
+          var selkey = this.selectedBox && this.selectedBox.key;
+          for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var key = item[this._keyprop];
+            var box = this.selectedBox;
+            if (box && box.key == key) {
+              box.value = item;
+            } else {
+              box = {
+                key: key,
+                value: item,
+                selected: false
+              };
+            }
+            boxes.push(box);
+          }
+        }
+        return boxes;
+      },
+      clear: function () {
+        if (this.selectedBox) {
+          if (this._multi) {
+            for (var key in this.selectedBox)
+              this.selectedBox[key].selected = false;
+          } else {
+            this.selectedBox.selected = false;
+          }
+        }
+        this.selectedBox = null;
+        this.selected = null;
+      },
+      select: function () {
+        this._select(arguments, 0);
+      },
+      deselect: function () {
+        this._select(arguments, 1);
+      },
+      toggle: function () {
+        this._select(arguments, 2);
+      },
+      _select: function (args, act) {
+        if (this._multi) {
+          var selbox = this.selectedBox || (this.selectedBox = {});
+          var sel = this.selected || (this.selected = []);
+          for (var i = 0; i < args.length; i++) {
+            var box = args[i];
+            var toggle = act == 2 || act == 1 && box.selected || !box.selected;
+            if (!toggle) continue;
+            if (box.selected) {
+              box.selected = false;
+              delete selbox[box.key];
+              sel.splice(sel.indexOf(box.value), 1);
+            } else {
+              box.selected = true;
+              selbox[box.key] = box;
+              sel.push(box.value);
+            }
+          }
+        } else {
+          var box = args[0];
+          if (act == 2 && (!box || this.selectedBox !== box))
+            return;
+          if (this.selectedBox) {
+            this.selectedBox.selected = false;
+            this.selectedBox = null;
+            this.selected = null;
+          }
+          if (act == 0 || act == 2 && !box.selected) {
+            box.selected = true;
+            this.selectedBox = box;
+            this.selected = box.value;
+          }
+        }
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="common-selector">
+  <script>
+    (function () {
+      var events = makeEvents('common-query common-select common-deselect');
+
+      function makeEvents(s) {
+        var events = [];
+        var names = s.split(' ');
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var handler = name.replace(/-./, function (m) {
+            return m[1].toUpperCase();
+          }) + 'Action';
+          events.push({
+            name: name,
+            handler: handler
+          });
+        }
+        return events;
+      }
+
+      Polymer({
+        publish: {
+          target: null,
+          keyprop: '',
+          model: ''
+        },
+        domReady: function () {
+          var parent = this.parentNode;
+          if (!parent || parent.localName != 'common-selection')
+            throw new Error('do not use common-selector out of common-selection');
+        },
+        updateListener: function (addOrRemove) {
+          var func = Polymer[addOrRemove ? 'addEventListener' : 'removeEventListener'];
+          for (var i = 0; i < events.length; i++) {
+            var event = events[i];
+            var handler = this['_' + event.handler] ||
+              (this['_' + event.handler] = this[event.handler].bind(this));
+            func(this._target, event.name, handler);
+          }
+        },
+        targetChanged: function () {
+          if (this._target) this.updateListener(false);
+          this._target = this.target;
+          if (this._target) this.updateListener(true);
+        },
+        commonQueryAction: function (e, detail) {
+          if (detail.filter) throw new Error('cannot hook multiple filters on one element');
+          var self = this;
+          detail.filter = function (result) {
+            result.items = self.parentNode.packup(result.items);
+          };
+        },
+        boxOf: function (el) {
+          var box = el.templateInstance.model;
+          if (this.model) box = box[this.model];
+          return box;
+        },
+        commonSelectAction: function (e, detail) {
+          var el = e.target;
+          while (!el.templateInstance_)
+            el = el.parentNode;
+          if (this.parentNode.multi) {
+            if (detail.modifiers == 0) {
+              var box = this.boxOf(el);
+              if (box.selected)
+                this.parentNode.deselect(box);
+              else
+                this.parentNode.select(box);
+            } else if (detail.modifiers == 8) { // shift
+              var lastEl = this.lastTap || el.parentNode.firstElementChild;
+              if (lastEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {}
+            }
+            this.lastTap = el;
+          } else {
+            var box = this.boxOf(el);
+            this.parentNode.select(box);
+          }
+        },
+        commonDeselectAction: function (e, detail) {
+          var el = e.target;
+          while (!el.templateInstance_)
+            el = el.parentNode;
+          var box = this.boxOf(el);
+          this.parentNode.deselect(box);
+        }
+      });
+    })();
+  </script>
+</polymer-element>

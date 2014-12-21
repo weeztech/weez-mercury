@@ -1,0 +1,86 @@
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
+
+<polymer-element name="common-pager" horizontal layout>
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      core-scroll-threshold {
+        display: block;
+        overflow: auto;
+      }
+    </style>
+    <content id="content" select="template"></content>
+    <core-scroll-threshold id="scrollThreshold" lowerThreshold="20" on-lower-trigger="{{loadMore}}" flex>
+      <div id="list"></div>
+      <div vertical layout center hide?="{{!loading}}">
+        <paper-spinner active></paper-spinner>
+      </div>
+    </core-scroll-threshold>
+  </template>
+  <script>
+    Polymer({
+      loading: false,
+      hasMore: true,
+      domReady: function () {
+        var arr = this.$.content.getDistributedNodes();
+        if (arr.length > 1) throw new Error('multiple templates found');
+        if (arr.length == 0) throw new Error('cannot find template');
+        var tpl = arr[0];
+        if (tpl.hasAttribute('repeat') || tpl.hasAttribute('bind') || tpl.hasAttribute('if'))
+          throw new Error('cannot use template with repeat/if/bind attribute');
+        var clone = this.ownerDocument.importNode(tpl, false);
+        clone.setAttribute('repeat', '{{items}}');
+        this.$.list.appendChild(clone);
+        HTMLTemplateElement.decorate(clone, tpl);
+        clone.bindingDelegate = this.element.syntax;
+        clone.model = this;
+        this.isReady = true;
+        this.reload();
+      },
+      reload: function () {
+        if (!this.isReady) return;
+        this.hasMore = true;
+        this.items = null;
+        this.loadMore();
+      },
+      loadMore: function () {
+        if (!this.hasMore) return;
+        var self = this;
+        var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+        var detail = {
+          start: this.items ? this.items.length : 0,
+          load: function (result) {
+            if (self.msgId != msgId) return;
+            if (detail.filter)
+              detail.filter(result);
+            self.afterQuery(result);
+          }
+        };
+        this.beforeQuery(detail);
+        this.asyncFire('query', detail);
+      },
+      beforeQuery: function (detail) {
+        this.loading = true;
+      },
+      afterQuery: function (result) {
+        this.hasMore = result.hasMore;
+        if (this.items)
+          Array.prototype.push.apply(this.items, result.items);
+        else
+          this.items = result.items;
+        this.loading = false;
+        this.$.scrollThreshold.clearLower();
+        this.async(function () {
+          if (this.loading) return;
+          var el = this.$.scrollThreshold;
+          if (el.scrollHeight <= el.clientHeight) {
+            this.loadMore();
+          }
+        });
+      }
+    });
+  </script>
+</polymer-element>
