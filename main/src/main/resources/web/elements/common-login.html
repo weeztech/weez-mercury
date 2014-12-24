@@ -1,6 +1,5 @@
 <link rel="import" href="../bower_components/paper-input/paper-input.html">
 <link rel="import" href="../bower_components/paper-button/paper-button.html">
-<link rel="import" href="../common/common-remote.html">
 
 <polymer-element name="common-login">
   <template>
@@ -35,13 +34,13 @@
   <script>
     Polymer({
       loginAction: function () {
-        remoteCall('common.LoginService', {
+        Weez.remoteCall('common.LoginService', {
           username: this.username,
           password: this.password
-        }, function (resp) {
+        }).then(function (resp) {
           switch (resp.result) {
           case 0: // success
-            remoteCall.usid = resp.usid;
+            Weez.usid = resp.usid;
             break;
           default:
             alert('用户名或密码错误');

@@ -1,0 +1,63 @@
+<style>
+  html /deep/ common-form-group + common-form-group {
+    margin-top: 8px;
+  }
+</style>
+
+<polymer-element name="common-form">
+  <template>
+    <style>
+      :host {
+        display: block;
+        margin: 8px 16px;
+      }
+    </style>
+    <content></content>
+  </template>
+  <script>
+    Polymer({});
+  </script>
+</polymer-element>
+
+<polymer-element name="common-form-group">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      * {
+        display: block;
+        width: 100%;
+      }
+    </style>
+    <label>{{label}}</label>
+    <span>{{error}}</span>
+    <content></content>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        label: '',
+        error: ''
+      },
+      domReady: function () {
+        this.updateLabel();
+      },
+      updateLabel: function () {
+        var inputEl = this.querySelector('paper-input, input, textarea');
+        switch (inputEl.localName) {
+        case 'paper-input':
+          if (!inputEl.label)
+            inputEl.label = this.label;
+          break;
+        case 'input':
+        case 'textarea':
+          if (!inputEl.hasAttribute('placeholder')) {
+            inputEl.setAttribute('placeholder', this.label);
+          }
+          break;
+        }
+      }
+    });
+  </script>
+</polymer-element>

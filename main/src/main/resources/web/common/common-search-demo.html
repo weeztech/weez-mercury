@@ -5,36 +5,46 @@
   <title></title>
   <script src="../bower_components/webcomponentsjs/webcomponents.min.js"></script>
   <link rel="import" href="../bower_components/polymer/polymer.html">
+  <link rel="import" href="common-framework.html">
+
   <link rel="stylesheet" href="../index.css">
 </head>
 
 <body unresolved fullbleed>
-  <core-selector class="list">
-    <div>Item 0</div>
-    <div>Item 1</div>
-    <div>Item 2</div>
-    <div>Item 3</div>
-    <div>Item 4</div>
-  </core-selector>
-  <link rel="import" href="../common/common-search.html">
-  <link rel="import" href="../bower_components/core-selector/core-selector.html">
+
+  <link rel="import" href="../common/common-search-input.html">
+  <link rel="import" href="../common/common-pager.html">
+  <link rel="import" href="../common/common-selection.html">
+  <link rel="import" href="../common/common-action.html">
+  <link rel="import" href="../common/common-search-selector.html">
+
+  <template id="tpl">
+    <style>
+      common-action {
+        display: block;
+      }
+      .item[selected] {
+        background: red;
+      }
+    </style>
+    <common-action type="common-select">
+      <div class="item" selected?="{{selected}}">{{value.num}} {{value.text}}</div>
+    </common-action>
+  </template>
 
   <template is="auto-binding">
-    <input type="checkbox" checked="{{multi}}">multiple selection mode
-    <common-search-selector style="height: 300px" selection="{{$.selection}}" on-query="{{queryAction}}">
-      <template>
-        <style>
-          .item {
-            cursor: pointer;
-          }
-          .item[selected] {
-            background: red;
-          }
-        </style>
-        <div class="item" selected?="{{selected}}">{{value.num}} {{value.text}}</div>
-      </template>
-    </common-search-selector>
-    <common-selection id="selection" keyprop="num" selected="{{selected}}" multi?="{{multi}}"></common-selection>
+    <div style="height: 300px" vertical layout>
+      <div>
+        <input type="checkbox" checked="{{multi}}">multiple selection mode
+      </div>
+      <common-search-input value="{{keywords}}"></common-search-input>
+      <common-pager id="pager" keywords="{{keywords}}" on-common-query="{{queryAction}}" flex>
+        <template ref="tpl"></template>
+      </common-pager>
+      <common-selection selected="{{selected}}" multi?="{{multi}}">
+        <common-selector target="{{$.pager}}"></common-selector>
+      </common-selection>
+    </div>
     <p>
       following are selected:
     </p>
@@ -44,6 +54,10 @@
     <template if="{{!multi}}">
       <span>{{selected.num}} {{selected.text}}</span>
     </template>
+
+    <common-search-selector on-common-query="{{queryAction}}">
+      <template ref="tpl"></template>
+    </common-search-selector>
   </template>
 
   <script>
@@ -55,6 +69,7 @@
         }
         return s;
       },
+
       generateName: function (inMin, inMax) {
         return this.generateString(Math.floor(Math.random() * (inMax - inMin + 1) + inMin));
       }
@@ -78,22 +93,25 @@
       var tpl = e.target;
       tpl.queryAction = function (e, detail) {
         console.log('query with keywords: %s', detail.keywords);
-        window.setTimeout(function () {
-          var arr = data;
-          if (detail.keywords) {
-            arr = arr.filter(function (i) {
-              return i.text.indexOf(detail.keywords) >= 0;
+        detail.result = new Promise(function (resolve) {
+          window.setTimeout(function () {
+            var arr = data;
+            if (detail.keywords) {
+              arr = arr.filter(function (i) {
+                return i.text.indexOf(detail.keywords) >= 0;
+              });
+            }
+            var end = detail.start + 10;
+            var hasMore = end < arr.length;
+            arr = arr.slice(detail.start, end);
+            console.log('data from %d to %d', detail.start, end);
+            resolve({
+              items: arr,
+              keyprop: 'num',
+              hasMore: hasMore
             });
-          }
-          var end = detail.start + 10;
-          var hasMore = end < arr.length;
-          arr = arr.slice(detail.start, end);
-          console.log('data from %d to %d', detail.start, end);
-          detail.load({
-            items: arr,
-            hasMore: hasMore
-          });
-        }, 1000);
+          }, 1000);
+        });
       };
     });
   </script>

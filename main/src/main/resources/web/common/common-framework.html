@@ -1,0 +1,139 @@
+<script>
+  var Weez = {};
+
+  (function (scope) {
+    function ajax(opts) {
+      var xhr = new XMLHttpRequest();
+      var cancel = false;
+      var done = false;
+      var p = new Promise(function (resolve, reject) {
+        xhr.open(opts.method, opts.url);
+        xhr.send(opts.request);
+        xhr.onreadystatechange = function () {
+          if (cancel) return;
+          if (xhr.readyState == 4) {
+            done = true;
+            if (xhr.status == 200) {
+              resolve(xhr.response);
+            } else {
+              reject(new Error(xhr.status + ' - ' + xhr.statusText));
+            }
+          }
+        };
+        xhr.ontimeout = function () {
+          reject(new Error('timeout'));
+        };
+        xhr.responseType = opts.type;
+      });
+      p.cancel = function () {
+        if (!cancel && !done) {
+          cancel = true;
+          xhr.abort();
+        }
+      };
+      p.fail = p['catch'];
+      p.fail(function (err) {
+        alert(err.message);
+      });
+      return p;
+    }
+
+    function remoteCall(opts, obj) {
+      var api = opts.api || opts;
+      var type = opts.type || 'json';
+      var request = JSON.stringify({
+        usid: scope.usid || "",
+        request: obj
+      });
+      return ajax({
+        method: 'POST',
+        url: '/service/com.weez.mercury.' + api,
+        type: type,
+        request: request
+      }).then(function (resp) {
+        if (type == 'json') {
+          if (resp.error) {
+            reject(processError(resp));
+          } else {
+            resolve(resp.response);
+          }
+        } else {
+          resolve(resp);
+        }
+      });
+    }
+
+    function processError(json) {
+      var code = json.error;
+      switch (code) {
+      case 800: // InvalidRequest: the request contains characters cannot be parsed or has invalid format
+        return new Error('800 - 请求无法被服务器处理');
+      case 801: // NotAcceptable: the request is not acceptable becuase cannot find RemoteCall
+        return new Error('801 - 请求无法被服务器处理');
+      case 802: // Reject: the request is not acceptable because too many requests are waiting
+        return new Error('802 - 服务器忙,请稍后重试');
+      }
+    }
+
+    scope.remoteCall = remoteCall;
+  })(Weez);
+
+  (function (scope) {
+    var flush = Polymer.flush;
+    var flushing = false;
+    var watchers = [];
+
+    Polymer.flush = function () {
+      flush();
+      if (!flushing) {
+        flushing = true;
+        Polymer.endOfMicrotask(function () {
+          flushing = false;
+          resizeCheckpoint();
+        });
+      }
+    };
+
+    function resizeCheckpoint() {
+      for (var i = 0; i < watchers.length; i++) {
+        var watcher = watchers[i];
+        var width = watcher.element.offsetWidth;
+        var height = watcher.element.offsetHeight;
+        var oldVisible = watcher.width > 0 && watcher.height > 0;
+        var newVisible = width > 0 && height > 0;
+        if (oldVisible != newVisible ||
+          newVisible && (width != watcher.width || height != watcher.height)) {
+          watcher.width = width;
+          watcher.height = height;
+          var callback = watcher.callback;
+          callback(width, height);
+        }
+      }
+    }
+
+    function watcher_close() {
+      watchers.splice(watchers.indexOf(this), 1);
+    }
+
+    function watchSize(el, callback, target) {
+      if (el.nodeType != 1) throw new Error('illegal argument');
+      target = target || el;
+      var func = typeof callback == 'string' ? target[callback] : callback;
+      callback = function () {
+        func.call(target);
+        Polymer.flush();
+      };
+      var w = {
+        element: el,
+        width: el.offsetWidth,
+        height: el.offsetHeight,
+        callback: callback,
+        close: watcher_close
+      };
+      watchers.push(w);
+      return w;
+    }
+
+    scope.watchSize = watchSize;
+  })(Weez);
+</script>

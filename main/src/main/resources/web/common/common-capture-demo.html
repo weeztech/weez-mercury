@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title></title>
+  <script src="../bower_components/webcomponentsjs/webcomponents.min.js"></script>
+  <link rel="import" href="../bower_components/polymer/polymer.html">
+  <link rel="stylesheet" href="../index.css">
+</head>
+
+<body unresolved fullbleed>
+  <link rel="import" href="common-capture.html">
+
+  <template is="auto-binding">
+    <style>
+      common-capture {
+        border: 1px solid blue;
+      }
+      common-capture[captured] {
+        border: 1px solid red;
+      }
+    </style>
+    <common-capture>
+      inside common-capture
+      <div>
+        input1:
+        <input id="input1">
+      </div>
+      <div>
+        input2:
+        <input id="input2">
+      </div>
+    </common-capture>
+    out of common-capture:
+    <input>
+  </template>
+</body>
+
+</html>
+

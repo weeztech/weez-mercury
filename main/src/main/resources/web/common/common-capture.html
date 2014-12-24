@@ -1,0 +1,52 @@
+<polymer-element name="common-capture">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <content></content>
+  </template>
+  <script>
+    (function () {
+      var capturedPath = [];
+
+      Polymer.addEventListener(document, 'tap', updateCapture);
+      Polymer.addEventListener(document, 'focus', updateCapture, true);
+
+      function updateCapture(e) {
+        clear();
+        for (var i = 0; i < e.path.length; i++) {
+          var el = e.path[i];
+          if (el.localName == 'common-capture') {
+            el.captured = true;
+            capturedPath.push(el);
+          }
+        }
+      }
+
+      function clear() {
+        for (var i = 0; i < capturedPath.length; i++) {
+          capturedPath[i].captured = false;
+        }
+        capturedPath.length = 0;
+      }
+
+      function detach(el) {
+        if (capturedPath.indexOf(el) >= 0) clear();
+      }
+
+      Polymer({
+        publish: {
+          captured: {
+            value: false,
+            reflect: true
+          }
+        },
+        detached: function () {
+          detach(this);
+        }
+      });
+    })();
+  </script>
+</polymer-element>

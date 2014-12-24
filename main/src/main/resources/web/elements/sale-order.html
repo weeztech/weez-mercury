@@ -1,5 +1,9 @@
 <link rel="import" href="../bower_components/paper-input/paper-input.html">
 <link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/paper-icon-button/paper-icon-button.html">
+<link rel="import" href="../common/common-form.html">
+<link rel="import" href="../common/common-action.html">
+<link rel="import" href="../common/common-image.html">
 
 <polymer-element name="sale-order">
   <template>
@@ -7,153 +11,104 @@
       :host {
         display: block;
       }
+      .device {
+        display: block;
+      }
     </style>
-    <div class="toolbar"></div>
-    <div class="body">
-      <span class="title">录入租出订单</span>
+    <span class="title">录入租出订单</span>
+    <div horizontal layout>
       <div>
-        <paper-input label="租赁人" floatingLabel></paper-input>
-        <paper-input label="拍摄类型" floatingLabel></paper-input>
-        <paper-input label="租用起始时间" floatingLabel></paper-input>
+        {{client}}
       </div>
-      <div>
-        <assistant-selector selectedModel="{{assistants}}"></assistant-selector>
-      </div>
-      <div>
-        <room-selector selectedModel="{{rooms}}"></room-selector>
-      </div>
-      <div>
-        <device-selector></device-selector>
-      </div>
+      <core-splitter direction="left"></core-splitter>
+      <common-form flex>
+        <common-form-group label="租赁人">
+          <paper-input value="{{client}}"></paper-input>
+        </common-form-group>
+        <common-form-group label="拍摄类型">
+          <paper-input value="{{kind}}"></paper-input>
+        </common-form-group>
+        <common-form-group label="租用起始时间">
+          <paper-input value="{{beginDate}}"></paper-input>
+        </common-form-group>
+        <common-form-group label="摄影助理">
+          <common-search-selector on-common-query="{{assistantQueryAction}}" selected="{{assistants}}">
+            <template>
+              <common-action class="assistant" type="common-select">
+                <common-image src="{{imgUrl}}"></common-image>
+                <span>{{name}}</span>
+              </common-action>
+            </template>
+          </common-search-selector>
+        </common-form-group>
+        <common-form-group label="影棚">
+          <common-search-selector on-common-query="{{roomQueryAction}}" selected="{{rooms}}">
+            <template>
+              <common-action class="room" type="common-select">
+                <common-image src="{{imgUrl}}"></common-image>
+                <span>{{title}}</span>
+              </common-action>
+            </template>
+          </common-search-selector>
+        </common-form-group>
+        <common-form-group label="摄影器材">
+          <common-search-selector on-common-query="{{deviceQueryAction}}" selected="{{devices}}">
+            <template for="selected">
+              <div horizontal layout center>
+                <common-image src="{{imgUrl}}"></common-image>
+                <span flex>{{title}}</span>
+                <paper-input value="{{count}}"></paper-input>
+                <paper-icon-button icon="add" on-tap="{{deviceCountPlus}}"></paper-icon-button>
+                <paper-icon-button icon="remove" on-tap="{{deviceCountSub}}"></paper-icon-button>
+                <common-action type="common-deselect">
+                  <paper-icon-button icon="delete"></paper-icon-button>
+                </common-action>
+              </div>
+            </template>
+            <template>
+              <common-action class="device" type="common-select">
+                <common-image src="{{imgUrl}}"></common-image>
+                <span>{{title}}</span>
+              </common-action>
+            </template>
+          </common-search-selector>
+        </common-form-group>
+        <common-form-group>
+          <paper-button on-tap="{{saveAction}}">预订</paper-button>
+          <paper-button on-tap="{{checkoutAction}}">出库</paper-button>
+        </common-form-group>
+      </common-form>
     </div>
   </template>
   <script>
-    Polymer({});
-  </script>
-</polymer-element>
-
-
-<link rel="import" href="../bower_components/core-selector/core-selector.html">
-
-<polymer-element name="assistant-selector" extends="core-selector">
-  <template>
-    <style>
-      :host {
-        display: block;
-      }
-    </style>
-    <shadow>
-      <template repeat="{{assistants}}">
-        <div class="item">
-          <img src="{{imgUrl}}">
-          <span>{{name}}</span>
-        </div>
-      </template>
-    </shadow>
-  </template>
-  <script>
     Polymer({
-      ready: function () {
-        var self = this;
-        remoteCall('product.AssistantSelectService', {}, function (resp) {
-          resp.items.forEach(function (i) {
-            i.imgUrl = '/photo/staffs/' + i.id + '/small.jpg';
-          });
-          self.assistants = resp.items;
-        });
-      }
-    });
-  </script>
-</polymer-element>
-
-<polymer-element name="room-selector" extends="core-selector">
-  <template>
-    <style>
-      :host {
-        display: block;
-      }
-    </style>
-    <shadow>
-      <template repeat="{{rooms}}">
-        <div class="item">
-          <img src="{{imgUrl}}">
-          <span>{{title}}</span>
-        </div>
-      </template>
-    </shadow>
-  </template>
-  <script>
-    Polymer({
-      ready: function () {
-        var self = this;
-        remoteCall('product.RoomSelectService', {}, function (resp) {
-          resp.items.forEach(function (i) {
-            i.imgUrl = '/photo/rooms/' + i.id + '/small.jpg';
-          });
-          self.rooms = resp.items;
-        });
-      }
-    });
-  </script>
-</polymer-element>
-
-<link rel="import" href="../common/common-search.html">
-
-<polymer-element name="device-selector">
-  <template>
-    <style>
-      :host {
-        display: block;
-      }
-    </style>
-    <common-search-list keywords="{{keywords}}" on-query="{{queryAction}}">
-      <core-selector></core-selector>
-    </common-search-list>
-  </template>
-  <script>
-    Polymer({
-      queryAction: function (e, detail) {
-        var self = this;
-        remoteCall('product.DeviceSelectService', {
-          keywords: this.keywords,
+      query: function (api) {
+        return Weez.remoteCall(api, {
+          keywords: detail.keywords,
           start: detail.start,
-          count: 10,
-        }, function (resp) {
-          self.items = resp.items;
-          detail.load(resp.items.length, resp.hasMore);
+          count: 10
         });
-      }
-    });
-  </script>
-</polymer-element>
-
-<polymer-element name="device-item-selector" extends="core-selector">
-  <template>
-    <style>
-      :host {
-        display: block;
-      }
-    </style>
-    <shadow>
-      <template repeat="{{devices}}">
-        <div class="item">
-          <img src="{{imgUrl}}">
-          <span>{{title}}</span>
-        </div>
-      </template>
-    </shadow>
-  </template>
-  <script>
-    Polymer({
-      ready: function () {
-        var self = this;
-        remoteCall('product.DeviceSelectService', {}, function (resp) {
-          resp.items.forEach(function (i) {
-            i.imgUrl = '/photo/device/' + i.id + '/small.jpg';
-          });
-          self.rooms = resp.items;
-        });
-      }
+      },
+      assistantQueryAction: function (e, detail) {
+        detail.result = this.query('product.AssistantSelectService');
+      },
+      roomQueryAction: function (e) {
+        detail.result = this.query('product.RoomSelectService');
+      },
+      deviceQueryAction: function (e, detail) {
+        detail.result = this.query('product.DeviceSelectService');
+      },
+      deviceCountPlus: function (e) {
+        var box = e.target.model;
+        box.count++;
+      },
+      deviceCountSub: function (e) {
+        var box = e.target.model;
+        if (box.count > 1)
+          box.count--;
+      },
+      saveAction: function () {},
+      checkoutAction: function () {}
     });
   </script>
 </polymer-element>

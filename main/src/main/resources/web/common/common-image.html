@@ -1,0 +1,93 @@
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+
+<polymer-element name="common-image">
+  <template>
+    <style>
+      :host {
+        display: block;
+        position: relative;
+      }
+      img {
+        max-width: 100%;
+        max-height: 100%;
+      }
+      .placeholder {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+      }
+      .spinner {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(255, 255, 255, 0.3);
+      }
+    </style>
+    <div class="placeholder" hide?="{{hasImage}}"></div>
+    <div class="spinner" vertical layout center hide?="{{!loading}}">
+      <paper-spinner active></paper-spinner>
+    </div>
+    <img id="image" hide?="{{!hasImage}}">
+  </template>
+  <script>
+    (function () {
+      var imageSize = [64, 160, 320, 800];
+
+      function getImageSize(width) {
+        for (var i = imageSize.length - 1; i >= 0; i--) {
+          var a = imageSize[i];
+          if (a < width) {
+            var b = imageSize[i + 1];
+            return b - wdith < width - a ? b : a;
+          }
+        }
+        return imageSize[0];
+      }
+
+      Polymer({
+        publish: {
+          src: ''
+        },
+        observe: {
+          'src imageSize': 'updateImage'
+        },
+        hasImage: false,
+        loading: false,
+        ready: function () {
+          this.sizeWatcher = Weez.watchSize(this, 'sizeChanged_');
+          this.sizeChanged_();
+        },
+        detached: function () {
+          if (this.sizeWatcher) {
+            this.sizeWatcher.close();
+            this.sizeWatcher = null;
+          }
+        },
+        updateImage: function () {
+          if (this.src && this.imageSize) {
+            this.loading = true;
+            var self = this;
+            Weez.remoteCall({
+              api: 'resource.ImageService',
+              type: 'blob',
+            }, {
+              path: this.src,
+              size: this.getImageSize()
+            }).then(function (data) {
+              self.loading = false;
+              self.hasImage = true;
+              self.$.image.src = window.URL.createObjectURL(data);
+            }, function () {
+              self.loading = false;
+              self.hasImage = false;
+            });
+          }
+        },
+        sizeChanged_: function () {
+          if (this.clientWidth > 0)
+            this.imageSize = getImageSize(this.clientWidth);
+        }
+      });
+    })();
+  </script>
+</polymer-element>

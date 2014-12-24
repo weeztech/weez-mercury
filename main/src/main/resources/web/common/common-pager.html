@@ -1,27 +1,39 @@
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
 <link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
 
-<polymer-element name="common-pager" horizontal layout>
+<polymer-element name="common-pager" vertical layout>
   <template>
     <style>
       :host {
         display: block;
       }
-      core-scroll-threshold {
+      #scrollThreshold {
         display: block;
         overflow: auto;
       }
+      .error {
+        color: red;
+      }
     </style>
     <content id="content" select="template"></content>
-    <core-scroll-threshold id="scrollThreshold" lowerThreshold="20" on-lower-trigger="{{loadMore}}" flex>
+    <core-scroll-threshold id="scrollThreshold" lowerThreshold="{{threshold}}" on-lower-trigger="{{loadMore}}" flex>
       <div id="list"></div>
       <div vertical layout center hide?="{{!loading}}">
         <paper-spinner active></paper-spinner>
+      </div>
+      <div hide?="{{!error}}">
+        <span class="error">从服务器获取数据时发生错误：{{error}}</span>
+        <paper-button on-tap="{{retryAction}}">重试</paper-button>
       </div>
     </core-scroll-threshold>
   </template>
   <script>
     Polymer({
+      publish: {
+        threshold: 20,
+        keywords: ''
+      },
       loading: false,
       hasMore: true,
       domReady: function () {
@@ -37,8 +49,23 @@
         HTMLTemplateElement.decorate(clone, tpl);
         clone.bindingDelegate = this.element.syntax;
         clone.model = this;
+        this.itemTemplate = clone;
         this.isReady = true;
+        this.registerObserver(Weez.watchSize(this, this.fill.bind(this)));
+        this.fill();
+      },
+      detached: function () {
+        if (this.itemTemplate) {
+          this.itemTemplate.unbind('repeat');
+          this.itemTemplate = null;
+        }
+      },
+      keywordsChanged: function () {
         this.reload();
+      },
+      retryAction: function () {
+        this.error = null;
+        this.loadMore();
       },
       reload: function () {
         if (!this.isReady) return;
@@ -46,24 +73,35 @@
         this.items = null;
         this.loadMore();
       },
-      loadMore: function () {
-        if (!this.hasMore) return;
-        var self = this;
-        var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
-        var detail = {
-          start: this.items ? this.items.length : 0,
-          load: function (result) {
-            if (self.msgId != msgId) return;
-            if (detail.filter)
-              detail.filter(result);
-            self.afterQuery(result);
+      fill: function () {
+        this.async(function () {
+          if (this.loading) return;
+          var el = this.$.scrollThreshold;
+          if (el.scrollHeight <= el.clientHeight && el.clientHeight > 0) {
+            this.loadMore();
           }
-        };
+        });
+      },
+      loadMore: function () {
+        if (!this.hasMore || this.error) return;
+        var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+        var detail = {};
         this.beforeQuery(detail);
-        this.asyncFire('query', detail);
+        this.fire('common-query', detail);
+        var result = detail.result;
+        if (!result)
+          throw new Error('no response on common-query');
+        if (!result.then) {
+          result = Promise.resolve(result);
+        }
+        if (detail.filter) result = detail.filter(result);
+        result.then(this.afterQuery.bind(this), this.afterError.bind(this));
       },
       beforeQuery: function (detail) {
+        detail.start = this.items ? this.items.length : 0;
+        detail.keywords = this.keywords;
         this.loading = true;
+        this.error = null;
       },
       afterQuery: function (result) {
         this.hasMore = result.hasMore;
@@ -73,13 +111,10 @@
           this.items = result.items;
         this.loading = false;
         this.$.scrollThreshold.clearLower();
-        this.async(function () {
-          if (this.loading) return;
-          var el = this.$.scrollThreshold;
-          if (el.scrollHeight <= el.clientHeight) {
-            this.loadMore();
-          }
-        });
+        this.fill();
+      },
+      afterError: function (err) {
+        this.error = err.message;
       }
     });
   </script>

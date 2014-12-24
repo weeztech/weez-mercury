@@ -1,0 +1,113 @@
+<polymer-element name="common-script" extends="script">
+  <script>
+    (function () {
+      var scripts = {};
+      var hasEval = detectEval();
+
+      var loadQueue = [];
+
+      function load() {
+        if (loadQueue.length == 0) return;
+        var args = loadQueue[0];
+        var callback = args.pop();
+        var content = args[args.length - 1];
+        var func = scripts[content];
+        if (func || hasEval) {
+          if (!func) {
+            func = Function.apply(null, args);
+            scripts[content] = func;
+          }
+          setTimeout(function () {
+            callback(func);
+          }, 0);
+          loadQueue.shift();
+        } else {
+          var scriptEl = document.createElement('script');
+          args.pop();
+          var src = '(function() { CommonScript.newFunction = function(\'' +
+            args.join(', ') + '\') {' + content + ' }; })();';
+          src = "data:text/javascript;charset=utf-8," + encodeURIComponent(src);
+          scriptEl.src = src;
+          document.body.appendChild(scriptEl);
+          scriptEl.addEventListener('load', function () {
+            scriptEl.parentNode.removeChild(scriptEl);
+            var func = CommonScript.newFunction;
+            CommonScript.newFunction = null;
+            scripts[content] = func;
+            setTimeout(function () {
+              callback(func);
+            }, 0);
+            loadQueue.shift();
+            load();
+          });
+        }
+      }
+
+      var CommonScript = {
+        hasEval: hasEval,
+        makeFunction: function () {
+          var args = Array.prototype.slice.call(arguments);
+          loadQueue.push(args);
+          if (loadQueue.length == 1) {
+            load();
+          }
+        }
+      };
+
+      function detectEval() {
+        if (typeof chrome !== "undefined" && chrome.app && chrome.app.runtime) {
+          return false;
+        }
+        if (navigator.getDeviceStorage) {
+          return false;
+        }
+        try {
+          var f = new Function('', 'return true;');
+          return f();
+        } catch (ex) {
+          return false;
+        }
+      }
+
+      window.CommonScript = CommonScript;
+
+      Polymer({
+        publish: {
+          event: '',
+          target: null
+        },
+        domReady: function () {
+          if (!this.target && this.parentNode)
+            this.target = this.parentNode;
+          var content = this.textContent;
+          if (this.event) {
+            CommonScript.makeFunction('e', content, this.scriptLoaded.bind(this));
+          } else {
+            CommonScript.makeFunction(content, this.scriptLoaded.bind(this));
+          }
+        },
+        detached: function () {
+          if (this.handler) {
+            Polymer.removeEventListener(this.target, this.event, this.handler);
+            this.handler = null;
+          }
+          this.target = null;
+        },
+        scriptLoaded: function (func) {
+          if (this.target) {
+            if (this.event) {
+              var taregt = this.target;
+              this.handler = function () {
+                func.call(target);
+                Polymer.flush();
+              };
+              Polymer.addEventListener(this.target, this.event, this.handler);
+            } else {
+              func.call(this.target);
+            }
+          }
+        }
+      });
+    })();
+  </script>
+</polymer-element>
