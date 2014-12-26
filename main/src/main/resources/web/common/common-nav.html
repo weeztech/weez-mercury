@@ -1,0 +1,51 @@
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+
+<polymer-element name="common-nav">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <section>
+      <content></content>
+    </section>
+    <section class="overmask fade" vertical layout center-center show?="{{loading}}">
+      <paper-spinner active></paper-spinner>
+    </section>
+  </template>
+  <script>
+    Polymer({
+      eventDelegates: {
+        'common-nav': 'navAction'
+      },
+      created: function () {
+        this._navAction = this.element.getEventHandler(this, this, 'navAction');
+      },
+      navAction: function (e, detail) {
+        this.goto(detail);
+      },
+      goto: function (args) {
+        var arr = args.imports;
+        var self = this;
+
+        function load() {
+          self.loading = false;
+          var el = args.type ?
+            document.createElement(args.type) :
+            args.element;
+          while (self.lastChild)
+            self.removeChild(self.lastChild);
+          self.appendChild(el);
+        }
+        if (arr) {
+          if (!Array.isArray(arr)) arr = [arr];
+          this.loading = true;
+          Polymer.import(arr, load);
+        } else {
+          load();
+        }
+      }
+    });
+  </script>
+</polymer-element>

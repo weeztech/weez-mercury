@@ -1,0 +1,137 @@
+<link rel="import" href="../bower_components/core-icons/core-icons.html">
+<link rel="import" href="../bower_components/paper-input/paper-input.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="../common/common-search-selector.html">
+<link rel="import" href="../common/common-form.html">
+<link rel="import" href="../common/common-image.html">
+<link rel="import" href="../common/common-action.html">
+<link rel="import" href="../common/common-search-input.html">
+<link rel="import" href="../common/common-pager.html">
+<link rel="import" href="../common/common-selection.html">
+
+<polymer-element name="main-md" vertical layout>
+  <template>
+    <style>
+      .fade {
+        visibility: hidden;
+      }
+      .fade[show] {
+        visibility: visible;
+      }
+    </style>
+    <section class="toolbar" horizontal layout>
+      <paper-button>
+        <core-icon icon="add"></core-icon>
+        <span>新增</span>
+        <common-action type="common-nav">
+          action: 'add', type: addElement || editElement || detailElement
+        </common-action>
+      </paper-button>
+      <paper-button class="fade" show?="{{selected}}">
+        <core-icon icon="create"></core-icon>
+        <span>修改</span>
+        <common-action type="common-nav">
+          action: 'edit', type: editElement || addElement || detailElement, item: selected
+        </common-action>
+      </paper-button>
+      <paper-button class="fade" show?="{{selected}}">
+        <core-icon icon="remove-circle-outline"></core-icon>
+        <span>停用</span>
+        <common-action type="common-suspend" on-common-suspend="{{suspendAction_}}">
+          item: selected
+        </common-action>
+      </paper-button>
+      <paper-button class="fade" show?="{{selected}}">
+        <core-icon icon="description"></core-icon>
+        <span>详细信息</span>
+        <common-action type="common-nav">
+          action: 'detail', type: detailElement, item: selected
+        </common-action>
+      </paper-button>
+      <paper-button flex-end>
+        <core-icon icon="exit-to-app"></core-icon>
+        <span>返回</span>
+        <common-action type="common-return"></common-action>
+      </paper-button>
+    </section>
+    <section class="list" flex vertical layout>
+      <common-search-input value="{{keywords}}"></common-search-input>
+      <common-pager flex id="pager" keywords="{{keywords}}">
+        <content select="template"></content>
+      </common-pager>
+      <common-selection id="selection" selected="{{selected}}" selectedBox="{{selectedBox}}">
+        <common-selector target="{{$.pager}}"></common-selector>
+      </common-selection>
+    </section>
+    <paper-action-dialog id="delete" heading="确认操作">
+      <p>‘{{this.delete.name}}’已停用，并且当前没有被使用。是否删除该项？</p>
+      <paper-button affirmative>保留</paper-button>
+      <paper-button affirmative>
+        <span>删除</span>
+        <common-action type="common-delete" on-common-delete="{{deleteAction_}}">
+          item: delete
+        </common-action>
+      </paper-button>
+    </paper-action-dialog>
+    <core-overlay id="waiting" backdrop>
+      <paper-spinner active></paper-spinner>
+    </core-overlay>
+    <paper-action-dialog id="error" heading="发生错误">
+      <p>{{error}}</p>
+      <paper-button affirmative>返回</paper-button>
+    </paper-action-dialog>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        addElement: '',
+        detailElement: '',
+        editElement: ''
+      },
+      suspendAction_: function (e, detail) {
+        this.$.waiting.open();
+        var self = this;
+        detail.box = this.selectedBox;
+        this.async(function () {
+          if (!detail.result) {
+            this.$.waiting.close();
+            throw new Error('not implement');
+          }
+          detail.result.then(function (result) {
+            self.$.waiting.close();
+            if (result.delete) {
+              self.delete = detail.item;
+              self.deleteBox = detail.box;
+              self.$.delete.open();
+            }
+          }, function (err) {
+            self.$.waiting.close();
+            self.$.error.open();
+            self.error = err.message;
+          });
+        });
+      },
+      deleteAction_: function (e, detail) {
+        var self = this;
+        this.$.waiting.open();
+        this.async(function () {
+          if (!detail.result) {
+            this.$.waiting.close();
+            throw new Error('not implement');
+          }
+          detail.result.then(function (result) {
+            self.$.waiting.close();
+            var items = self.$.pager.items;
+            var i = items.indexOf(self.deleteBox);
+            if (i >= 0) items.splice(i, 1);
+          }, function (err) {
+            self.$.waiting.close();
+            self.$.error.open();
+            self.error = err.message;
+          });
+        });
+      }
+    });
+  </script>
+</polymer-element>

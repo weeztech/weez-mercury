@@ -4,6 +4,7 @@
 <link rel="import" href="../common/common-form.html">
 <link rel="import" href="../common/common-action.html">
 <link rel="import" href="../common/common-image.html">
+<link rel="import" href="../common/common-search-selector.html">
 
 <polymer-element name="sale-order">
   <template>
@@ -34,20 +35,22 @@
         <common-form-group label="摄影助理">
           <common-search-selector on-common-query="{{assistantQueryAction}}" selected="{{assistants}}">
             <template>
-              <common-action class="assistant" type="common-select">
+              <div class="assistant">
                 <common-image src="{{imgUrl}}"></common-image>
                 <span>{{name}}</span>
-              </common-action>
+                <common-action type="common-select"></common-action>
+              </div>
             </template>
           </common-search-selector>
         </common-form-group>
         <common-form-group label="影棚">
           <common-search-selector on-common-query="{{roomQueryAction}}" selected="{{rooms}}">
             <template>
-              <common-action class="room" type="common-select">
+              <div class="room">
                 <common-image src="{{imgUrl}}"></common-image>
                 <span>{{title}}</span>
-              </common-action>
+                <common-action type="common-select"></common-action>
+              </div>
             </template>
           </common-search-selector>
         </common-form-group>
@@ -60,29 +63,32 @@
                 <paper-input value="{{count}}"></paper-input>
                 <paper-icon-button icon="add" on-tap="{{deviceCountPlus}}"></paper-icon-button>
                 <paper-icon-button icon="remove" on-tap="{{deviceCountSub}}"></paper-icon-button>
-                <common-action type="common-deselect">
-                  <paper-icon-button icon="delete"></paper-icon-button>
-                </common-action>
+                <paper-icon-button icon="delete">
+                  <common-action type="common-deselect"></common-action>
+                </paper-icon-button>
               </div>
             </template>
             <template>
-              <common-action class="device" type="common-select">
+              <div class="device">
                 <common-image src="{{imgUrl}}"></common-image>
                 <span>{{title}}</span>
-              </common-action>
+                <common-action type="common-select"></common-action>
+              </div>
             </template>
           </common-search-selector>
         </common-form-group>
         <common-form-group>
-          <paper-button on-tap="{{saveAction}}">预订</paper-button>
-          <paper-button on-tap="{{checkoutAction}}">出库</paper-button>
+          <div>
+            <paper-button on-tap="{{saveAction}}">预订</paper-button>
+            <paper-button on-tap="{{checkoutAction}}">出库</paper-button>
+          </div>
         </common-form-group>
       </common-form>
     </div>
   </template>
   <script>
     Polymer({
-      query: function (api) {
+      query: function (api, detail) {
         return Weez.remoteCall(api, {
           keywords: detail.keywords,
           start: detail.start,
@@ -90,13 +96,13 @@
         });
       },
       assistantQueryAction: function (e, detail) {
-        detail.result = this.query('product.AssistantSelectService');
+        detail.result = this.query('product.AssistantSelectService', detail);
       },
-      roomQueryAction: function (e) {
-        detail.result = this.query('product.RoomSelectService');
+      roomQueryAction: function (e, detail) {
+        detail.result = this.query('product.RoomSelectService', detail);
       },
       deviceQueryAction: function (e, detail) {
-        detail.result = this.query('product.DeviceSelectService');
+        detail.result = this.query('product.DeviceSelectService', detail);
       },
       deviceCountPlus: function (e) {
         var box = e.target.model;

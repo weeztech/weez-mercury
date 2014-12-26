@@ -1,0 +1,108 @@
+<link rel="import" href="common-md.html">
+
+<polymer-element name="staff-list" extends="common-md">
+  <script>
+    Polymer({
+      eventDelegates: {
+        'common-query': 'queryAction',
+        'common-suspend': 'suspendAction',
+        'common-delete': 'deleteAction'
+      },
+      detailElement: 'staff-detail',
+      queryAction: function (e, detail) {
+        detail.result = Weez.remoteCall('staff.StaffQueryService', {
+          keywords: '',
+          department: this.dept ? this.dept.id : 0,
+          start: detail.start,
+          count: 20
+        });
+      },
+      suspendAction: function (e, detail) {
+        detail.result = Weez.remoteCall('staff.StaffSuspendService', {
+          id: detail.item.id
+        });
+      },
+      deleteAction: function (e, detail) {
+        detail.result = Weez.remoteCall('staff.StaffDeleteService', {
+          id: detail.item.id
+        });
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="staff-detail">
+  <template>
+    <template if="{{mode=='show'}}">
+      <div class="selectable" horizontal layout>
+        <common-image src=""></common-image>
+        <div>
+          <div>
+            <label>姓名：</label><span>{{item.name}}</span>
+          </div>
+          <div>
+            <label>工号：</label><span>{{item.code}}</span>
+          </div>
+        </div>
+      </div>
+      <paper-button>
+        <span>返回</span>
+        <common-action type="common-return"></common-action>
+      </paper-button>
+    </template>
+    <template if="{{mode!='show'}}">
+      <common-form>
+        <template if="{{mode=='add'}}">
+          <common-form-group label="工号">
+            <paper-input value="{{item.code}}"></paper-input>
+          </common-form-group>
+        </template>
+        <template if="{{mode=='edit'}}">
+          <common-form-group label="工号">
+            <span>{{code}}</span>
+          </common-form-group>
+        </template>
+        <common-form-group label="姓名">
+          <paper-input value="{{item.name}}"></paper-input>
+        </common-form-group>
+        <common-form-group label="照片">
+        </common-form-group>
+        <common-form-group>
+          <div horizontal layout center-center>
+            <paper-button on-tap="{{saveAction}}">保存</paper-button>
+            <paper-button>
+              <span>返回</span>
+              <common-action type="common-return"></common-action>
+            </paper-button>
+          </div>
+        </common-form-group>
+      </common-form>
+    </template>
+  </template>
+  <script>
+    Polymer({
+      pageReady: function (args) {
+        this.item = args.item;
+        switch (args.action) {
+        case 'add':
+          this.mode = 'add';
+          break;
+        case 'edit':
+          this.mode = 'edit';
+          break;
+        default:
+          this.mode = 'show';
+          break;
+        }
+      },
+      saveAction: function () {
+        Weez.remoteCall('staff.StaffAddService', {
+          name: this.name,
+          code: this.code
+        }).then(function (resp) {
+          // return
+        });
+      }
+    });
+  </script>
+</polymer-element>

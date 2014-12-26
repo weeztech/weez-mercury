@@ -1,0 +1,43 @@
+<link rel="import" href="common-watcher.html">
+
+<polymer-element name="common-resizable" extends="common-watcher" hide>
+  <script>
+    Polymer({
+      publish: {
+        target: null,
+        bubbling: false
+      },
+      domReady: function () {
+        if (!this.target) {
+          this.target = this.parentNode;
+        }
+      },
+      targetChanged: function () {
+        if (this.target) {
+          this.targetWidth = this.target.offsetWidth;
+          this.targetHeight = this.target.offsetHeight;
+        }
+      },
+      checkpoint: function () {
+        if (!this.target) return;
+        var width = this.target.offsetWidth;
+        var height = this.target.offsetHeight;
+        var oldVisible = this.targetWidth > 0 && this.targetHeight > 0;
+        var newVisible = width > 0 && height > 0;
+        if (oldVisible != newVisible ||
+          newVisible && (width != this.targetWidth || height != this.targetHeight)) {
+          this.targetWidth = width;
+          this.targetHeight = height;
+          this.resized(width, height);
+        }
+      },
+      resized: function (width, height) {
+        this.fire('common-resize', {
+          target: this.target,
+          width: width,
+          height: height
+        }, this, this.bubbling);
+      }
+    });
+  </script>
+</polymer-element>

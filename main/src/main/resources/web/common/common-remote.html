@@ -33,7 +33,7 @@
       };
       p.fail = p['catch'];
       p.fail(function (err) {
-        alert(err.message);
+        console.log(err.stack || err);
       });
       return p;
     }
@@ -76,64 +76,5 @@
     }
 
     scope.remoteCall = remoteCall;
-  })(Weez);
-
-  (function (scope) {
-    var flush = Polymer.flush;
-    var flushing = false;
-    var watchers = [];
-
-    Polymer.flush = function () {
-      flush();
-      if (!flushing) {
-        flushing = true;
-        Polymer.endOfMicrotask(function () {
-          flushing = false;
-          resizeCheckpoint();
-        });
-      }
-    };
-
-    function resizeCheckpoint() {
-      for (var i = 0; i < watchers.length; i++) {
-        var watcher = watchers[i];
-        var width = watcher.element.offsetWidth;
-        var height = watcher.element.offsetHeight;
-        var oldVisible = watcher.width > 0 && watcher.height > 0;
-        var newVisible = width > 0 && height > 0;
-        if (oldVisible != newVisible ||
-          newVisible && (width != watcher.width || height != watcher.height)) {
-          watcher.width = width;
-          watcher.height = height;
-          var callback = watcher.callback;
-          callback(width, height);
-        }
-      }
-    }
-
-    function watcher_close() {
-      watchers.splice(watchers.indexOf(this), 1);
-    }
-
-    function watchSize(el, callback, target) {
-      if (el.nodeType != 1) throw new Error('illegal argument');
-      target = target || el;
-      var func = typeof callback == 'string' ? target[callback] : callback;
-      callback = function () {
-        func.call(target);
-        Polymer.flush();
-      };
-      var w = {
-        element: el,
-        width: el.offsetWidth,
-        height: el.offsetHeight,
-        callback: callback,
-        close: watcher_close
-      };
-      watchers.push(w);
-      return w;
-    }
-
-    scope.watchSize = watchSize;
   })(Weez);
 </script>

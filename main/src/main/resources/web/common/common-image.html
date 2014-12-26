@@ -1,4 +1,5 @@
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="common-resizable.html">
 
 <polymer-element name="common-image">
   <template>
@@ -23,6 +24,7 @@
         background-color: rgba(255, 255, 255, 0.3);
       }
     </style>
+    <common-resizable on-common-resize="{{resizeAction}}"></common-resizable>
     <div class="placeholder" hide?="{{hasImage}}"></div>
     <div class="spinner" vertical layout center hide?="{{!loading}}">
       <paper-spinner active></paper-spinner>
@@ -54,14 +56,7 @@
         hasImage: false,
         loading: false,
         ready: function () {
-          this.sizeWatcher = Weez.watchSize(this, 'sizeChanged_');
-          this.sizeChanged_();
-        },
-        detached: function () {
-          if (this.sizeWatcher) {
-            this.sizeWatcher.close();
-            this.sizeWatcher = null;
-          }
+          this.resizeAction();
         },
         updateImage: function () {
           if (this.src && this.imageSize) {
@@ -83,7 +78,7 @@
             });
           }
         },
-        sizeChanged_: function () {
+        resizeAction: function () {
           if (this.clientWidth > 0)
             this.imageSize = getImageSize(this.clientWidth);
         }

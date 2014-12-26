@@ -6,15 +6,25 @@
   <link rel="stylesheet" href="index.css">
   <script src="bower_components/webcomponentsjs/webcomponents.min.js"></script>
   <link rel="import" href="bower_components/polymer/polymer.html">
-  <link rel="import" href="common/common-framework.html">
-  <link rel="import" href="elements/common-login.html">
 </head>
 
 <body unresolved fullbleed>
-  <common-login></common-login>
-  
-  <link rel="import" href="elements/sale-order.html">
-  <sale-order></sale-order>
+  <app-main></app-main>
+
+  <link rel="import" href="common/common-nav.html">
+
+  <polymer-element name="app-main" extends="common-nav">
+    <script>
+      Polymer({
+        ready: function () {
+          this.goto({
+            type: 'app-login',
+            imports: this.resolvePath('elements/app-login.html')
+          });
+        }
+      });
+    </script>
+  </polymer-element>
 </body>
 
 </html>

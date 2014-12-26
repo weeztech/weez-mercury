@@ -1,0 +1,32 @@
+<polymer-element name="common-watcher">
+  <script>
+    (function () {
+      var flush = Polymer.flush;
+      var flushing = false;
+      var watchers = [];
+
+      Polymer.flush = function () {
+        flush();
+        if (!flushing) {
+          flushing = true;
+          Polymer.endOfMicrotask(function () {
+            flushing = false;
+            for (var i = 0; i < watchers.length; i++) {
+              watchers[i].checkpoint();
+            }
+          });
+        }
+      };
+
+      Polymer({
+        attached: function () {
+          watchers.push(this);
+        },
+        detached: function () {
+          watchers.splice(watchers.indexOf(this), 1);
+        },
+        checkpoint: function () {}
+      });
+    })();
+  </script>
+</polymer-element>

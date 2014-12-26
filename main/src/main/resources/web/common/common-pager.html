@@ -1,6 +1,7 @@
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
 <link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
-<link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/paper-icon-button/paper-icon-button.html">
+<link rel="import" href="common-resizable.html">
 
 <polymer-element name="common-pager" vertical layout>
   <template>
@@ -13,7 +14,8 @@
         overflow: auto;
       }
       .error {
-        color: red;
+        margin-top: 8px;
+        color: #777;
       }
     </style>
     <content id="content" select="template"></content>
@@ -22,10 +24,11 @@
       <div vertical layout center hide?="{{!loading}}">
         <paper-spinner active></paper-spinner>
       </div>
-      <div hide?="{{!error}}">
+      <div hide?="{{!error}}" vertical layout center>
         <span class="error">从服务器获取数据时发生错误：{{error}}</span>
-        <paper-button on-tap="{{retryAction}}">重试</paper-button>
+        <paper-icon-button icon="refresh" on-tap="{{retryAction}}"></paper-icon-button>
       </div>
+      <common-resizable on-common-resize="{{fill}}"></common-resizable>
     </core-scroll-threshold>
   </template>
   <script>
@@ -44,14 +47,17 @@
         if (tpl.hasAttribute('repeat') || tpl.hasAttribute('bind') || tpl.hasAttribute('if'))
           throw new Error('cannot use template with repeat/if/bind attribute');
         var clone = this.ownerDocument.importNode(tpl, false);
-        clone.setAttribute('repeat', '{{items}}');
+        if (clone.hasAttribute('norepeat')) {
+          clone.setAttribute('bind', '{{items}}');
+        } else {
+          clone.setAttribute('repeat', '{{items}}');
+        }
         this.$.list.appendChild(clone);
         HTMLTemplateElement.decorate(clone, tpl);
         clone.bindingDelegate = this.element.syntax;
         clone.model = this;
         this.itemTemplate = clone;
         this.isReady = true;
-        this.registerObserver(Weez.watchSize(this, this.fill.bind(this)));
         this.fill();
       },
       detached: function () {
@@ -115,6 +121,7 @@
       },
       afterError: function (err) {
         this.error = err.message;
+        this.loading = false;
       }
     });
   </script>

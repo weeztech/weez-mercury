@@ -1,50 +1,59 @@
-<polymer-element name="common-capture">
-  <template>
-    <style>
-      :host {
-        display: block;
-      }
-    </style>
-    <content></content>
-  </template>
+<polymer-element name="common-capture" hide>
   <script>
     (function () {
-      var capturedPath = [];
+      var activeCC = {};
 
       Polymer.addEventListener(document, 'tap', updateCapture);
       Polymer.addEventListener(document, 'focus', updateCapture, true);
 
       function updateCapture(e) {
-        clear();
+        var obj = {};
         for (var i = 0; i < e.path.length; i++) {
           var el = e.path[i];
-          if (el.localName == 'common-capture') {
-            el.captured = true;
-            capturedPath.push(el);
+          if (el.commonCapture) {
+            var cc = el.commonCapture;
+            cc.active = true;
+            obj[cc.captureId] = cc;
           }
         }
-      }
-
-      function clear() {
-        for (var i = 0; i < capturedPath.length; i++) {
-          capturedPath[i].captured = false;
+        for (var id in activeCC) {
+          if (!(id in obj))
+            activeCC[id].active = false;
         }
-        capturedPath.length = 0;
+        activeCC = obj;
       }
 
-      function detach(el) {
-        if (capturedPath.indexOf(el) >= 0) clear();
-      }
+      var id = 0;
 
       Polymer({
         publish: {
-          captured: {
-            value: false,
-            reflect: true
-          }
+          target: null,
+          active: false
+        },
+        created: function () {
+          this.captureId = id++;
+        },
+        domReady: function () {
+          if (!this.target)
+            this.target = this.parentNode;
+        },
+        targetChanged: function () {
+          if (this._target)
+            delete this._target.commonCapture;
+          this._target = this.target;
+          if (this._target)
+            this._target.commonCapture = this;
+          this.clear();
         },
         detached: function () {
-          detach(this);
+          if (this._target) {
+            delete this._target.commonCapture;
+            this._target = null;
+          }
+          this.clear();
+        },
+        clear: function () {
+          delete activeCC[this.captureId];
         }
       });
     })();

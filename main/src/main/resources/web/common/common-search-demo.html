@@ -27,9 +27,10 @@
         background: red;
       }
     </style>
-    <common-action type="common-select">
-      <div class="item" selected?="{{selected}}">{{value.num}} {{value.text}}</div>
-    </common-action>
+    <div class="item" selected?="{{selected}}">
+      <span>{{value.num}} {{value.text}}</span>
+      <common-action type="common-select"></common-action>
+    </div>
   </template>
 
   <template is="auto-binding">

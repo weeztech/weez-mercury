@@ -1,4 +1,4 @@
-<polymer-element name="common-action">
+<polymer-element name="common-action" hide>
   <template>
     <style>
       :host {
@@ -11,21 +11,49 @@
   <script>
     Polymer({
       publish: {
+        target: null,
         type: ''
       },
-      eventDelegates: {
-        'tap': 'tapAction'
+      created: function () {
+        this._tapAction = this.element.getEventHandler(this, this, 'tapAction');
+      },
+      domReady: function () {
+        var expressionText = this.innerText.trim();
+        if (expressionText) {
+          try {
+            this.argsExpr = PolymerExpressions.getExpression('{' + expressionText + '}');
+          } catch (ex) {
+            console.error('Failed to create computed property', ex);
+          }
+        }
+        if (!this.target)
+          this.target = this.parentNode;
+      },
+      detached: function () {
+        if (this._target)
+          Polymer.removeEventListener(this._target, 'tap', this._tapAction);
+        this._target = null;
+      },
+      targetChanged: function () {
+        if (this._target)
+          Polymer.removeEventListener(this._target, 'tap', this._tapAction);
+        this._target = this.target;
+        if (this._target)
+          Polymer.addEventListener(this._target, 'tap', this._tapAction);
       },
       tapAction: function (e) {
         if (!this.type) return;
+        var args = this.argsExpr ?
+          this.argsExpr.getValue(
+            this.templateInstance && this.templateInstance.model,
+            null, this.element.syntax) : {};
         var modifier = 0;
         if (e.metaKey) modifier |= 1;
         if (e.ctrlKey) modifier |= 2;
         if (e.altKey) modifier |= 4;
         if (e.shiftKey) modifier |= 8;
-        this.fire(this.type, {
-          modifiers: modifier
-        });
+        args.modifiers = modifier;
+        this.fire(this.type, args);
       }
     });
   </script>

@@ -10,6 +10,12 @@
         this.clear();
         this._multi = this.multi;
       },
+      getSelectedBox: function (key) {
+        var selbox = this.selectedBox;
+        if (selbox) {
+          return selbox[key];
+        }
+      },
       packup: function (items, keyGetter) {
         var boxes = [];
         if (this._multi) {
@@ -209,6 +215,8 @@
               var boxes = [],
                 fromEl = this.lastTap || el.parentNode.firstElementChild,
                 toEl = el;
+              // not support cross level selection
+              if (fromEl.parentNode !== toEl.parentNode) return;
               if (fromEl.compareDocumentPosition(toEl) & Node.DOCUMENT_POSITION_PRECEDING) {
                 toEl = fromEl;
                 fromEl = el;

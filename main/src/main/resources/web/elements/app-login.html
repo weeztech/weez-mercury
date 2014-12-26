@@ -1,38 +1,54 @@
 <link rel="import" href="../bower_components/paper-input/paper-input.html">
 <link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="../common/common-remote.html">
+<link rel="import" href="../common/common-link.html">
 
-<polymer-element name="common-login">
+<polymer-element name="app-login">
   <template>
     <style>
       :host {
         display: block;
+        width: 300px;
+        height: 240px;
+        position: relative;
       }
       paper-input,
       paper-button {
         display: block;
         margin: 5px 15px;
       }
-      .login-form {
-        width: 300px;
-      }
-      .form-title {
-        display: block;
-        font-size: 1.2em;
-        border-bottom: 1px solid #777;
-      }
     </style>
-    <div class="banner">
-
+    <div class="overmask fade" show?="{{mode=='select'}}">
+      <paper-button on-tap="{{loginAction}}">登录</paper-button>
+      <div vertical layout center>
+        <common-link>使用其他账号</common-link>
+      </div>
     </div>
-    <div class="login-form">
-      <span class="form-title">登录</span>
+    <div class="overmask fade" show?="{{mode=='login'}}">
       <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
       <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
       <paper-button on-tap="{{loginAction}}">登录</paper-button>
     </div>
+    <div class="overmask fade" show?="{{mode=='waiting'}}" vertical layout center-center>
+      <paper-spinner active></paper-spinner>
+    </div>
   </template>
   <script>
     Polymer({
+      mode: 'select',
+      ready: function () {
+        Weez.remoteCall('common.LoginCheckService').then(function (resp) {
+          switch (resp.result) {
+          case 0: // success
+            Weez.usid = resp.usid;
+            break;
+          default:
+            alert('用户名或密码错误');
+            break;
+          }
+        });
+      },
       loginAction: function () {
         Weez.remoteCall('common.LoginService', {
           username: this.username,

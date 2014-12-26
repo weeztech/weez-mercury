@@ -19,15 +19,11 @@
   </script>
 </polymer-element>
 
-<polymer-element name="common-form-group">
+<polymer-element name="common-form-group" vertical layout>
   <template>
     <style>
       :host {
         display: block;
-      }
-      * {
-        display: block;
-        width: 100%;
       }
     </style>
     <label>{{label}}</label>
@@ -45,17 +41,19 @@
       },
       updateLabel: function () {
         var inputEl = this.querySelector('paper-input, input, textarea');
-        switch (inputEl.localName) {
-        case 'paper-input':
-          if (!inputEl.label)
-            inputEl.label = this.label;
-          break;
-        case 'input':
-        case 'textarea':
-          if (!inputEl.hasAttribute('placeholder')) {
-            inputEl.setAttribute('placeholder', this.label);
+        if (inputEl) {
+          switch (inputEl.localName) {
+          case 'paper-input':
+            if (!inputEl.label)
+              inputEl.label = this.label;
+            break;
+          case 'input':
+          case 'textarea':
+            if (!inputEl.hasAttribute('placeholder')) {
+              inputEl.setAttribute('placeholder', this.label);
+            }
+            break;
           }
-          break;
         }
       }
     });

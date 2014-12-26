@@ -1,0 +1,31 @@
+<polymer-element name="common-link">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      a {
+        color: #1976D2;
+        text-decoration: none;
+      }
+      a:hover {
+        color: #2196F3;
+      }
+    </style>
+    <a href="{{href}}" on-tap="{{tapAction}}" target="{{target}}">
+      <content></content>
+    </a>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        href: '#',
+        target: ''
+      },
+      tapAction: function (e) {
+        if (!this.target)
+          e.preventDefault();
+      }
+    });
+  </script>
+</polymer-element>
