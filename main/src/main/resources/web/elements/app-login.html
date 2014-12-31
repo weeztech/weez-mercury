@@ -1,5 +1,7 @@
 <link rel="import" href="../bower_components/paper-input/paper-input.html">
 <link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/paper-radio-button/paper-radio-button.html">
+<link rel="import" href="../bower_components/paper-radio-group/paper-radio-group.html">
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
 <link rel="import" href="../common/common-remote.html">
 <link rel="import" href="../common/common-link.html">
@@ -12,6 +14,10 @@
         width: 300px;
         height: 240px;
         position: relative;
+        overflow: hidden;
+      }
+      .fullwidth {
+        width: 100%;
       }
       paper-input,
       paper-button {
@@ -19,16 +25,35 @@
         margin: 5px 15px;
       }
     </style>
-    <div class="overmask fade" show?="{{mode=='select'}}">
-      <paper-button on-tap="{{loginAction}}">登录</paper-button>
+    <div class="overmask slide" show?="{{mode=='login'}}">
+      <div flex>
+        <div class="fullwidth">
+          <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
+        </div>
+        <div class="fullwidth">
+          <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
+        </div>
+      </div>
       <div vertical layout center>
-        <common-link>使用其他账号</common-link>
+        <div class="fullwidth">
+          <paper-button on-tap="{{loginAction}}">登录</paper-button>
+        </div>
       </div>
     </div>
-    <div class="overmask fade" show?="{{mode=='login'}}">
-      <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
-      <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
-      <paper-button on-tap="{{loginAction}}">登录</paper-button>
+    <div class="overmask slide left" show?="{{mode=='select'}}" vertical layout>
+      <div flex horizontal layout center>
+        <paper-radio-group flex>
+          <template repeat="{{sessions}}">
+            <paper-radio-button label="{{name}} - {{code}}"></paper-radio-button>
+          </template>
+        </paper-radio-group>
+      </div>
+      <div vertical layout center>
+        <div class="fullwidth">
+          <paper-button on-tap="{{loginAction}}">登录</paper-button>
+        </div>
+        <common-link on-tap="{{showLoginAction}}">使用其他账号</common-link>
+      </div>
     </div>
     <div class="overmask fade" show?="{{mode=='waiting'}}" vertical layout center-center>
       <paper-spinner active></paper-spinner>
@@ -48,6 +73,9 @@
             break;
           }
         });
+      },
+      showLoginAction: function () {
+        this.mode = 'login';
       },
       loginAction: function () {
         Weez.remoteCall('common.LoginService', {

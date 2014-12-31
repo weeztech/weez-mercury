@@ -10,3 +10,4 @@ object PersonJsonSupport extends DefaultJsonProtocol {
   implicit val name = jsonFormat2(Name)
   implicit val person = jsonFormat1(Person)
 }
+

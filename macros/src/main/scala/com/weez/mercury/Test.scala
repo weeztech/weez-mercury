@@ -3,20 +3,27 @@ package com.weez.mercury
 
 import spray.json._
 
-import scala.reflect.runtime.{universe => ru}
+import scala.reflect.runtime.{universe => ru, ReflectionUtils}
 
 object Test {
   def main(args: Array[String]) = {
-    f(Test)
+    val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
+    val pkg = mirror.staticPackage("com.weez")
+
+    import scala.language.dynamics
+
+    val a = new A
+    val name = a.name[String]
+
   }
 
-  import scala.reflect.runtime.universe._
+  import scala.language.dynamics
 
-  private def f[T: TypeTag](rc: T): Unit = {
-    val tag = implicitly[TypeTag[T]]
-    println(tag.tpe.typeSymbol.fullName)
+  class A extends Dynamic {
+    def selectDynamic[T](name: String): T = {
+      ???
+    }
   }
-
 
 }
 

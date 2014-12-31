@@ -48,6 +48,25 @@ html /deep/ .fade[show] {
   opacity: 1;
   transition: opacity 300ms ease, visibility 0 linear;
 }
+html /deep/ .slide {
+  visibility: hidden;
+  transform: translateX(200%);
+  transition: transform 300ms ease, visibility 0 linear 300ms;
+}
+html /deep/ .slide.left {
+  transform: translateX(-200%);
+}
+html /deep/ .slide.up {
+  transform: translateY(-200%);
+}
+html /deep/ .slide.down {
+  transform: translateY(200%);
+}
+html /deep/ .slide[show] {
+  visibility: visible;
+  transform: translate(0, 0);
+  transition: transform 300ms ease, visibility 0 linear;
+}
 html /deep/ .overmask {
   position: absolute;
   top: 0;
