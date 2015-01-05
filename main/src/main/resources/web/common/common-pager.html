@@ -101,7 +101,7 @@
           result = Promise.resolve(result);
         }
         if (detail.filter) result = detail.filter(result);
-        result.then(this.afterQuery.bind(this), this.afterError.bind(this));
+        result.then(this.afterQuery.bind(this));
       },
       beforeQuery: function (detail) {
         detail.start = this.items ? this.items.length : 0;
@@ -110,6 +110,11 @@
         this.error = null;
       },
       afterQuery: function (result) {
+        if (result instanceof Error) {
+          this.error = err.message;
+          this.loading = false;
+          return;
+        }
         this.hasMore = result.hasMore;
         if (this.items)
           Array.prototype.push.apply(this.items, result.items);
@@ -118,10 +123,6 @@
         this.loading = false;
         this.$.scrollThreshold.clearLower();
         this.fill();
-      },
-      afterError: function (err) {
-        this.error = err.message;
-        this.loading = false;
       }
     });
   </script>

@@ -21,10 +21,14 @@ object HttpServer {
     import Directives._
     ExceptionHandler {
       case ex: ProcessException =>
-        complete(JsObject("error" -> JsNumber(ex.err.code)).toString)
+        complete(JsObject(
+          "error" -> JsString(ex.getMessage),
+          "code" -> JsNumber(ex.err.code)).toString)
       case ex: ModelException =>
         ex.printStackTrace
-        complete(JsObject("error" -> JsNumber(ErrorCode.InvalidRequest.code)).toString)
+        complete(JsObject(
+          "error" -> JsString(ErrorCode.InvalidRequest.message),
+          "code" -> JsNumber(ErrorCode.InvalidRequest.code)).toString)
       case ex: Throwable =>
         ex.printStackTrace
         complete(StatusCodes.InternalServerError)

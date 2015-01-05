@@ -70,11 +70,12 @@
               size: this.getImageSize()
             }).then(function (data) {
               self.loading = false;
+              if (data instanceof Error) {
+                self.hasImage = false;
+                return;
+              }
               self.hasImage = true;
               self.$.image.src = window.URL.createObjectURL(data);
-            }, function () {
-              self.loading = false;
-              self.hasImage = false;
             });
           }
         },

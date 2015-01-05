@@ -1,4 +1,5 @@
-html {
+@import url("theme.css");
+ html {
   -moz-user-select: none;
   -webkit-user-select: none;
   -ms-user-select: none;
@@ -6,26 +7,64 @@ html {
   -o-user-select: none;
 }
 body {
-  font-size: 16px;
   font-family: RobotoDraft, Helvetica, Tahoma, Arial, STXihei, "华文细黑", "Microsoft YaHei", "微软雅黑", SimSun, "宋体", sans-serif;
 }
 html /deep/ paper-button {
-  border: 1px solid #2196F3;
-  color: #333;
+  border: 1px solid #45ada8;
   cursor: pointer;
 }
+html /deep/ paper-button[raised] {
+  border: 0;
+}
 html /deep/ paper-icon-button {
-  color: #333;
   cursor: pointer;
 }
 html /deep/ paper-button:hover,
 html /deep/ paper-icon-button:hover,
 html /deep/ paper-button.active,
 html /deep/ paper-icon-button.active {
-  color: #2196F3;
+  color: #45ada8;
 }
-html /deep/ label {
-  color: #333;
+html /deep/ paper-button[primary] {
+  border: 0;
+  background-color: #45ada8;
+  color: #fff;
+}
+html /deep/[bg-primary] {
+  background-color: #45ada8;
+}
+html /deep/[bg-secondary] {
+  background-color: #547980;
+}
+html /deep/[bg-success] {
+  background-color: #8bc34a;
+}
+html /deep/[bg-info] {
+  background-color: #9de0ad;
+}
+html /deep/[bg-warning] {
+  background-color: #fadd60;
+}
+html /deep/[bg-error] {
+  background-color: #ff8a65;
+}
+html /deep/[ft-primary] {
+  color: #45ada8;
+}
+html /deep/[ft-secondary] {
+  color: #547980;
+}
+html /deep/[ft-success] {
+  color: #8bc34a;
+}
+html /deep/[ft-info] {
+  color: #9de0ad;
+}
+html /deep/[ft-warning] {
+  color: #fadd60;
+}
+html /deep/[ft-error] {
+  color: #ff8a65;
 }
 html /deep/[selectable] {
   -moz-user-select: text;
@@ -33,6 +72,9 @@ html /deep/[selectable] {
   -ms-user-select: text;
   user-select: text;
   -o-user-select: text;
+}
+html /deep/[layout] >[block] {
+  width: 100%;
 }
 html /deep/[fade] {
   visibility: visible;

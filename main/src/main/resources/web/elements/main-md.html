@@ -20,7 +20,7 @@
         visibility: visible;
       }
     </style>
-    <section class="toolbar" horizontal layout>
+    <div class="toolbar" horizontal layout>
       <paper-button>
         <core-icon icon="add"></core-icon>
         <span>新增</span>
@@ -54,8 +54,8 @@
         <span>返回</span>
         <common-action type="common-return"></common-action>
       </paper-button>
-    </section>
-    <section class="list" flex vertical layout>
+    </div>
+    <div class="list" flex vertical layout>
       <common-search-input value="{{keywords}}"></common-search-input>
       <common-pager flex id="pager" keywords="{{keywords}}">
         <content select="template"></content>
@@ -63,7 +63,7 @@
       <common-selection id="selection" selected="{{selected}}" selectedBox="{{selectedBox}}">
         <common-selector target="{{$.pager}}"></common-selector>
       </common-selection>
-    </section>
+    </div>
     <paper-action-dialog id="delete" heading="确认操作">
       <p>‘{{this.delete.name}}’已停用，并且当前没有被使用。是否删除该项？</p>
       <paper-button affirmative>保留</paper-button>

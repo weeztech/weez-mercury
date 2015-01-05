@@ -5,14 +5,14 @@
         display: block;
       }
       a {
-        color: #1976D2;
+        color: #1976D2 !important;
         text-decoration: none;
       }
       a:hover {
-        color: #2196F3;
+        color: #2196F3 !important;
       }
     </style>
-    <a href="{{href}}" on-tap="{{tapAction}}" target="{{target}}">
+    <a link href="{{href}}" on-click="{{clickAction}}" on-tap="{{tapAction}}" target="{{target}}">
       <content></content>
     </a>
   </template>
@@ -20,11 +20,13 @@
     Polymer({
       publish: {
         href: '#',
-        target: ''
+        target: '_blank'
+      },
+      clickAction: function (e) {
+        if (this.href == '#') e.preventDefault();
       },
       tapAction: function (e) {
-        if (!this.target)
-          e.preventDefault();
+        if (this.href == '#') e.preventDefault();
       }
     });
   </script>
