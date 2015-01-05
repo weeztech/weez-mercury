@@ -1,15 +1,31 @@
 package com.weez.mercury
 
-import akka.actor.{Props, ActorSystem}
-import com.typesafe.config.Config
-import com.weez.mercury.common.{ServiceCommand, ServiceManager, Staffs}
-import common.DB.driver.simple._
+import com.typesafe.config.ConfigFactory
+import com.weez.mercury.common._
 
 object Setup {
   def main(args: Array[String]): Unit = {
-    implicit val system = ActorSystem("weez")
-    val ref = system.actorOf(Props(classOf[ServiceManager]), "mercury")
-    ref ! ServiceCommand.Setup
+    import DB.driver.simple._
+    val db = Database.forConfig("weez-mercury.database.writable", ConfigFactory.load(this.getClass.getClassLoader))
+    db.withTransaction { implicit session =>
+      val ddl = ServiceManager.tables.tail.foldLeft(ServiceManager.tables.head.ddl) { (ddl, t) =>
+        ddl ++ t.ddl
+      }
+
+      ddl.dropStatements foreach { s =>
+        session.withTransaction {
+          try {
+            session.withPreparedStatement(s)(_.execute)
+          } catch {
+            case ex: Throwable =>
+              ex.printStackTrace
+          }
+        }
+      }
+      ddl.create
+
+      Staffs +=(1L, "test", "test", Staffs.makePassword("test"))
+    }
   }
 }
 

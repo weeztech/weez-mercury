@@ -9,18 +9,14 @@ body {
   font-size: 16px;
   font-family: RobotoDraft, Helvetica, Tahoma, Arial, STXihei, "华文细黑", "Microsoft YaHei", "微软雅黑", SimSun, "宋体", sans-serif;
 }
-html /deep/[hide] {
-  display: none !important;
-}
-html /deep/ .tap {
-  cursor: pointer;
-}
 html /deep/ paper-button {
   border: 1px solid #2196F3;
   color: #333;
+  cursor: pointer;
 }
 html /deep/ paper-icon-button {
   color: #333;
+  cursor: pointer;
 }
 html /deep/ paper-button:hover,
 html /deep/ paper-icon-button:hover,
@@ -31,46 +27,41 @@ html /deep/ paper-icon-button.active {
 html /deep/ label {
   color: #333;
 }
-html /deep/ .selectable {
+html /deep/[selectable] {
   -moz-user-select: text;
   -webkit-user-select: text;
   -ms-user-select: text;
   user-select: text;
   -o-user-select: text;
 }
-html /deep/ .fade {
-  visibility: hidden;
-  opacity: 0;
-  transition: opacity 300ms ease, visibility 0 linear 300ms;
-}
-html /deep/ .fade[show] {
+html /deep/[fade] {
   visibility: visible;
   opacity: 1;
   transition: opacity 300ms ease, visibility 0 linear;
 }
-html /deep/ .slide {
+html /deep/[fade][hidden] {
+  display: block !important;
   visibility: hidden;
-  transform: translateX(200%);
-  transition: transform 300ms ease, visibility 0 linear 300ms;
+  opacity: 0;
+  transition: opacity 300ms ease, visibility 0 linear 300ms;
 }
-html /deep/ .slide.left {
-  transform: translateX(-200%);
-}
-html /deep/ .slide.up {
-  transform: translateY(-200%);
-}
-html /deep/ .slide.down {
-  transform: translateY(200%);
-}
-html /deep/ .slide[show] {
+html /deep/[slide] {
   visibility: visible;
   transform: translate(0, 0);
   transition: transform 300ms ease, visibility 0 linear;
 }
-html /deep/ .overmask {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+html /deep/[slide][hidden] {
+  display: block !important;
+  visibility: hidden;
+  transform: translateX(200%);
+  transition: transform 300ms ease, visibility 0 linear 300ms;
+}
+html /deep/[slide][left][hidden] {
+  transform: translateX(-200%);
+}
+html /deep/[slide][up][hidden] {
+  transform: translateY(-200%);
+}
+html /deep/[slide][down][hidden] {
+  transform: translateY(200%);
 }

@@ -8,14 +8,11 @@
       :host {
         display: inline-block;
       }
-      [hide] {
-        display: none;
-      }
     </style>
     <div horizontal layout center>
       <paper-icon-button icon="search" on-tap="{{searchAction}}"></paper-icon-button>
       <paper-input flex label="{{label}}" value="{{inputValue}}"></paper-input>
-      <paper-icon-button icon="clear" on-tap="{{clearAction}}" hide?="{{!inputValue}}"></paper-icon-button>
+      <paper-icon-button icon="clear" on-tap="{{clearAction}}" hidden?="{{!inputValue}}"></paper-icon-button>
     </div>
   </template>
   <script>

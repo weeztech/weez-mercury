@@ -9,15 +9,39 @@
 </head>
 
 <body unresolved fullbleed>
-  <app-main></app-main>
-
+  <link rel="import" href="bower_components/paper-spinner/paper-spinner.html">
+  <link rel="import" href="common/common-remote.html">
   <link rel="import" href="common/common-nav.html">
 
-  <polymer-element name="app-main" extends="common-nav">
+  <polymer-element name="app-main">
+    <template>
+      <style>
+        :host {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        common-nav {
+          height: 100%;
+        }
+        .spinner {
+          background-color: rgba(255, 255, 255, 0.3);
+        }
+      </style>
+      <common-nav id="nav"></common-nav>
+      <div class="spinner" fade hidden?="{{initialized}}" fit vertical layout center-center>
+        <paper-spinner active></paper-spinner>
+      </div>
+    </template>
     <script>
       Polymer({
-        ready: function () {
-          this.goto({
+        initialized: false,
+        domReady: function () {
+          Weez.init().then(this.readyAction.bind(this));
+        },
+        readyAction: function () {
+          this.initialized = true;
+          this.$.nav.goto({
             type: 'app-login',
             imports: this.resolvePath('elements/app-login.html')
           });
@@ -25,6 +49,8 @@
       });
     </script>
   </polymer-element>
+
+  <app-main></app-main>
 </body>
 
 </html>

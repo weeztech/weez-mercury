@@ -5,14 +5,15 @@
     <style>
       :host {
         display: block;
+        position: relative;
       }
     </style>
     <section>
       <content></content>
     </section>
-    <section class="overmask fade" vertical layout center-center show?="{{loading}}">
+    <div fit fade hidden?="{{!loading}}" vertical layout center-center>
       <paper-spinner active></paper-spinner>
-    </section>
+    </div>
   </template>
   <script>
     Polymer({

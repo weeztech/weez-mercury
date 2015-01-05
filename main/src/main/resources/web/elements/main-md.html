@@ -28,21 +28,21 @@
           action: 'add', type: addElement || editElement || detailElement
         </common-action>
       </paper-button>
-      <paper-button class="fade" show?="{{selected}}">
+      <paper-button hidden?="{{!selected}}">
         <core-icon icon="create"></core-icon>
         <span>修改</span>
         <common-action type="common-nav">
           action: 'edit', type: editElement || addElement || detailElement, item: selected
         </common-action>
       </paper-button>
-      <paper-button class="fade" show?="{{selected}}">
+      <paper-button hidden?="{{!selected}}">
         <core-icon icon="remove-circle-outline"></core-icon>
         <span>停用</span>
         <common-action type="common-suspend" on-common-suspend="{{suspendAction_}}">
           item: selected
         </common-action>
       </paper-button>
-      <paper-button class="fade" show?="{{selected}}">
+      <paper-button hidden?="{{!selected}}">
         <core-icon icon="description"></core-icon>
         <span>详细信息</span>
         <common-action type="common-nav">

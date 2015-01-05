@@ -2,107 +2,46 @@ package com.weez.mercury.common
 
 import java.util.Arrays
 
-import spray.json.JsString
-
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent._
 import DB.driver.simple._
 
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
-
-    val usid = in.fields.get("usid") match {
-      case Some(JsString(x)) if x.length > 0 => x
-      case _ => ErrorCode.InvalidUSID.raise
-    }
-    val userSession = ss.synchronized {
-      ss.map.get("userSessions").map(_.asInstanceOf[Seq[UserSession]]) match {
-        case Some(uss) =>
-          uss.find(_.id == usid) match {
-            case Some(us) => us
-            case None => ErrorCode.InvalidUSID.raise
-          }
-        case None => ErrorCode.InvalidUSID.raise
-      }
-    }
-    val req = in.fields.getOrElse("request", ErrorCode.InvalidRequest.raise)
-
     getUser(request.username).firstOption match {
-      case Some((userId, pass)) =>
+      case Some((userId, code, name, pass)) =>
         val password = Staffs.makePassword(request.password)
         if (Arrays.equals(password, pass)) {
-          val usid = c.changeUser(userId)
-          Response(0, usid)
+          val usid = session.login(userId, code, name)
+          completeWith("success" -> 1)
         } else {
-          Response(1, "")
+          completeWith("fail" -> 1)
         }
       case None =>
-        Response(2, "")
+        completeWith("fail" -> 2)
     }
   }
-
-  case class Request(username: String, password: String)
-
-  case class Response(result: Int, usid: String)
-
-  val jsonRequest = jsonFormat2(Request)
-  val jsonResponse = jsonFormat2(Response)
 
   val getUser = Compiled((username: Column[String]) => {
-    for (s <- Staffs if s.code === username) yield (s.id, s.password)
+    for (s <- Staffs if s.code === username) yield (s.id, s.code, s.name, s.password)
   })
 
-  def call(c: Context, req: Request): Response = {
-    import java.util.Arrays
+  def getLogins: SimpleCall = c => {
     import c._
-    getUser(req.username).firstOption match {
-      case Some((userId, pass)) =>
-        val password = Staffs.makePassword(req.password)
-        if (Arrays.equals(password, pass)) {
-          val usid = c.changeUser(userId)
-          Response(0, usid)
-        } else {
-          Response(1, "")
-        }
-      case None =>
-        Response(2, "")
+    val builder = Seq.newBuilder[ModelObject]
+    val set = scala.collection.mutable.Set[Long]()
+    sessionsByPeer() foreach { v =>
+      v.loginState match {
+        case Some(x) if !set.contains(x.userId) =>
+          set.add(x.userId)
+          builder += ModelObject(
+            "name" -> x.name,
+            "username" -> x.username
+          )
+        case _ =>
+      }
     }
-  }
-}
-
-object QuickLoginService extends ServiceCall[Context] {
-
-  case class Request(code: String)
-
-  case class Response(result: Int, usid: String)
-
-  val jsonRequest = jsonFormat1(Request)
-  val jsonResponse = jsonFormat2(Response)
-
-  def call(c: Context, req: Request): Response = {
-
-  }
-}
-
-object LoginCheckService extends ServiceCall[Context] {
-
-  case class Request()
-
-  case class Response(logins: Seq[LoginInfo])
-
-  case class LoginInfo(code: String, name: String)
-
-  val jsonRequest = jsonFormat0(Request)
-  val jsonResponse = jsonFormat1(Response)
-
-  def call(c: Context, req: Request): Response = {
-    val password = Staffs.makePassword(req.password)
-    if (Arrays.equals(password, pass)) {
-      val usid = c.changeUser(userId)
-      Response(0, usid)
-    } else {
-      Response(1, "")
-    }
+    completeWith("logins" -> builder.result.sortBy[String](_.name))
   }
 }
 

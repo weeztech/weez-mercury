@@ -1,7 +1,7 @@
 package com.weez.mercury.common
 
 import scala.language.dynamics
-import scala.collection.mutable
+import scala.language.implicitConversions
 import spray.json._
 import DB.driver.simple._
 
@@ -9,56 +9,67 @@ trait RemoteService {
   type SimpleCall = Context => Unit
   type QueryCall = Context with DBQuery => Unit
   type PersistCall = Context with DBPersist => Unit
+
+  def completeWith(fields: (String, Any)*)(implicit c: Context) = {
+    if (c.response == null)
+      c.complete(ModelObject(fields: _*))
+    else
+      c.response.update(fields: _*)
+  }
 }
 
-trait Context extends RemoteDirectives {
+trait Context {
   implicit val context = this
 
-  val session: UserSession
-
-  def loginState: Option[LoginState]
+  val session: Session
 
   def request: ModelObject
 
   def response: ModelObject
 
-  def login(userId: Long): Unit
-
-  def logout(): Unit
-
   def complete(response: ModelObject): Unit
 
+  def sessionsByPeer(peer: String = session.peer): Seq[Session]
 }
 
 trait DBQuery {
   self: Context =>
-  implicit val dbSession: Session
+  implicit val dbSession: DB.driver.simple.Session
 }
 
 trait DBPersist extends DBQuery {
   self: Context =>
 }
 
-trait LoginState {
-  def userId: String
-}
-
-class ModelObject(val map: mutable.Map[String, Any]) extends Dynamic {
+class ModelObject(private var map: Map[String, Any]) extends Dynamic {
   def selectDynamic[T](field: String): T = {
     map.get(field) match {
       case Some(x) =>
-        if (!x.isInstanceOf[T]) throw new ModelException(s"property '$field' has unexpected type")
-        x.asInstanceOf[T]
+        try {
+          x.asInstanceOf[T]
+        } catch {
+          case ex: ClassCastException => throw new ModelException(s"property '$field' has unexpected type")
+        }
       case None => throw new ModelException(s"missing property '$field'")
     }
   }
 
   def updateDynamic(field: String, value: Any): Unit = {
-    map.put(field, value)
+    map += field -> value
+  }
+
+  def hasProperty(name: String) = {
+    map.contains(name)
+  }
+
+  def update(fields: (String, Any)*) = {
+    map ++= fields
   }
 }
 
 object ModelObject {
+  def apply(fields: (String, Any)*) = new ModelObject(fields.toMap)
+
   def parse[A <: JsValue, B](jsValue: A)(implicit c: Converter[A, B]): B = c(jsValue)
 
   def toJson[A, B <: JsValue](value: A)(implicit c: Converter[A, B]): B = c(value)
@@ -68,45 +79,45 @@ object ModelObject {
   implicit def js2model(jsValue: JsValue): Any = {
     jsValue match {
       case JsNull => null
-      case x: JsBoolean => x
-      case x: JsNumber => x
-      case x: JsString => x
-      case x: JsObject => x
-      case x: JsArray => x
+      case x: JsBoolean => jsBool2model(x)
+      case x: JsNumber => jsNum2model(x)
+      case x: JsString => jsStr2model(x)
+      case x: JsObject => jsObj2model(x)
+      case x: JsArray => jsArray2model(x)
     }
   }
 
   implicit def jsObj2model(v: JsObject): ModelObject = {
-    new ModelObject(v.fields.map[_, mutable.Map[String, Any]] { tp => tp._1 -> js2model(tp._2)})
+    new ModelObject(v.fields.map { tp => tp._1 -> js2model(tp._2)})
   }
 
   implicit def jsNum2model(v: JsNumber): AnyVal = {
     if (v.value.isValidInt) v.value.toInt else v.value.toDouble
   }
 
-  implicit def jsNum2model(v: JsBoolean): Boolean = v.value
+  implicit def jsBool2model(v: JsBoolean): Boolean = v.value
 
   implicit def jsStr2model(v: JsString): String = v.value
 
-  implicit def jsArray2model(v: JsArray): Seq[Any] = v.elements.map[_, Seq[Any]](js2model)
+  implicit def jsArray2model(v: JsArray): Seq[Any] = v.elements.map(js2model)
 
   implicit def jsNull2model(v: JsNull.type): Null = null
 
   implicit def model2js(v: Any): JsValue = {
     v match {
       case null => JsNull
-      case x: Int => x
-      case x: Double => x
-      case x: String => x
-      case x: Array[_] => x
-      case x: Iterable[_] => x
-      case x: ModelObject => x
+      case x: Int => model2jsNum(x)
+      case x: Double => model2jsNum(x)
+      case x: String => model2jsStr(x)
+      case x: Array[_] => model2jsArray(x)
+      case x: Iterable[_] => model2jsArray(x)
+      case x: ModelObject => model2jsObj(x)
     }
   }
 
   implicit def model2jsObj(v: ModelObject): JsObject = {
-    JsObject(v.map.map[_, Map[String, JsValue]] { tp =>
-      tp._1 -> model2js(v)
+    JsObject(v.map.map { tp =>
+      tp._1 -> model2js(tp._2)
     })
   }
 
@@ -116,13 +127,13 @@ object ModelObject {
 
   implicit def model2jsStr(v: String): JsString = JsString(v)
 
-  implicit def model2jsArray(v: Array[_]): JsArray = JsArray(v.map[_, Vector[JsValue]](model2js))
-
-  implicit def model2jsArray(v: Iterable[_]): JsArray = JsArray(v.map[_, Vector[JsValue]](model2js))
+  implicit def model2jsArray(v: Iterable[_]): JsArray = {
+    val builder = Vector.newBuilder[JsValue]
+    v foreach {
+      builder += model2js(_)
+    }
+    JsArray(builder.result)
+  }
 }
 
 class ModelException(msg: String) extends Exception(msg)
-
-trait RemoteDirectives {
-
-}

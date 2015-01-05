@@ -2,6 +2,24 @@
   var Weez = {};
 
   (function (scope) {
+    var sid = null;
+
+    function init() {
+      return ajax({
+        method: 'POST',
+        url: '/init',
+        type: 'json',
+        request: null
+      }).then(function (resp) {
+        if (resp.error) {
+          throw processError(resp);
+        }
+        sid = resp.result;
+        if (!sid)
+          throw new Error('invalid session id');
+      });
+    }
+
     function ajax(opts) {
       var xhr = new XMLHttpRequest();
       var cancel = false;
@@ -39,10 +57,11 @@
     }
 
     function remoteCall(opts, obj) {
+      if (!sid) throw new Error('call init() first');
       var api = opts.api || opts;
       var type = opts.type || 'json';
       var request = JSON.stringify({
-        usid: scope.usid || "",
+        sid: sid,
         request: obj
       });
       return ajax({
@@ -76,5 +95,6 @@
     }
 
     scope.remoteCall = remoteCall;
+    scope.init = init;
   })(Weez);
 </script>

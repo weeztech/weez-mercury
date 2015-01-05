@@ -1,5 +1,7 @@
 package com.weez.mercury
 
+import scala.language.implicitConversions
+
 trait Element {
   def html(): String
 }

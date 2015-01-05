@@ -26,5 +26,4 @@ object Util {
       base64.encodeToString(arr, false)
     }
   }
-
 }

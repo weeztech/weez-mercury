@@ -25,11 +25,11 @@
       }
     </style>
     <common-resizable on-common-resize="{{resizeAction}}"></common-resizable>
-    <div class="placeholder" hide?="{{hasImage}}"></div>
-    <div class="spinner" vertical layout center hide?="{{!loading}}">
+    <div class="placeholder" hidden?="{{hasImage}}"></div>
+    <div class="spinner" vertical layout center hidden?="{{!loading}}">
       <paper-spinner active></paper-spinner>
     </div>
-    <img id="image" hide?="{{!hasImage}}">
+    <img id="image" hidden?="{{!hasImage}}">
   </template>
   <script>
     (function () {

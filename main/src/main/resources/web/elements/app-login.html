@@ -25,7 +25,7 @@
         margin: 5px 15px;
       }
     </style>
-    <div class="overmask slide" show?="{{mode=='login'}}">
+    <div fit slide hidden?="{{mode!='login'}}">
       <div flex>
         <div class="fullwidth">
           <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
@@ -40,7 +40,7 @@
         </div>
       </div>
     </div>
-    <div class="overmask slide left" show?="{{mode=='select'}}" vertical layout>
+    <div fit slide left hidden?="{{mode!='select'}}" vertical layout>
       <div flex horizontal layout center>
         <paper-radio-group flex>
           <template repeat="{{sessions}}">
@@ -55,7 +55,7 @@
         <common-link on-tap="{{showLoginAction}}">使用其他账号</common-link>
       </div>
     </div>
-    <div class="overmask fade" show?="{{mode=='waiting'}}" vertical layout center-center>
+    <div fit fade hidden?="{{mode!='waiting'}}" vertical layout center-center>
       <paper-spinner active></paper-spinner>
     </div>
   </template>
@@ -63,7 +63,7 @@
     Polymer({
       mode: 'select',
       ready: function () {
-        Weez.remoteCall('common.LoginCheckService').then(function (resp) {
+        Weez.remoteCall('common.LoginService.getLogins').then(function (resp) {
           switch (resp.result) {
           case 0: // success
             Weez.usid = resp.usid;

@@ -21,10 +21,10 @@
     <content id="content" select="template"></content>
     <core-scroll-threshold id="scrollThreshold" lowerThreshold="{{threshold}}" on-lower-trigger="{{loadMore}}" flex>
       <div id="list"></div>
-      <div vertical layout center hide?="{{!loading}}">
+      <div vertical layout center hidden?="{{!loading}}">
         <paper-spinner active></paper-spinner>
       </div>
-      <div hide?="{{!error}}" vertical layout center>
+      <div hidden?="{{!error}}" vertical layout center>
         <span class="error">从服务器获取数据时发生错误：{{error}}</span>
         <paper-icon-button icon="refresh" on-tap="{{retryAction}}"></paper-icon-button>
       </div>

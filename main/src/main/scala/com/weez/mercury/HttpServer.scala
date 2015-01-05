@@ -13,14 +13,33 @@ import spray.json._
 import com.weez.mercury.common._
 
 object HttpServer {
-  def create(serviceManager: ActorRef)(implicit system: ActorSystem) = {
-    val actor = system.actorOf(Props(classOf[ServerActor], serviceManager), "http")
+  def create(serviceManager: ServiceManager)(implicit system: ActorSystem) = {
+    system.actorOf(Props(classOf[ServerActor], serviceManager), "http")
   }
 
-  class ServerActor(serviceManager: ActorRef) extends HttpServiceActor {
+  implicit def exceptionHandler = {
+    import Directives._
+    ExceptionHandler {
+      case ex: ProcessException =>
+        complete(JsObject("error" -> JsNumber(ex.err.code)).toString)
+      case ex: ModelException =>
+        ex.printStackTrace
+        complete(JsObject("error" -> JsNumber(ErrorCode.InvalidRequest.code)).toString)
+      case ex: Throwable =>
+        ex.printStackTrace
+        complete(StatusCodes.InternalServerError)
+    }
+  }
+
+  class ServerActor(serviceManager: ServiceManager) extends HttpServiceActor {
     val config = context.system.settings.config.getConfig("weez-mercury.http")
     val host = config.getString("host")
     val port = config.getInt("port")
+
+    val webRoot = {
+      val s = System.getProperty("weez.web", "")
+      if (s.endsWith("/")) s.substring(0, s.length - 1) else s
+    }
 
     override def preStart = {
       implicit val system = context.system
@@ -32,36 +51,38 @@ object HttpServer {
       case Tcp.CommandFailed(_: Http.Bind) => context.stop(self)
     }
 
-    private val CookieName_SID = "sid"
+    private val PEER_NAME = "peer"
 
     def route: Receive = runRoute {
       post {
-        cookie(CookieName_SID) { httpCookie =>
-          path("service" / Rest) { clazz => ctx =>
-            import context.dispatcher
-            val p = Promise[JsValue]
-            serviceManager ! WebRequest(httpCookie.value, clazz, ctx.request.entity.asString.parseJson.asJsObject(), p)
-            p.future.onComplete {
-              case Success(out) => ctx.complete(out.toString)
-              case Failure(ex) => ctx.failWith(ex)
+        cookie(PEER_NAME) { peer =>
+          path("init") {
+            withSession(peer.content) { sid =>
+              complete(JsObject("result" -> JsString(sid)).toString)
             }
-          }
-        } ~
-          path("resource" / Rest) { resourceid =>
-            ???
-          }
+          } ~
+            path("service" / Rest) { api =>
+              postRequest(peer.value, api)
+            } ~
+            path("resource" / Rest) { resourceid =>
+              ???
+            }
+        }
       } ~
         get {
-          pathSingleSlash {
-            newSessionId { sid =>
-              setCookie(HttpCookie(CookieName_SID, sid)) {
-                if (webRoot.length == 0)
-                  getFromResource("web/index.html")
-                else
-                  getFromFile(webRoot + "index.html")
+          path("hello") {
+            complete("hello")
+          } ~
+            pathSingleSlash {
+              withPeer { peer =>
+                setCookie(HttpCookie(PEER_NAME, peer)) {
+                  if (webRoot.length == 0)
+                    getFromResource("web/index.html")
+                  else
+                    getFromFile(webRoot + "/index.html")
+                }
               }
-            }
-          } ~ {
+            } ~ {
             if (webRoot.length == 0)
               getFromResourceDirectory("web")
             else
@@ -70,35 +91,33 @@ object HttpServer {
         }
     }
 
-    def newSessionId = new Directive1[String] {
-      def happly(f: String :: HNil => Route) =
-        ctx => {
-          import context.dispatcher
-          import akka.pattern.ask
-          serviceManager.ask(CreateSession).onComplete {
-            case Success(session: UserSession) =>
-              f(session.id :: HNil)(ctx)
-            case _ =>
-              reject(ctx)
-          }
+    def withPeer = new Directive[String :: HNil] {
+      def happly(f: String :: HNil => Route) = ctx => {
+        val sessionManager = serviceManager.sessionManager
+        val peer = ctx.request.cookies.find(_.name == PEER_NAME) match {
+          case Some(x) => sessionManager.createPeer(x.content)
+          case None => sessionManager.createPeer("")
         }
-    }
-
-    implicit def exceptionHandler = {
-      ExceptionHandler {
-        case ex: ProcessException =>
-          complete(JsObject("error" -> JsNumber(ex.err.code)).toString)
-        case ex: Throwable =>
-          complete(StatusCodes.InternalServerError)
+        f(peer :: HNil)(ctx)
       }
     }
 
+    def withSession(peer: String) = new Directive[String :: HNil] {
+      def happly(f: String :: HNil => Route) = ctx => {
+        val sessionManager = serviceManager.sessionManager
+        val session = sessionManager.createSession(peer)
+        f(session.id :: HNil)(ctx)
+      }
+    }
 
-    val webRoot = {
-      var s = System.getProperty("weez.web")
-      if (s == null) s = ""
-      if (!s.endsWith("/")) s += "/"
-      s
+    def postRequest(peer: String, api: String): Route = ctx => {
+      import context.dispatcher
+      val p = Promise[JsValue]
+      serviceManager.postRequest(peer, api, ctx.request.entity.asString.parseJson.asJsObject(), p)
+      p.future.onComplete {
+        case Success(out) => ctx.complete(out.toString)
+        case Failure(ex) => exceptionHandler(ex)(ctx)
+      }
     }
   }
 

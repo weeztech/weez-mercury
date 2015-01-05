@@ -1,7 +1,5 @@
 package com.weez.mercury.common
 
-import com.weez.mercury.common.SessionManager
-
 import scala.language.implicitConversions
 import scala.language.existentials
 import scala.concurrent._
@@ -10,40 +8,40 @@ import spray.json._
 import akka.actor._
 import DB.driver.simple._
 
-class ServiceManager(system: ActorSystem) {
+object ServiceManager {
+  type RemoteContext = Context with DBPersist
 
-  import ServiceManager._
-
-  val sessionManager = new SessionManager(system.settings.config)
-  val db = Database.forConfig("weez-mercury.database", system.settings.config)
-  val serviceActor = system.actorOf(Props(classOf[ServiceManagerActor], this), "service")
-
-  val remoteServices = Seq(
-    LoginService
-  )
+  val remoteServices = {
+    import com.weez.mercury.product._
+    Seq(
+      LoginService,
+      DataService
+    )
+  }
 
   val remoteCallHandlers = {
     import scala.reflect.runtime.{universe => ru}
-    val builder = Map.newBuilder[String, Task]
+    val builder = Map.newBuilder[String, (HandlerType.Value, RemoteContext => Unit)]
     val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
     remoteServices foreach { s =>
       val r = mirror.reflect(s)
       r.symbol.typeSignature.members foreach { member =>
         if (member.isPublic && member.isMethod) {
           val method = member.asMethod
-          if (method.paramLists.length == 0 && method.returnType <:< ru.typeOf[_ => Unit]) {
-            val func = r.reflectMethod(method)
-            val tpe = method.returnType.typeArgs(0)
+          if (method.paramLists.isEmpty) {
+            val tpe = method.returnType
             val htype =
-              if (tpe =:= ru.typeOf[Context with DBPersist])
+              if (tpe <:< ru.typeOf[Context with DBPersist => Unit])
                 HandlerType.Persist
-              else if (tpe =:= ru.typeOf[Context with DBQuery])
+              else if (tpe <:< ru.typeOf[Context with DBQuery => Unit])
                 HandlerType.Query
-              else if (tpe =:= ru.typeOf[Context])
+              else if (tpe <:< ru.typeOf[Context => Unit])
                 HandlerType.Simple
               else null
-            if (htype != null)
-              builder += method.fullName -> Task(htype, func().asInstanceOf[ContextImpl => Unit])
+            if (htype != null) {
+              val func = r.reflectMethod(method)().asInstanceOf[RemoteContext => Unit]
+              builder += method.fullName -> (htype -> func)
+            }
           }
         }
       }
@@ -51,65 +49,28 @@ class ServiceManager(system: ActorSystem) {
     builder.result
   }
 
-  val tables = Seq(
-    com.weez.mercury.common.Staffs,
-    com.weez.mercury.product.Products,
-    com.weez.mercury.product.ProductPrices
-  )
-
-  def createSession() = {
-    sessionManager.createSession()
+  val tables = {
+    import com.weez.mercury._
+    Seq(
+      common.Staffs,
+      product.ProductModels,
+      product.Products,
+      product.ProductPrices,
+      product.Assistants,
+      product.Rooms
+    )
   }
-
-  def postRequest(sid: String, api: String, request: JsObject, p: Promise[JsValue]): Unit = {
-    try {
-      val session = sessionManager.getAndLockSession(sid).getOrElse(ErrorCode.InvalidSID.raise)
-      val task = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      val func = (c: ContextImpl) => {
-        p.complete(Try {
-          c.request = ModelObject.parse(request)
-          task.handle(c)
-          c.finish()
-        })
-        sessionManager.returnAndUnlockSession(session)
-      }
-      serviceActor ! Task(task.tpe, func)
-    } catch {
-      case ex: Throwable => p.failure(ex)
-    }
-  }
-
-  def setup() = {
-    db.withTransaction {
-      implicit session =>
-        tables foreach {
-          x =>
-            try {
-              x.ddl.drop
-            } catch {
-              case _: Throwable =>
-            }
-            x.ddl.create
-        }
-
-        Staffs +=(1L, "000", "admin", Staffs.makePassword("admin"))
-    }
-    system.shutdown()
-  }
-}
-
-object ServiceManager {
 
   object HandlerType extends Enumeration {
     val Simple, Query, Persist = Value
   }
 
-  sealed case class Task(tpe: HandlerType.Value, handle: ContextImpl => Unit)
+  sealed case class Task(tpe: HandlerType.Value, func: DB.driver.simple.Session => JsValue, p: Promise[JsValue])
 
-  class ServiceManagerActor(serviceManager: ServiceManager) extends Actor {
+  class ServiceManagerActor extends Actor {
     val simpleWorker = context.system.actorOf(Props(classOf[SimpleWorkerActor]), "simple-worker")
-    val queryWorker = context.system.actorOf(Props(classOf[QueryWorkerActor], serviceManager.db), "query-worker")
-    val persistWorker = context.system.actorOf(Props(classOf[PersistWorkerActor], serviceManager.db), "persist-worker")
+    val queryWorker = context.system.actorOf(Props(classOf[QueryWorkerActor]), "query-worker")
+    val persistWorker = context.system.actorOf(Props(classOf[PersistWorkerActor]), "persist-worker")
 
     def receive = {
       case x: Task =>
@@ -126,12 +87,13 @@ object ServiceManager {
     private var workerCount = 0
 
     def receive = {
-      case Task(_, func) =>
+      case Task(_, func, p) =>
         import context.dispatcher
         if (workerCount < requestCountLimit) {
           Future {
-            val c = new ContextImpl(null, null)
-            func(c)
+            p.complete(Try {
+              func(null)
+            })
             self ! Done
           }
         } else {
@@ -142,17 +104,18 @@ object ServiceManager {
     }
   }
 
-  class QueryWorkerActor(db: DB.driver.backend.Database) extends Actor {
-    private val maxWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-max")
-    private val minWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-min")
-    private val requestCountLimit = context.system.settings.config.getInt("weez-mercury.query-request-count-limit")
+  class QueryWorkerActor extends Actor {
+    val maxWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-max")
+    val minWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-min")
+    val requestCountLimit = context.system.settings.config.getInt("weez-mercury.query-request-count-limit")
+    val db = Database.forConfig("weez-mercury.database.readonly", context.system.settings.config)
 
-    private val queue = scala.collection.mutable.Queue[(RegWithQueryContext, UserSession, Promise[JsValue])]()
-    private val idle = scala.collection.mutable.Queue[ActorRef]()
-    private var workerCount = 0
+    val queue = scala.collection.mutable.Queue[Task]()
+    val idle = scala.collection.mutable.Queue[ActorRef]()
+    var workerCount = 0
 
     def receive = {
-      case task@(_: RegWithQueryContext, _: UserSession, p: Promise[JsValue]) =>
+      case task@Task(_, _, p) =>
         if (idle.nonEmpty) {
           idle.dequeue() ! task
         } else if (workerCount < maxWorkerCount) {
@@ -183,13 +146,11 @@ object ServiceManager {
       }
 
       def receive = {
-        case (h: RegWithQueryContext, s: UserSession, p: Promise[JsValue]) =>
+        case Task(_, func, p) =>
           p.complete(Try {
-            val c = new ContextImpl(s, dbSession)
             dbSession.withTransaction {
-              h.handle(c)
+              func(dbSession)
             }
-            c.finish()
           })
           sender ! Done
       }
@@ -197,44 +158,69 @@ object ServiceManager {
 
   }
 
-  class PersistWorkerActor(db: DB.driver.backend.Database) extends Actor {
-    private val dbSession = db.createSession()
+  class PersistWorkerActor extends Actor {
+    val db = Database.forConfig("weez-mercury.database.writable", context.system.settings.config)
+    val dbSession = db.createSession()
 
     override def postStop(): Unit = {
       dbSession.close()
     }
 
     def receive = {
-      case (h: RegWithPersistContext, s: UserSession, p: Promise[JsValue]) =>
+      case Task(_, func, p) =>
         p.complete(Try {
-          val c = new ContextImpl(s, dbSession)
           dbSession.withTransaction {
-            h.handle(c)
+            func(dbSession)
           }
-          c.finish()
         })
     }
   }
 
   case object Done
 
-  class ContextImpl(val session: UserSession, val dbSession: DB.driver.simple.Session) extends Context with DBPersist {
-    var loginState: Option[LoginState] = None
+}
 
+class ServiceManager(system: ActorSystem) {
+
+  import ServiceManager._
+
+  val sessionManager = new SessionManager(system.settings.config)
+  val serviceActor = system.actorOf(Props(classOf[ServiceManagerActor]), "service")
+
+  def postRequest(peer: String, api: String, request: JsObject, p: Promise[JsValue])(implicit executor: ExecutionContext): Unit = {
+    try {
+      val mo: ModelObject = ModelObject.parse(request)
+      val s = sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise)
+      val (tpe, handle) = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
+      val func = (db: DB.driver.simple.Session) => {
+        val c = new ContextImpl {
+          val session = s
+          val dbSession = db
+        }
+        c.request = if (mo.hasProperty("request")) mo.request else null
+        handle(c)
+        c.finish()
+      }
+      serviceActor ! Task(tpe, func, p)
+      p.future.onComplete { _ =>
+        sessionManager.returnAndUnlockSession(s)
+      }
+    } catch {
+      case ex: Throwable => p.failure(ex)
+    }
+  }
+
+  trait ContextImpl extends Context with DBPersist {
     var request: ModelObject = null
 
     var response: ModelObject = null
 
-    def login(userId: Long) = {
-      loginState = Some(new LoginStateImpl(userId))
-    }
-
-    def logout() = {
-      loginState = None
-    }
-
     def complete(response: ModelObject) = {
       this.response = response
+    }
+
+    def sessionsByPeer(peer: String) = {
+      sessionManager.getSessionsByPeer(peer)
     }
 
     def finish() = {
@@ -244,9 +230,4 @@ object ServiceManager {
     }
   }
 
-  class LoginStateImpl(val userId: Long) extends LoginState {
-  }
-
 }
-
-

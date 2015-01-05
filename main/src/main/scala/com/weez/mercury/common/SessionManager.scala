@@ -8,29 +8,61 @@ import scala.collection.mutable
 import scala.concurrent.duration._
 
 class SessionManager(config: Config) {
-  val sessions = mutable.Map[String, UserSession]()
+  val sessions = mutable.Map[String, Session]()
+  val peers = mutable.Map[String, Seq[Session]]()
   val sidGen = new Util.RandomIdGenerator(12)
   val sessionTimeout = config.getDuration("weez-mercury.http.session-timeout", TimeUnit.NANOSECONDS)
-  val checkFreq = 5 seconds
+  val checkFreq = 5.seconds
 
   def clean(): Unit = {
     // check session timeout
     val now = System.nanoTime()
-    val arr = mutable.ArrayBuffer[String]()
+    val removes = mutable.ArrayBuffer[String]()
     sessions.synchronized {
       sessions foreach { tp =>
-        if (tp._2.inUse == 0 && now - tp._2.activeTimestamp > sessionTimeout)
-          arr.append(tp._1)
+        val session = tp._2
+        if (session.inUse == 0 && now - session.activeTimestamp > sessionTimeout) {
+          removes.append(session.id)
+          peers(session.peer) match {
+            case Seq(session) => peers.remove(session.peer)
+            case arr => peers.put(session.peer, arr.filterNot(_ eq session))
+          }
+        }
       }
-      arr foreach sessions.remove
+      removes foreach sessions.remove
     }
   }
 
-  def createSession() = {
+  def createPeer(peer: String) = {
     sessions.synchronized {
+      // add a fake session to avoid 'clean'
+      peers.get(peer) match {
+        case Some(x) =>
+          x.find(_.id == peer) match {
+            case Some(s) =>
+              s.activeTimestamp = System.nanoTime()
+            case None =>
+              val s = new Session(peer, peer)
+              peers.put(peer, x :+ s)
+          }
+          peer
+        case None =>
+          val peer = sidGen.newId
+          val session = new Session(peer, peer)
+          sessions.put(peer, session)
+          peers.put(peer, Seq(session))
+          peer
+      }
+    }
+  }
+
+  def createSession(peer: String) = {
+    sessions.synchronized {
+      val arr = peers.getOrElse(peer, ErrorCode.InvalidPeerID.raise)
       val sid = sidGen.newId
-      val session = new UserSession(sid)
+      val session = new Session(sid, peer)
       sessions.put(sid, session)
+      peers.put(peer, arr :+ session)
       session
     }
   }
@@ -44,31 +76,37 @@ class SessionManager(config: Config) {
     }
   }
 
-  def returnAndUnlockSession(session: UserSession) = {
+  def returnAndUnlockSession(session: Session) = {
     sessions.synchronized {
       session.inUse -= 1
       if (session.inUse == 0)
         session.activeTimestamp = System.nanoTime()
     }
   }
-}
 
-
-class UserSession(val id: String) {
-  val createTimestamp = System.nanoTime()
-  private val map = mutable.Map[String, Any]()
-  private[SessionManager] var inUse = 0
-  private[SessionManager] var activeTimestamp = System.nanoTime()
-
-  def use[T](f: mutable.Map[String, Any] => T) = {
-    map.synchronized {
-      f(map)
+  def getSessionsByPeer(peer: String): Seq[Session] = {
+    sessions.synchronized {
+      peers.get(peer) match {
+        case Some(x) => x
+        case None => Nil
+      }
     }
   }
 }
 
-class ViewSession(val id: String, val userId: Long) {
+class Session(val id: String, val peer: String) {
+  val createTimestamp = System.nanoTime()
+  private[common] var inUse = 0
+  private[common] var activeTimestamp = createTimestamp
+
+  private var _loginState: Option[LoginState] = None
   private val map = mutable.Map[String, Any]()
+
+  def loginState = _loginState
+
+  def login(userId: Long, username: String, name: String): Unit = _loginState = Some(LoginState(userId, username, name))
+
+  def logout(): Unit = _loginState = None
 
   def use[T](f: mutable.Map[String, Any] => T): Unit = {
     map.synchronized {
@@ -76,3 +114,5 @@ class ViewSession(val id: String, val userId: Long) {
     }
   }
 }
+
+case class LoginState(userId: Long, username: String, name: String)
