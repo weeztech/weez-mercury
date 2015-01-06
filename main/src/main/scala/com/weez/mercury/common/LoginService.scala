@@ -3,20 +3,20 @@ package com.weez.mercury.common
 import java.util.Arrays
 
 import scala.concurrent._
-import DB.driver.simple._
+import com.weez.mercury.DB._
 
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
     val username: String = request.username
-    val q = for (s <- Staffs if s.code === username) yield (s.id, s.code, s.name, s.password)
+    val q = sql"select id, code, name, password from biz_staffs where code = $username".as[(Long, String, String, Array[Byte])]
     q.firstOption match {
       case Some((userId, code, name, pass)) =>
         val password = Staffs.makePassword(request.password)
         if (!Arrays.equals(password, pass))
           failWith("用户名或密码错误")
         session.login(userId, code, name)
-        completeWith("success" -> 1)
+        completeWith("username" -> code, "name" -> name)
       case None => failWith("用户名或密码错误")
     }
   }
@@ -24,13 +24,12 @@ object LoginService extends RemoteService {
   def getLogins: SimpleCall = c => {
     import c._
     val builder = Seq.newBuilder[ModelObject]
-    val set = scala.collection.mutable.Set[Long]()
+    val set = scala.collection.mutable.Set[String]()
     sessionsByPeer() foreach { s =>
       s.loginState match {
-        case Some(x) if !set.contains(x.userId) =>
-          set.add(x.userId)
+        case Some(x) if !set.contains(x.username) =>
+          set.add(x.username)
           builder += ModelObject(
-            "userId" -> x.userId,
             "username" -> x.username,
             "name" -> x.name
           )
@@ -42,34 +41,20 @@ object LoginService extends RemoteService {
 
   def quickLogin: SimpleCall = c => {
     import c._
-    val userId: String = request.userId
+    val username: String = request.username
     sessionsByPeer() collectFirst {
-      case s if s.loginState.exists(_.userId == userId) =>
+      case s if s.loginState.exists(_.username == username) =>
         s.loginState.get
     } match {
       case Some(x) =>
         session.login(x.userId, x.username, x.name)
-        completeWith("success" -> 1)
+        completeWith("username" -> x.username, "name" -> x.name)
       case None => failWith("用户登录无效")
     }
   }
-}
 
-class Staffs(tag: Tag) extends Table[(Long, String, String, Array[Byte])](tag, "biz_staffs") {
-  def id = column[Long]("id", O.PrimaryKey)
-
-  def code = column[String]("code")
-
-  def name = column[String]("name")
-
-  def password = column[Array[Byte]]("password")
-
-  def * = (id, code, name, password)
-}
-
-object Staffs extends TableQuery(new Staffs(_)) {
-  def makePassword(password: String) = {
-    import java.security.MessageDigest
-    MessageDigest.getInstance("MD5").digest(password.getBytes)
+  def getTime: SimpleCall = c => {
+    import c._
+    completeWith("epoch" -> System.currentTimeMillis())
   }
 }

@@ -3,7 +3,9 @@ package com.weez.mercury.common
 import scala.language.dynamics
 import scala.language.implicitConversions
 import spray.json._
-import DB.driver.simple._
+import com.weez.mercury.DB._
+
+import scala.slick.jdbc.{PositionedResult, GetResult}
 
 trait RemoteService {
   type SimpleCall = Context => Unit
@@ -22,7 +24,7 @@ trait RemoteService {
   }
 }
 
-trait Context {
+trait Context extends Implicits {
   implicit val context = this
 
   val session: Session
@@ -38,7 +40,7 @@ trait Context {
 
 trait DBQuery {
   self: Context =>
-  implicit val dbSession: DB.driver.simple.Session
+  implicit val dbSession: com.weez.mercury.DB.Session
 }
 
 trait DBPersist extends DBQuery {
@@ -72,7 +74,7 @@ class ModelObject(private var map: Map[String, Any]) extends Dynamic {
 }
 
 object ModelObject {
-  def apply(fields: (String, Any)*) = new ModelObject(fields.toMap)
+  def apply(fields: (String, Any)*): ModelObject = new ModelObject(fields.toMap)
 
   def parse[A <: JsValue, B](jsValue: A)(implicit c: Converter[A, B]): B = c(jsValue)
 
@@ -162,3 +164,24 @@ object ModelObject {
 }
 
 class ModelException(msg: String) extends Exception(msg)
+
+trait Implicits {
+  implicit val getResult4modelobject = {
+    GetResult(r => {
+      val builder = Map.newBuilder[String, Any]
+      val meta = r.rs.getMetaData
+      while (r.hasMoreColumns) {
+        builder += meta.getColumnName(r.currentPos) -> r.nextObject()
+      }
+      new ModelObject(builder.result)
+    })
+  }
+
+  implicit def getResult4caseclass1[A, T](f: A => T)(implicit a: GetResult[A]): GetResult[T] = new GetResult[T] {
+    def apply(rs: PositionedResult) = f(rs.<<)
+  }
+
+  implicit def getResult4caseclass2[A, B, T](f: (A, B) => T)(implicit a: GetResult[A], b: GetResult[B]): GetResult[T] = new GetResult[T] {
+    def apply(rs: PositionedResult) = f(rs.<<, rs.<<)
+  }
+}

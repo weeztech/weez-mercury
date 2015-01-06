@@ -33,17 +33,20 @@
           Polymer.addEventListener(this._target, 'tap', this._tapAction);
       },
       tapAction: function (e) {
-        if (!this.type) return;
-        var args = this.argsExpr ?
-          this.argsExpr.getValue(
-            this.templateInstance && this.templateInstance.model,
-            null, this.element.syntax) : {};
         var modifier = 0;
         if (e.metaKey) modifier |= 1;
         if (e.ctrlKey) modifier |= 2;
         if (e.altKey) modifier |= 4;
         if (e.shiftKey) modifier |= 8;
-        args.modifiers = modifier;
+        this.go(modifier);
+      },
+      go: function (modifier) {
+        if (!this.type) return;
+        var args = this.argsExpr ?
+          this.argsExpr.getValue(
+            this.templateInstance && this.templateInstance.model,
+            null, this.element.syntax) : {};
+        args.modifiers = modifier || 0;
         this.fire(this.type, args);
       }
     });

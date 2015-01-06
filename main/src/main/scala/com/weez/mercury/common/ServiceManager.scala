@@ -1,5 +1,7 @@
 package com.weez.mercury.common
 
+import com.weez.mercury.DB
+
 import scala.language.implicitConversions
 import scala.language.existentials
 import scala.concurrent._

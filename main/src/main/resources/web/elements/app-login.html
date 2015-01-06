@@ -24,7 +24,8 @@
         background-color: #f0f7e6;
       }
       paper-input,
-      paper-button {
+      paper-button,
+      paper-radio-button {
         display: block;
         margin: 5px 15px !important;
       }
@@ -41,9 +42,9 @@
     </div>
     <div section-select hidden?="{{waiting || !logins}}" fit slide vertical layout>
       <div flex horizontal layout center>
-        <paper-radio-group flex selected="{{selectedUserId}}" valueattr="user-id">
+        <paper-radio-group flex selected="{{selectedUser}}" valueattr="username">
           <template repeat="{{logins}}">
-            <paper-radio-button label="{{name}} - {{username}}" user-id="{{userId}}"></paper-radio-button>
+            <paper-radio-button label="{{name}} - {{username}}" username="{{username}}"></paper-radio-button>
           </template>
         </paper-radio-group>
       </div>
@@ -66,7 +67,13 @@
         this.waiting = true;
         Weez.remoteCall('common.LoginService.getLogins').then(function (resp) {
           self.waiting = false;
-          self.logins = resp.logins && resp.logins.length > 0 ? resp.logins : null;
+          if (resp.logins && resp.logins.length > 0) {
+            self.logins = resp.logins;
+            self.selectedUser = self.logins[0].username;
+          }else{
+            self.logins = null;
+            self.selectedUser = '';
+          }
         });
       },
       showLoginAction: function () {
@@ -83,6 +90,8 @@
           self.waiting = false;
           if (resp instanceof Error) {
             self.error = resp.toString();
+          } else {
+            self.afterLogin(resp);
           }
         });
       },
@@ -91,12 +100,24 @@
         this.waiting = true;
         this.error = '';
         Weez.remoteCall('common.LoginService.quickLogin', {
-          userId: this.selectedUserId
+          username: this.selectedUser
         }).then(function (resp) {
           self.waiting = false;
           if (resp instanceof Error) {
             self.error = resp.toString();
+          } else {
+            self.afterLogin(resp);
           }
+        });
+      },
+      afterLogin: function (resp) {
+        Weez.user = {
+          username: resp.username,
+          name: resp.name
+        };
+        this.fire('common-nav', {
+          type: 'main-dashboard',
+          imports: this.resolvePath('main-dashboard.html')
         });
       }
     });

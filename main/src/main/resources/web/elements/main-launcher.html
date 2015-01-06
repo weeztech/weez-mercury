@@ -1,5 +1,51 @@
+<link rel="imoprt" href="../common/common-link.html">
+
 <polymer-element name="main-launcher">
   <template>
-    <a>新建出租订单</a>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <template repeat="[[items]]">
+      <common-link on-tap="[[tapAction]]">
+        <span>[[title]]</span>
+      </common-link>
+    </template>
   </template>
+  <script>
+    (function () {
+      var items = [
+        '租出预订|rent-out-new|rent-out.html',
+        '查询租出订单|rent-out-list|rent-out.html',
+        '租入预订|rent-in-new|rent-in.html',
+        '查询租入订单|rent-in-list|rent-in.html',
+        '摄影器材管理|device-list|devices.html',
+        '影棚管理|rooms-list|rooms.html',
+        '员工信息管理|staff-list|staff.html'
+      ];
+
+      Polymer({
+        ready: function () {
+          var arr = [];
+          for (var i = 0; i < items.length; i++) {
+            var a = items[i].split('|');
+            arr.push({
+              title: a[0],
+              type: a[1],
+              imports: this.resolvePath(a[2])
+            })
+          }
+          this.items = arr;
+        },
+        tapAction: function (e) {
+          var m = e.templateInstance.model;
+          this.fire('common-nav', {
+            type: m.type,
+            imports: m.imports
+          });
+        }
+      });
+    })();
+  </script>
 </polymer-element>

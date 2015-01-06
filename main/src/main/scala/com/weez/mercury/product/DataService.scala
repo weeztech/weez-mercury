@@ -1,5 +1,6 @@
 package com.weez.mercury.product
 
+import com.weez.mercury.DB
 import com.weez.mercury.common._
 import DB.driver.simple._
 

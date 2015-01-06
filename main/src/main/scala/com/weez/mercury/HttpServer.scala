@@ -1,5 +1,7 @@
 package com.weez.mercury
 
+import akka.event.Logging.LogLevel
+
 import scala.concurrent.Promise
 import scala.util._
 import shapeless._
@@ -9,6 +11,7 @@ import spray.can.Http
 import spray.routing._
 import spray.http._
 import spray.json._
+import spray.util.LoggingContext
 
 import com.weez.mercury.common._
 
@@ -41,7 +44,7 @@ object HttpServer {
     val port = config.getInt("port")
 
     val webRoot = {
-      val s = System.getProperty("weez.web", "")
+      val s = config.getString("root")
       if (s.endsWith("/")) s.substring(0, s.length - 1) else s
     }
 
@@ -114,12 +117,17 @@ object HttpServer {
       }
     }
 
-    def postRequest(peer: String, api: String): Route = ctx => {
+    def postRequest(peer: String, api: String)(implicit log: LoggingContext): Route = ctx => {
       import context.dispatcher
+      val startTime = System.nanoTime
       val p = Promise[JsValue]
       serviceManager.postRequest(peer, api, ctx.request.entity.asString.parseJson.asJsObject(), p)
       p.future.onComplete {
-        case Success(out) => ctx.complete(out.toString)
+        case Success(out) =>
+          import akka.event.Logging._
+          val costTime = (System.nanoTime - startTime) / 1000000 // ms
+          log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
+          complete(out.toString)(ctx)
         case Failure(ex) => exceptionHandler(ex)(ctx)
       }
     }

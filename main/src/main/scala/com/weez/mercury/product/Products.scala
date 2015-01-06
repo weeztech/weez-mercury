@@ -1,6 +1,7 @@
 package com.weez.mercury.product
 
-import com.weez.mercury.common.DB.driver.simple._
+import com.weez.mercury.DB
+import DB.driver.simple._
 
 class ProductModels(tag: Tag) extends Table[(Long, String, String, Double, String)](tag, "biz_product_models") {
   def id = column[Long]("id", O.PrimaryKey)

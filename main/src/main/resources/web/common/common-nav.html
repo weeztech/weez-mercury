@@ -7,8 +7,11 @@
         display: block;
         position: relative;
       }
+      [section-client] {
+        height: 100%;
+      }
     </style>
-    <div>
+    <div section-client>
       <content></content>
     </div>
     <div fit fade hidden?="{{!loading}}" vertical layout center-center>
@@ -24,6 +27,7 @@
         this._navAction = this.element.getEventHandler(this, this, 'navAction');
       },
       navAction: function (e, detail) {
+        e.stopPropagation();
         this.goto(detail);
       },
       goto: function (args) {
@@ -35,6 +39,7 @@
           var el = args.type ?
             document.createElement(args.type) :
             args.element;
+          el.navArgs = args;
           while (self.lastChild)
             self.removeChild(self.lastChild);
           self.appendChild(el);
