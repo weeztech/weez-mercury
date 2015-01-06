@@ -73,3 +73,5 @@ CREATE TABLE biz_rooms (
   price       DECIMAL(18, 2)     NOT NULL,
   description VARCHAR(254)       NOT NULL
 );
+
+/****/
