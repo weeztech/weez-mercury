@@ -56,9 +56,7 @@ object Context {
 
   type DBSession = simple.Session
 
-  def database(implicit c: ActorContext) = {
-    simple.Database.forConfig("weez-mercury.database.readonly", c.system.settings.config)
-  }
+  val Database = simple.Database
 }
 
 class ModelObject(private var map: Map[String, Any]) extends Dynamic {

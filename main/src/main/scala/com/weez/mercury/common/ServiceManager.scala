@@ -95,10 +95,11 @@ object ServiceManager {
   }
 
   class QueryWorkerActor extends Actor {
-    val maxWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-max")
-    val minWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-min")
-    val requestCountLimit = context.system.settings.config.getInt("weez-mercury.query-request-count-limit")
-    val db = Context.database
+    val config = context.system.settings.config.getConfig("weez-mercury.workers")
+    val maxWorkerCount = config.getInt("query-worker-count-max")
+    val minWorkerCount = config.getInt("query-worker-count-min")
+    val requestCountLimit = config.getInt("query-request-count-limit")
+    val db = Context.Database.forConfig("weez-mercury.database.readonly", context.system.settings.config)
 
     val queue = scala.collection.mutable.Queue[Task]()
     val idle = scala.collection.mutable.Queue[ActorRef]()
@@ -149,7 +150,7 @@ object ServiceManager {
   }
 
   class PersistWorkerActor extends Actor {
-    val db = Database.forConfig("weez-mercury.database.writable", context.system.settings.config)
+    val db = Context.Database.forConfig("weez-mercury.database.writable", context.system.settings.config)
     val dbSession = db.createSession()
 
     override def postStop(): Unit = {
@@ -182,7 +183,7 @@ class ServiceManager(system: ActorSystem) {
       val mo: ModelObject = ModelObject.parse(request)
       val s = sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise)
       val (tpe, handle) = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      val func = (db: DB.driver.simple.Session) => {
+      val func = (db: Context.DBSession) => {
         val c = new ContextImpl {
           val session = s
           val dbSession = db
