@@ -11,9 +11,9 @@ TO 'weez'@'localhost'
 IDENTIFIED BY 'weez';
 
 /** 创建只读用户 **/
-DROP USER 'weez－ro'@'localhost';
+DROP USER 'weez-ro'@'localhost';
 GRANT SELECT, SHOW VIEW ON `weez-mercury`.*
-TO 'weez－ro'@'localhost'
+TO 'weez-ro'@'localhost'
 IDENTIFIED BY 'weez';
 
 /** 员工 **/
