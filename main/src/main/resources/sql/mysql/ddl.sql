@@ -24,10 +24,6 @@ CREATE TABLE biz_staffs (
   password VARBINARY(254)     NOT NULL
 );
 
-INSERT INTO biz_staffs (id, code, name, password)
-VALUES (1, 'test', 'test', 0x098F6BCD4621D373CADE4E832627B4F6);
-
-
 /** 商品模型 **/
 CREATE TABLE biz_product_models (
   id          BIGINT PRIMARY KEY NOT NULL,
