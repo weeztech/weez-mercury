@@ -1,14 +1,11 @@
 package com.weez.mercury.common
 
-import com.weez.mercury.DB
-
 import scala.language.implicitConversions
 import scala.language.existentials
 import scala.concurrent._
 import scala.util._
 import spray.json._
 import akka.actor._
-import DB.driver.simple._
 
 object ServiceManager {
   type RemoteContext = Context with DBPersist
@@ -54,23 +51,11 @@ object ServiceManager {
     builder.result
   }
 
-  val tables = {
-    import com.weez.mercury._
-    Seq(
-      common.Staffs,
-      product.ProductModels,
-      product.Products,
-      product.ProductPrices,
-      product.Assistants,
-      product.Rooms
-    )
-  }
-
   object HandlerType extends Enumeration {
     val Simple, Query, Persist = Value
   }
 
-  sealed case class Task(tpe: HandlerType.Value, func: DB.driver.simple.Session => JsValue, p: Promise[JsValue])
+  sealed case class Task(tpe: HandlerType.Value, func: Context.DBSession => JsValue, p: Promise[JsValue])
 
   class ServiceManagerActor extends Actor {
     val simpleWorker = context.system.actorOf(Props(classOf[SimpleWorkerActor]), "simple-worker")
@@ -113,7 +98,7 @@ object ServiceManager {
     val maxWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-max")
     val minWorkerCount = context.system.settings.config.getInt("weez-mercury.query-worker-count-min")
     val requestCountLimit = context.system.settings.config.getInt("weez-mercury.query-request-count-limit")
-    val db = Database.forConfig("weez-mercury.database.readonly", context.system.settings.config)
+    val db = Context.database
 
     val queue = scala.collection.mutable.Queue[Task]()
     val idle = scala.collection.mutable.Queue[ActorRef]()

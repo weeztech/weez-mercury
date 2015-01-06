@@ -1,18 +1,19 @@
 package com.weez.mercury.common
 
 import java.util.Arrays
-
+import java.security.MessageDigest
 import scala.concurrent._
-import com.weez.mercury.DB._
 
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
     val username: String = request.username
+
+    //import slick.jdbc.GetResult._
     val q = sql"select id, code, name, password from biz_staffs where code = $username".as[(Long, String, String, Array[Byte])]
     q.firstOption match {
       case Some((userId, code, name, pass)) =>
-        val password = Staffs.makePassword(request.password)
+        val password = encodePassword(request.password)
         if (!Arrays.equals(password, pass))
           failWith("用户名或密码错误")
         session.login(userId, code, name)
@@ -56,5 +57,13 @@ object LoginService extends RemoteService {
   def getTime: SimpleCall = c => {
     import c._
     completeWith("epoch" -> System.currentTimeMillis())
+  }
+
+  private val digest = new ThreadLocal[MessageDigest]() {
+    override def initialValue = MessageDigest.getInstance("MD5")
+  }
+
+  def encodePassword(password: String) = {
+    digest.get().digest(password.getBytes("UTF-8"))
   }
 }
