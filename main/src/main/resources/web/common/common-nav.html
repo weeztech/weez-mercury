@@ -21,13 +21,19 @@
   <script>
     Polymer({
       eventDelegates: {
-        'common-nav': 'navAction'
+        'common-nav common-nav-push common-nav-pop': 'navAction',
       },
       created: function () {
         this._navAction = this.element.getEventHandler(this, this, 'navAction');
+        this.stack = [];
       },
       navAction: function (e, detail) {
         e.stopPropagation();
+        if (e.type == 'common-nav-push') {
+          detail.type = 'push';
+        } else if (e.type == 'common-nav-pop') {
+          detail.type = 'pop';
+        }
         this.goto(detail);
       },
       goto: function (args) {
@@ -36,13 +42,17 @@
 
         function load() {
           self.loading = false;
-          var el = args.type ?
-            document.createElement(args.type) :
+          var el = typeof args.element == 'string' ?
+            document.createElement(args.element) :
             args.element;
           el.navArgs = args;
-          while (self.lastChild)
-            self.removeChild(self.lastChild);
-          self.appendChild(el);
+          if (args.stacked) {
+            self.appendChild(el);
+          } else {
+            while (self.lastChild)
+              self.removeChild(self.lastChild);
+            self.appendChild(el);
+          }
         }
         if (arr) {
           if (!Array.isArray(arr)) arr = [arr];

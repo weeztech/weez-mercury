@@ -43,7 +43,7 @@ trait DBQuery extends DBImplicits {
   self: Context =>
   implicit val dbSession: Context.DBSession
 
-  implicit def interpolation(s: StringContext) = new SQLInterpolation(s)
+  implicit def sqlInterpolation(s: StringContext) = new Context.SQLInterpolation(s)
 }
 
 trait DBPersist extends DBQuery {
@@ -57,6 +57,17 @@ object Context {
   type DBSession = simple.Session
 
   val Database = simple.Database
+
+  implicit class SQLInterpolation(val s: StringContext) extends AnyVal {
+    def sql() = new SQLInterpolationResult(s.parts, (), SetParameter.SetUnit)
+
+    def sqlp[P](param: P)(implicit pconv: SetParameter[P]) =
+      new SQLInterpolationResult[P](s.parts, param, pconv)
+
+    def sqlu[P](param: P)(implicit pconv: SetParameter[P]) =
+      sqlp(param).asUpdate
+  }
+
 }
 
 class ModelObject(private var map: Map[String, Any]) extends Dynamic {

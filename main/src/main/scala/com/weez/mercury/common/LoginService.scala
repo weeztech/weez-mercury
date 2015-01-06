@@ -8,9 +8,7 @@ object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
     val username: String = request.username
-
-    //import slick.jdbc.GetResult._
-    val q = sql"select id, code, name, password from biz_staffs where code = $username".as[(Long, String, String, Array[Byte])]
+    val q = sqlp"select id, code, name, password from biz_staffs where code = $username".as[(Long, String, String, Array[Byte])]
     q.firstOption match {
       case Some((userId, code, name, pass)) =>
         val password = encodePassword(request.password)

@@ -22,7 +22,7 @@ object DataService extends RemoteService {
   def availableDevices: QueryCall = c => {
     import c._
     def getProducts(keywords: String, start: Int, count: Int) = {
-      sql"""SELECT id,code,title,price,description FROM biz_product_models
+      sqlp"""SELECT id,code,title,price,description FROM biz_product_models
            WHERE title LIKE CONCAT('%',$keywords,'%') LIMIT $start,$count""".as[ModelObject]
     }
     completeWith("items" -> getProducts(request.keywords, request.start, request.count).list)
