@@ -71,7 +71,7 @@ class Staffs(tag: Tag) extends Table[(Long, String, String, Array[Byte])](tag, "
 
 object Staffs extends TableQuery(new Staffs(_)) {
 
-  import java.security.MessageDigest;
+  import java.security.MessageDigest
   private val digest = new ThreadLocal[MessageDigest]() {
     override def initialValue = MessageDigest.getInstance("MD5")
   }
