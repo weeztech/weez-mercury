@@ -12,83 +12,90 @@
       :host {
         display: block;
         width: 300px;
-        height: 240px;
+        height: 260px;
         position: relative;
         overflow: hidden;
       }
-      .fullwidth {
-        width: 100%;
+      [section-select] {
+        background-color: #f0f7e6;
+        padding: 5px 0;
+      }
+      [section-waiting] {
+        background-color: #f0f7e6;
       }
       paper-input,
       paper-button {
         display: block;
-        margin: 5px 15px;
+        margin: 5px 15px !important;
       }
     </style>
-    <div fit slide hidden?="{{mode!='login'}}">
-      <div flex>
-        <div class="fullwidth">
-          <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
-        </div>
-        <div class="fullwidth">
-          <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
-        </div>
+    <div fit>
+      <div block>
+        <paper-input label="工号" floatingLabel value="{{username}}"></paper-input>
+        <paper-input label="密码" floatingLabel type="password" value="{{password}}"></paper-input>
       </div>
-      <div vertical layout center>
-        <div class="fullwidth">
-          <paper-button on-tap="{{loginAction}}">登录</paper-button>
-        </div>
+      <div>
+        <div ft-error>{{error}}&nbsp;</div>
+        <paper-button primary on-tap="{{loginAction}}">登录</paper-button>
       </div>
     </div>
-    <div fit slide left hidden?="{{mode!='select'}}" vertical layout>
+    <div section-select hidden?="{{waiting || !logins}}" fit slide vertical layout>
       <div flex horizontal layout center>
-        <paper-radio-group flex>
-          <template repeat="{{sessions}}">
-            <paper-radio-button label="{{name}} - {{code}}"></paper-radio-button>
+        <paper-radio-group flex selected="{{selectedUserId}}" valueattr="user-id">
+          <template repeat="{{logins}}">
+            <paper-radio-button label="{{name}} - {{username}}" user-id="{{userId}}"></paper-radio-button>
           </template>
         </paper-radio-group>
       </div>
       <div vertical layout center>
-        <div class="fullwidth">
-          <paper-button on-tap="{{loginAction}}">登录</paper-button>
+        <div block>
+          <paper-button primary on-tap="{{quickLoginAction}}">登录</paper-button>
         </div>
         <common-link on-tap="{{showLoginAction}}">使用其他账号</common-link>
       </div>
     </div>
-    <div fit fade hidden?="{{mode!='waiting'}}" vertical layout center-center>
+    <div section-waiting fit fade hidden?="{{!waiting}}" vertical layout center-center>
       <paper-spinner active></paper-spinner>
     </div>
   </template>
   <script>
     Polymer({
-      mode: 'select',
+      error: '',
       ready: function () {
+        var self = this;
+        this.waiting = true;
         Weez.remoteCall('common.LoginService.getLogins').then(function (resp) {
-          switch (resp.result) {
-          case 0: // success
-            Weez.usid = resp.usid;
-            break;
-          default:
-            alert('用户名或密码错误');
-            break;
-          }
+          self.waiting = false;
+          self.logins = resp.logins && resp.logins.length > 0 ? resp.logins : null;
         });
       },
       showLoginAction: function () {
-        this.mode = 'login';
+        this.logins = null;
       },
       loginAction: function () {
-        Weez.remoteCall('common.LoginService', {
+        var self = this;
+        this.waiting = true;
+        this.error = '';
+        Weez.remoteCall('common.LoginService.login', {
           username: this.username,
           password: this.password
         }).then(function (resp) {
-          switch (resp.result) {
-          case 0: // success
-            Weez.usid = resp.usid;
-            break;
-          default:
-            alert('用户名或密码错误');
-            break;
+          self.waiting = false;
+          if (resp instanceof Error) {
+            self.error = resp.toString();
+          }
+        });
+      },
+      quickLoginAction: function () {
+        var self = this;
+        this.waiting = true;
+        this.error = '';
+        Weez.remoteCall('common.LoginService.quickLogin', {
+          userId: this.selectedUserId
+        }).then(function (resp) {
+          self.waiting = false;
+          if (resp instanceof Error) {
+            self.error = resp.toString();
           }
         });
       }

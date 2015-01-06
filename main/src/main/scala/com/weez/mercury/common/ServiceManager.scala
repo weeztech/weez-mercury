@@ -29,18 +29,21 @@ object ServiceManager {
         if (member.isPublic && member.isMethod) {
           val method = member.asMethod
           if (method.paramLists.isEmpty) {
-            val tpe = method.returnType
-            val htype =
-              if (tpe <:< ru.typeOf[Context with DBPersist => Unit])
-                HandlerType.Persist
-              else if (tpe <:< ru.typeOf[Context with DBQuery => Unit])
-                HandlerType.Query
-              else if (tpe <:< ru.typeOf[Context => Unit])
-                HandlerType.Simple
-              else null
-            if (htype != null) {
-              val func = r.reflectMethod(method)().asInstanceOf[RemoteContext => Unit]
-              builder += method.fullName -> (htype -> func)
+            val tpe = method.returnType.baseType(ru.typeOf[Function1[_, _]].typeSymbol)
+            if (!(tpe =:= ru.NoType)) {
+              val paramType = tpe.typeArgs(0)
+              val htype =
+                if (paramType =:= ru.typeOf[Context with DBPersist])
+                  HandlerType.Persist
+                else if (paramType =:= ru.typeOf[Context with DBQuery])
+                  HandlerType.Query
+                else if (paramType =:= ru.typeOf[Context])
+                  HandlerType.Simple
+                else null
+              if (htype != null) {
+                val func = r.reflectMethod(method)().asInstanceOf[RemoteContext => Unit]
+                builder += method.fullName -> (htype -> func)
+              }
             }
           }
         }
@@ -97,7 +100,7 @@ object ServiceManager {
             self ! Done
           }
         } else {
-          p.failure(ErrorCode.Reject)
+          p.failure(ErrorCode.Reject.exception)
         }
       case Done =>
         workerCount -= 1
@@ -125,7 +128,7 @@ object ServiceManager {
         } else if (queue.size + workerCount < requestCountLimit) {
           queue.enqueue(task)
         } else {
-          p.failure(ErrorCode.Reject)
+          p.failure(ErrorCode.Reject.exception)
         }
       case Done =>
         if (queue.nonEmpty) {

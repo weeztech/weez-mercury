@@ -16,6 +16,10 @@ trait RemoteService {
     else
       c.response.update(fields: _*)
   }
+
+  def failWith(message: String) = {
+    throw new ProcessException(ErrorCode.Fail, message)
+  }
 }
 
 trait Context {
@@ -106,8 +110,15 @@ object ModelObject {
   implicit def model2js(v: Any): JsValue = {
     v match {
       case null => JsNull
+      case x: Byte => model2jsNum(x)
+      case x: Short => model2jsNum(x)
       case x: Int => model2jsNum(x)
+      case x: Long => model2jsNum(x)
+      case x: Float => model2jsNum(x)
       case x: Double => model2jsNum(x)
+      case x: BigInt => model2jsNum(x)
+      case x: BigDecimal => model2jsNum(x)
+      case x: Boolean => model2jsBool(x)
       case x: String => model2jsStr(x)
       case x: Array[_] => model2jsArray(x)
       case x: Iterable[_] => model2jsArray(x)
@@ -121,9 +132,23 @@ object ModelObject {
     })
   }
 
+  implicit def model2jsNum(v: BigInt): JsNumber = JsNumber(v)
+
+  implicit def model2jsNum(v: BigDecimal): JsNumber = JsNumber(v)
+
+  implicit def model2jsNum(v: Byte): JsNumber = JsNumber(v)
+
+  implicit def model2jsNum(v: Short): JsNumber = JsNumber(v)
+
   implicit def model2jsNum(v: Int): JsNumber = JsNumber(v)
 
+  implicit def model2jsNum(v: Long): JsNumber = JsNumber(v)
+
+  implicit def model2jsNum(v: Float): JsNumber = JsNumber(v: Double)
+
   implicit def model2jsNum(v: Double): JsNumber = JsNumber(v)
+
+  implicit def model2jsBool(v: Boolean): JsBoolean = JsBoolean(v)
 
   implicit def model2jsStr(v: String): JsString = JsString(v)
 

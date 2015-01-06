@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 case class ErrorCode(code: Int, message: String) {
   def raise = throw exception
 
-  def exception = new ProcessException(this)
+  def exception = new ProcessException(this, message)
 }
 
 object ErrorCode {
@@ -14,9 +14,8 @@ object ErrorCode {
   val Reject = ErrorCode(802, "the request is not acceptable because too many requests are waiting")
   val InvalidPeerID = ErrorCode(803, "the request contains an invalid peer id")
   val InvalidSessionID = ErrorCode(804, "the request contains an invalid session id")
-
-  implicit def errorcode2exception(err: ErrorCode) = err.exception
+  val Fail = ErrorCode(899, "user operation failed")
 }
 
-class ProcessException(val err: ErrorCode) extends Exception(err.message)
+class ProcessException(val err: ErrorCode, message: String) extends Exception(message)
 

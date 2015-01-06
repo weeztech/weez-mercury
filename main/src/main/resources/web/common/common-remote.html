@@ -1,89 +1,86 @@
+<polymer-element name="common-remote-path" noscript hidden>
+</polymer-element>
+
 <script>
   var Weez = {};
 
   (function (scope) {
     var sid = null;
+    var apiBase;
 
     function init() {
-      return ajax({
-        method: 'POST',
-        url: '/init',
-        type: 'json',
-        request: null
-      }).then(function (resp) {
-        if (resp.error) {
-          throw processError(resp);
-        }
-        sid = resp.result;
-        if (!sid)
-          throw new Error('invalid session id');
+      return new Promise(function (resolve) {
+        Polymer.whenPolymerReady(function () {
+          var elements = Polymer.elements;
+          for (var i = 0; i < elements.length; i++) {
+            var el = elements[i];
+            if (el.name == 'common-remote-path') {
+              var u = new URL('../', el.ownerDocument.baseURI);
+              apiBase = u.href;
+              break;
+            }
+          }
+          if (!apiBase) throw new Error('cannot find api base path');
+          if (apiBase[apiBase.length - 1] == '/')
+            apiBase = apiBase.slice(0, apiBase.length - 1)
+          ajax({
+            method: 'POST',
+            url: apiBase + '/init',
+            type: 'json'
+          }, function (resp) {
+            sid = resp.result;
+            if (!sid)
+              alert('发生故障，请刷新页面');
+            else
+              resolve();
+          });
+        });
       });
     }
 
-    function ajax(opts) {
+    function ajax(opts, callback) {
       var xhr = new XMLHttpRequest();
-      var cancel = false;
-      var done = false;
-      var p = new Promise(function (resolve, reject) {
-        xhr.open(opts.method, opts.url);
-        xhr.send(opts.request);
-        xhr.onreadystatechange = function () {
-          if (cancel) return;
-          if (xhr.readyState == 4) {
-            done = true;
-            if (xhr.status == 200) {
-              resolve(xhr.response);
-            } else {
-              reject(new Error(xhr.status + ' - ' + xhr.statusText));
-            }
+      xhr.open(opts.method, opts.url);
+      xhr.send(opts.request);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState == 4) {
+          if (xhr.status == 200) {
+            callback(xhr.response);
+          } else {
+            callback(new Error(xhr.status + ' - ' + xhr.statusText));
           }
-        };
-        xhr.ontimeout = function () {
-          reject(new Error('timeout'));
-        };
-        xhr.responseType = opts.type;
-      });
-      p.cancel = function () {
-        if (!cancel && !done) {
-          cancel = true;
-          xhr.abort();
         }
       };
-      p.fail = p['catch'];
-      p.fail(function (err) {
-        console.log(err.stack || err);
-      });
-      return p;
+      xhr.ontimeout = function () {
+        callback(new Error('request timeout'));
+      };
+      xhr.responseType = opts.type;
     }
 
     function remoteCall(opts, obj) {
-      if (!sid) throw new Error('call init() first');
+      if (!sid || !apiBase) throw new Error('call init() first');
       var api = opts.api || opts;
       var type = opts.type || 'json';
       var request = JSON.stringify({
         sid: sid,
         request: obj
       });
-      return ajax({
-        method: 'POST',
-        url: '/service/com.weez.mercury.' + api,
-        type: type,
-        request: request
-      }).then(function (resp) {
-        if (type == 'json') {
-          if (resp.error) {
-            reject(processError(resp));
-          } else {
-            resolve(resp.response);
+      return new Promise(function (resolve) {
+        ajax({
+          method: 'POST',
+          url: apiBase + '/service/com.weez.mercury.' + api,
+          type: type,
+          request: request
+        }, function (resp) {
+          if (!(resp instanceof Error) && type == 'json' && resp.error) {
+            resp = processError(resp.code, resp.error);
           }
-        } else {
           resolve(resp);
-        }
+        });
       });
     }
 
-    function processError(json) {
-      var code = json.error;
+    function processError(code, msg) {
       switch (code) {
       case 800: // InvalidRequest: the request contains characters cannot be parsed or has invalid format
         return new Error('800 - 请求无法被服务器处理');
@@ -91,6 +88,11 @@
         return new Error('801 - 请求无法被服务器处理');
       case 802: // Reject: the request is not acceptable because too many requests are waiting
         return new Error('802 - 服务器忙,请稍后重试');
+      case 803:
+      case 804:
+        return new Error(code + ' - 请求无效');
+      case 899: // Fail: user operation failed
+        return new Error('899 - ' + msg);
       }
     }
 

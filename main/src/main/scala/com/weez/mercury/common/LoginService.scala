@@ -8,40 +8,50 @@ import DB.driver.simple._
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
-    getUser(request.username).firstOption match {
+    val username: String = request.username
+    val q = for (s <- Staffs if s.code === username) yield (s.id, s.code, s.name, s.password)
+    q.firstOption match {
       case Some((userId, code, name, pass)) =>
         val password = Staffs.makePassword(request.password)
-        if (Arrays.equals(password, pass)) {
-          val usid = session.login(userId, code, name)
-          completeWith("success" -> 1)
-        } else {
-          completeWith("fail" -> 1)
-        }
-      case None =>
-        completeWith("fail" -> 2)
+        if (!Arrays.equals(password, pass))
+          failWith("用户名或密码错误")
+        session.login(userId, code, name)
+        completeWith("success" -> 1)
+      case None => failWith("用户名或密码错误")
     }
   }
-
-  val getUser = Compiled((username: Column[String]) => {
-    for (s <- Staffs if s.code === username) yield (s.id, s.code, s.name, s.password)
-  })
 
   def getLogins: SimpleCall = c => {
     import c._
     val builder = Seq.newBuilder[ModelObject]
     val set = scala.collection.mutable.Set[Long]()
-    sessionsByPeer() foreach { v =>
-      v.loginState match {
+    sessionsByPeer() foreach { s =>
+      s.loginState match {
         case Some(x) if !set.contains(x.userId) =>
           set.add(x.userId)
           builder += ModelObject(
-            "name" -> x.name,
-            "username" -> x.username
+            "userId" -> x.userId,
+            "username" -> x.username,
+            "name" -> x.name
           )
         case _ =>
       }
     }
     completeWith("logins" -> builder.result.sortBy[String](_.name))
+  }
+
+  def quickLogin: SimpleCall = c => {
+    import c._
+    val userId: String = request.userId
+    sessionsByPeer() collectFirst {
+      case s if s.loginState.exists(_.userId == userId) =>
+        s.loginState.get
+    } match {
+      case Some(x) =>
+        session.login(x.userId, x.username, x.name)
+        completeWith("success" -> 1)
+      case None => failWith("用户登录无效")
+    }
   }
 }
 
