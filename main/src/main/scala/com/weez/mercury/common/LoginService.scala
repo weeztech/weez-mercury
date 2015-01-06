@@ -5,6 +5,8 @@ import java.util.Arrays
 import scala.concurrent._
 import DB.driver.simple._
 
+import scala.slick.ast.ColumnOption.DBType
+
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
     import c._
@@ -68,8 +70,13 @@ class Staffs(tag: Tag) extends Table[(Long, String, String, Array[Byte])](tag, "
 }
 
 object Staffs extends TableQuery(new Staffs(_)) {
+
+  import java.security.MessageDigest;
+  private val digest = new ThreadLocal[MessageDigest]() {
+    override def initialValue = MessageDigest.getInstance("MD5")
+  }
+
   def makePassword(password: String) = {
-    import java.security.MessageDigest
-    MessageDigest.getInstance("MD5").digest(password.getBytes)
+    digest.get().digest(password.getBytes("UTF-8"))
   }
 }
