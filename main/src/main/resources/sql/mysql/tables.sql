@@ -1,20 +1,4 @@
-/** 创建数据库 **/
-DROP DATABASE IF EXISTS `weez-mercury`;
-CREATE DATABASE `weez-mercury`
-  DEFAULT CHARACTER SET utf8;
-USE `weez-mercury`;
-
-/** 创建可读写用户 **/
-DROP USER 'weez'@'localhost';
-GRANT ALL ON `weez-mercury`.*
-TO 'weez'@'localhost'
-IDENTIFIED BY 'weez';
-
-/** 创建只读用户 **/
-DROP USER 'weez-ro'@'localhost';
-GRANT SELECT, SHOW VIEW ON `weez-mercury`.*
-TO 'weez-ro'@'localhost'
-IDENTIFIED BY 'weez';
+/** language=MySQL **/
 
 /** 员工 **/
 CREATE TABLE biz_staffs (
@@ -58,7 +42,7 @@ CREATE TABLE biz_product_prices (
 CREATE TABLE biz_assistants (
   id          BIGINT PRIMARY KEY NOT NULL,
   price       DOUBLE             NOT NULL,
-  description VARCHAR(254)       NOT NULL,
+  description VARCHAR(254),
   FOREIGN KEY (id) REFERENCES biz_staffs (id)
 );
 
@@ -67,7 +51,12 @@ CREATE TABLE biz_rooms (
   id          BIGINT PRIMARY KEY NOT NULL,
   title       VARCHAR(254)       NOT NULL,
   price       DECIMAL(18, 2)     NOT NULL,
-  description VARCHAR(254)       NOT NULL
+  description VARCHAR(254)
 );
 
-/****/
+/** 仓库 **/
+CREATE TABLE biz_stocks (
+  id    BIGINT PRIMARY KEY NOT NULL,
+  code  VARCHAR(254)       NOT NULL,
+  title VARCHAR(254)       NOT NULL
+)
