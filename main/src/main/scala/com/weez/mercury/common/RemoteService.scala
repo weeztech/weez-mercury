@@ -28,7 +28,7 @@ trait RemoteService {
 trait Context {
   implicit val context = this
 
-  val session: Session
+  def session: Session
 
   def request: ModelObject
 

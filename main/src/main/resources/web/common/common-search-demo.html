@@ -15,7 +15,6 @@
   <link rel="import" href="../common/common-search-input.html">
   <link rel="import" href="../common/common-pager.html">
   <link rel="import" href="../common/common-selection.html">
-  <link rel="import" href="../common/common-action.html">
   <link rel="import" href="../common/common-search-selector.html">
 
   <template id="tpl">
@@ -24,9 +23,8 @@
         background: red;
       }
     </style>
-    <div class="item" selected?="{{selected}}">
+    <div class="item" selected?="{{selected}}" on-tap="{{selectAction}}">
       <span>{{value.num}} {{value.text}}</span>
-      <common-action type="common-select"></common-action>
     </div>
   </template>
 
@@ -89,6 +87,9 @@
         i.num = k;
       });
       var tpl = e.target;
+      tpl.selectAction = function(e) {
+        e.target.fire('common-select');
+      };
       tpl.queryAction = function (e, detail) {
         console.log('query with keywords: %s', detail.keywords);
         detail.result = new Promise(function (resolve) {

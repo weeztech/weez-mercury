@@ -1,5 +1,6 @@
 package com.weez.mercury.product
 
+import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common._
 
 import scala.slick.jdbc.SetParameter
@@ -28,3 +29,27 @@ object DataService extends RemoteService {
     completeWith("items" -> getProducts(request.keywords, request.start, request.count).list)
   }
 }
+
+
+case class Customer()
+
+case class SaleOrder(code: String, time: DateTime, customer: Ref[Customer], rooms: KeyCollection[SaleOrder.RoomItem], ctime: DateTime)
+
+object SaleOrder extends DBObjectType[SaleOrder] {
+  def nameInDB = "sale-order"
+
+  def code = column[String]("code")
+
+  def dept = column[Dept]("dept")
+
+  def access = column[KeyCollection[Dept]]("access")
+
+  case class RoomItem(room: Ref[Room], startTime: DateTime, endTime: DateTime)
+
+}
+
+object SaleOrderCollection extends RootCollection[SaleOrder] {
+  def byUsername = defUniqueIndex("by-username", User.name)
+}
+
+case class Room(code: String)

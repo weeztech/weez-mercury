@@ -21,11 +21,12 @@
   <script>
     Polymer({
       eventDelegates: {
-        'common-nav common-nav-push common-nav-pop': 'navAction',
+        'common-nav': 'navAction',
+        'common-nav-push': 'navAction',
+        'common-nav-pop': 'navAction'
       },
       created: function () {
         this._navAction = this.element.getEventHandler(this, this, 'navAction');
-        this.stack = [];
       },
       navAction: function (e, detail) {
         e.stopPropagation();

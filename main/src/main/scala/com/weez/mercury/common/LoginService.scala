@@ -65,3 +65,9 @@ object LoginService extends RemoteService {
     digest.get().digest(password.getBytes("UTF-8"))
   }
 }
+
+import com.weez.mercury._
+
+object Staffs extends DBCollection {
+
+}

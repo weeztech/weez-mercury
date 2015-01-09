@@ -5,7 +5,6 @@
 <link rel="import" href="../common/common-search-selector.html">
 <link rel="import" href="../common/common-form.html">
 <link rel="import" href="../common/common-image.html">
-<link rel="import" href="../common/common-action.html">
 <link rel="import" href="../common/common-search-input.html">
 <link rel="import" href="../common/common-pager.html">
 <link rel="import" href="../common/common-selection.html">
@@ -21,38 +20,29 @@
       }
     </style>
     <div class="toolbar" horizontal layout>
-      <paper-button>
+      <paper-button on-tap="{{navAction}}" action="add">
         <core-icon icon="add"></core-icon>
         <span>新增</span>
-        <common-action type="common-nav">
-          action: 'add', type: addElement || editElement || detailElement
-        </common-action>
       </paper-button>
-      <paper-button hidden?="{{!selected}}">
+      <paper-button on-tap="{{navAction}}" action="edit" hidden?="{{!selected}}">
         <core-icon icon="create"></core-icon>
         <span>修改</span>
-        <common-action type="common-nav">
-          action: 'edit', type: editElement || addElement || detailElement, item: selected
-        </common-action>
       </paper-button>
-      <paper-button hidden?="{{!selected}}">
+      <paper-button on-tap="{{editAction}}" action="enable" hidden?="{{!selected}}">
+        <core-icon icon="done"></core-icon>
+        <span>启用</span>
+      </paper-button>
+      <paper-button on-tap="{{editAction}}" action="disable" hidden?="{{!selected}}">
         <core-icon icon="remove-circle-outline"></core-icon>
         <span>停用</span>
-        <common-action type="common-suspend" on-common-suspend="{{suspendAction_}}">
-          item: selected
-        </common-action>
       </paper-button>
-      <paper-button hidden?="{{!selected}}">
+      <paper-button on-tap="{{navAction}}" action="detail" hidden?="{{!selected}}">
         <core-icon icon="description"></core-icon>
         <span>详细信息</span>
-        <common-action type="common-nav">
-          action: 'detail', type: detailElement, item: selected
-        </common-action>
       </paper-button>
-      <paper-button flex-end>
+      <paper-button on-tap="{{navAction}}" action="return" flex-end>
         <core-icon icon="exit-to-app"></core-icon>
         <span>返回</span>
-        <common-action type="common-return"></common-action>
       </paper-button>
     </div>
     <div class="list" flex vertical layout>
@@ -65,18 +55,13 @@
       </common-selection>
     </div>
     <paper-action-dialog id="delete" heading="确认操作">
-      <p>‘{{this.delete.name}}’已停用，并且当前没有被使用。是否删除该项？</p>
+      <p>‘{{this.selected.name}}’已停用，并且当前没有被使用。是否删除该项？</p>
       <paper-button affirmative>保留</paper-button>
-      <paper-button affirmative>
-        <span>删除</span>
-        <common-action type="common-delete" on-common-delete="{{deleteAction_}}">
-          item: delete
-        </common-action>
-      </paper-button>
+      <paper-button affirmative on-tap="{{editAction}}" action="delete">删除</paper-button>
     </paper-action-dialog>
-    <core-overlay id="waiting" backdrop>
+    <div fit fade hidden?="{{!waiting}}">
       <paper-spinner active></paper-spinner>
-    </core-overlay>
+    </div>
     <paper-action-dialog id="error" heading="发生错误">
       <p>{{error}}</p>
       <paper-button affirmative>返回</paper-button>
@@ -85,52 +70,69 @@
   <script>
     Polymer({
       publish: {
-        addElement: '',
-        detailElement: '',
-        editElement: ''
+        addElement: null,
+        detailElement: null,
+        editElement: null
       },
-      suspendAction_: function (e, detail) {
-        this.$.waiting.open();
-        var self = this;
-        detail.box = this.selectedBox;
-        this.async(function () {
-          if (!detail.result) {
-            this.$.waiting.close();
-            throw new Error('not implement');
-          }
-          detail.result.then(function (result) {
-            self.$.waiting.close();
+      navAction: function (e) {
+        var el = e.target,
+          action = el.getAttribute('action');
+        if (action == 'return') {
+          this.fire('common-nav-pop');
+        } else {
+          this.fire('common-nav-push', {
+            action: action,
+            item: this.selected,
+            element: this[action + 'Element'] || this.detailElement
+          });
+        }
+      },
+      editAction: function (e) {
+        if (!this.selected) return;
+        var action = e.target.getAttribute('action');
+        var box = this[action + 'Box'] || this.selectedBox;
+        this.edit({
+          action: action,
+          box: box,
+          item: box.value
+        });
+      },
+      edit: function (args) {
+        this.waiting = true;
+        this[args.action + 'Box'] = args.box;
+        var result = this.editData(args);
+        if (result.then) {
+          result.then(this.afterEdit.bind(this, args));
+        } else {
+          this.afterEdit(args, result);
+        }
+      },
+      editData: function () {
+        return new Error('not implemented');
+      },
+      afterEdit: function (args, result) {
+        this.waiting = false;
+        if (result instanceof Error) {
+          this.$.error.open();
+          this.error = err.message;
+        } else {
+          this[args.action + 'Box'] = null;
+          switch (args.action) {
+          case 'enable':
+            break;
+          case 'disable':
             if (result.delete) {
-              self.delete = detail.item;
-              self.deleteBox = detail.box;
-              self.$.delete.open();
+              this.deleteBox = args.box;
+              this.$.delete.open();
             }
-          }, function (err) {
-            self.$.waiting.close();
-            self.$.error.open();
-            self.error = err.message;
-          });
-        });
-      },
-      deleteAction_: function (e, detail) {
-        var self = this;
-        this.$.waiting.open();
-        this.async(function () {
-          if (!detail.result) {
-            this.$.waiting.close();
-            throw new Error('not implement');
-          }
-          detail.result.then(function (result) {
-            self.$.waiting.close();
-            var items = self.$.pager.items;
-            var i = items.indexOf(self.deleteBox);
+            break;
+          case 'delete':
+            var items = this.$.pager.items;
+            var i = items.indexOf(box);
             if (i >= 0) items.splice(i, 1);
-          }, function (err) {
-            self.$.waiting.close();
-            self.$.error.open();
-            self.error = err.message;
-          });
-        });
+            break;
+          }
+        }
       }
     });
   </script>

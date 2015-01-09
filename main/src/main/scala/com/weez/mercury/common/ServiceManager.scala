@@ -1,5 +1,8 @@
 package com.weez.mercury.common
 
+import com.typesafe.config.Config
+import com.weez.mercury.common.Context.DBSession
+
 import scala.language.implicitConversions
 import scala.language.existentials
 import scala.concurrent._
@@ -55,156 +58,121 @@ object ServiceManager {
     val Simple, Query, Persist = Value
   }
 
-  sealed case class Task(tpe: HandlerType.Value, func: Context.DBSession => JsValue, p: Promise[JsValue])
-
-  class ServiceManagerActor extends Actor {
-    val simpleWorker = context.system.actorOf(Props(classOf[SimpleWorkerActor]), "simple-worker")
-    val queryWorker = context.system.actorOf(Props(classOf[QueryWorkerActor]), "query-worker")
-    val persistWorker = context.system.actorOf(Props(classOf[PersistWorkerActor]), "persist-worker")
-
-    def receive = {
-      case x: Task =>
-        x.tpe match {
-          case HandlerType.Persist => simpleWorker ! x
-          case HandlerType.Query => queryWorker ! x
-          case HandlerType.Simple => persistWorker ! x
-        }
-    }
-  }
-
-  class SimpleWorkerActor extends Actor {
-    private val requestCountLimit = context.system.settings.config.getInt("weez-mercury.simple-request-count-limit")
-    private var workerCount = 0
-
-    def receive = {
-      case Task(_, func, p) =>
-        import context.dispatcher
-        if (workerCount < requestCountLimit) {
-          Future {
-            p.complete(Try {
-              func(null)
-            })
-            self ! Done
-          }
-        } else {
-          p.failure(ErrorCode.Reject.exception)
-        }
-      case Done =>
-        workerCount -= 1
-    }
-  }
-
-  class QueryWorkerActor extends Actor {
-    val config = context.system.settings.config.getConfig("weez-mercury.workers")
-    val maxWorkerCount = config.getInt("query-worker-count-max")
-    val minWorkerCount = config.getInt("query-worker-count-min")
-    val requestCountLimit = config.getInt("query-request-count-limit")
-    val db = Context.Database.forConfig("weez-mercury.database.readonly", context.system.settings.config)
-
-    val queue = scala.collection.mutable.Queue[Task]()
-    val idle = scala.collection.mutable.Queue[ActorRef]()
-    var workerCount = 0
-
-    def receive = {
-      case task@Task(_, _, p) =>
-        if (idle.nonEmpty) {
-          idle.dequeue() ! task
-        } else if (workerCount < maxWorkerCount) {
-          val worker = context.actorOf(Props(new WorkerActor))
-          worker ! task
-          workerCount += 1
-        } else if (queue.size + workerCount < requestCountLimit) {
-          queue.enqueue(task)
-        } else {
-          p.failure(ErrorCode.Reject.exception)
-        }
-      case Done =>
-        if (queue.nonEmpty) {
-          sender ! queue.dequeue()
-        } else if (workerCount > minWorkerCount) {
-          context.stop(sender)
-          workerCount -= 1
-        } else {
-          idle.enqueue(sender)
-        }
-    }
-
-    class WorkerActor extends Actor {
-      private val dbSession = db.createSession()
-
-      override def postStop(): Unit = {
-        dbSession.close()
-      }
-
-      def receive = {
-        case Task(_, func, p) =>
-          p.complete(Try {
-            dbSession.withTransaction {
-              func(dbSession)
-            }
-          })
-          sender ! Done
-      }
-    }
-
-  }
-
-  class PersistWorkerActor extends Actor {
-    val db = Context.Database.forConfig("weez-mercury.database.writable", context.system.settings.config)
-    val dbSession = db.createSession()
-
-    override def postStop(): Unit = {
-      dbSession.close()
-    }
-
-    def receive = {
-      case Task(_, func, p) =>
-        p.complete(Try {
-          dbSession.withTransaction {
-            func(dbSession)
-          }
-        })
-    }
-  }
-
-  case object Done
-
 }
 
 class ServiceManager(system: ActorSystem) {
 
   import ServiceManager._
 
+  val taskHandlers = Map[HandlerType.Value, TaskHandler](
+    HandlerType.Simple -> new TaskHandler("simple"),
+    HandlerType.Query -> new TaskHandler("query"),
+    HandlerType.Persist -> new TaskHandler("persist")
+  )
+
   val sessionManager = new SessionManager(system.settings.config)
-  val serviceActor = system.actorOf(Props(classOf[ServiceManagerActor]), "service")
 
   def postRequest(peer: String, api: String, request: JsObject, p: Promise[JsValue])(implicit executor: ExecutionContext): Unit = {
     try {
       val mo: ModelObject = ModelObject.parse(request)
-      val s = sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise)
-      val (tpe, handle) = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      val func = (db: Context.DBSession) => {
-        val c = new ContextImpl {
-          val session = s
-          val dbSession = db
-        }
-        c.request = if (mo.hasProperty("request")) mo.request else null
-        handle(c)
-        c.finish()
-      }
-      serviceActor ! Task(tpe, func, p)
+      val req: ModelObject = if (mo.hasProperty("request")) mo.request else null
+      val session = sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise)
       p.future.onComplete { _ =>
-        sessionManager.returnAndUnlockSession(s)
+        sessionManager.returnAndUnlockSession(session)
+      }
+      val (tpe, handle) = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
+      taskHandlers(tpe) { c =>
+        p.complete(Try {
+          c.session = session
+          c.request = req
+          if (c.dbSession == null)
+            handle(c)
+          else
+            c.dbSession.withTransaction {
+              handle(c)
+            }
+          if (c.response == null)
+            throw new IllegalStateException("no response")
+          ModelObject.toJson(c.response)
+        })
       }
     } catch {
       case ex: Throwable => p.failure(ex)
     }
   }
 
-  trait ContextImpl extends Context with DBPersist {
-    var request: ModelObject = null
+  class TaskHandler(name: String) {
+    val counter = Iterator from 0
+    val config = system.settings.config.getConfig(s"weez-mercury.workers.$name")
+    val db =
+      if (config.hasPath("database"))
+        Context.Database.forConfig(config.getString("database"), system.settings.config)
+      else null
+    val maxWorkerCount = config.getInt("worker-count-max")
+    val minWorkerCount = config.getInt("worker-count-min")
+    val requestCountLimit = config.getInt("request-count-limit")
+    private var workerCount = 0
+    private val queue = scala.collection.mutable.Queue[ContextImpl => Unit]()
+    private val idle = scala.collection.mutable.Queue[ActorRef]()
 
-    var response: ModelObject = null
+    def apply(func: ContextImpl => Unit): Unit = {
+      this.synchronized {
+        if (idle.nonEmpty) {
+          val worker = idle.dequeue()
+          worker ! Task(func, () => done(worker))
+        } else if (workerCount < maxWorkerCount) {
+          val dbSession = if (db == null) null else db.createSession()
+          val worker = system.actorOf(
+            Props(new WorkerActor(new ContextImpl(dbSession))),
+            s"$name-worker-${counter.next}")
+          worker ! Task(func, () => done(worker))
+          workerCount += 1
+        } else if (queue.size + workerCount < requestCountLimit) {
+          queue.enqueue(func)
+        } else {
+          ErrorCode.Reject.raise
+        }
+      }
+    }
+
+    def done(worker: ActorRef) = {
+      this.synchronized {
+        if (queue.nonEmpty) {
+          worker ! queue.dequeue()
+        } else if (workerCount > minWorkerCount) {
+          system.stop(worker)
+          workerCount -= 1
+        } else {
+          idle.enqueue(worker)
+        }
+      }
+    }
+  }
+
+  case class Task(func: ContextImpl => Unit, callback: () => Unit)
+
+  class WorkerActor(taskContext: ContextImpl) extends Actor {
+    override def postStop() = {
+      val dbSession = taskContext.dbSession
+      if (dbSession != null) dbSession.close()
+    }
+
+    def receive = {
+      case Task(func, callback) =>
+        try {
+          func(taskContext)
+        } finally {
+          callback()
+        }
+    }
+  }
+
+  class ContextImpl(val dbSession: DBSession) extends Context with DBPersist {
+    var request: ModelObject = _
+
+    var response: ModelObject = _
+
+    var session: Session = _
 
     def complete(response: ModelObject) = {
       this.response = response
@@ -212,12 +180,6 @@ class ServiceManager(system: ActorSystem) {
 
     def sessionsByPeer(peer: String) = {
       sessionManager.getSessionsByPeer(peer)
-    }
-
-    def finish() = {
-      if (response == null)
-        throw new IllegalStateException("no response")
-      ModelObject.toJson(response)
     }
   }
 

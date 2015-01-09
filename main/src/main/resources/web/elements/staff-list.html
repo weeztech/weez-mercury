@@ -45,10 +45,7 @@
           </div>
         </div>
       </div>
-      <paper-button>
-        <span>返回</span>
-        <common-action type="common-return"></common-action>
-      </paper-button>
+      <paper-button on-tap="{{returnAction}}">返回</paper-button>
     </template>
     <template if="{{mode!='show'}}">
       <common-form>
@@ -70,10 +67,7 @@
         <common-form-group>
           <div horizontal layout center-center>
             <paper-button on-tap="{{saveAction}}">保存</paper-button>
-            <paper-button>
-              <span>返回</span>
-              <common-action type="common-return"></common-action>
-            </paper-button>
+            <paper-button on-tap="{{returnAction}}">返回</paper-button>
           </div>
         </common-form-group>
       </common-form>
@@ -102,6 +96,9 @@
         }).then(function (resp) {
           // return
         });
+      },
+      returnAction: function () {
+        this.fire('common-nav-pop');
       }
     });
   </script>

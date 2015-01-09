@@ -42,7 +42,7 @@
         readyAction: function () {
           this.initialized = true;
           this.$.nav.goto({
-            type: 'app-login',
+            element: 'app-login',
             imports: this.resolvePath('elements/app-login.html')
           });
         }

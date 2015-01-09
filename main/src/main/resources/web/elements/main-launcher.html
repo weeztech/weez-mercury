@@ -32,7 +32,7 @@
             var a = items[i].split('|');
             arr.push({
               title: a[0],
-              type: a[1],
+              element: a[1],
               imports: this.resolvePath(a[2])
             })
           }
@@ -41,7 +41,7 @@
         tapAction: function (e) {
           var m = e.templateInstance.model;
           this.fire('common-nav', {
-            type: m.type,
+            element: m.element,
             imports: m.imports
           });
         }
