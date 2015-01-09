@@ -3,13 +3,11 @@ package com.weez.mercury.product
 import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common._
 
-import scala.slick.jdbc.SetParameter
-
 object DataService extends RemoteService {
   def availableAssistants: QueryCall = c => {
     import c._
     val items = sql"""SELECT a.id,s.name,a.price,a.description
-             FROM biz_assistant a JOIN biz_staffs s ON s.id = a.id
+             FROM biz_assistants a JOIN biz_staffs s ON s.id = a.id
          """.as[ModelObject].list
     completeWith("items" -> items)
   }
