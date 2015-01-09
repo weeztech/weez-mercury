@@ -2,10 +2,10 @@ package com.weez.mercury.common
 
 import java.util.Arrays
 import java.security.MessageDigest
-import scala.concurrent._
 
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
+
     import c._
     val username: String = request.username
     val q = sqlp"SELECT id, code, name, password FROM biz_staffs WHERE code = $username".as[(Long, String, String, Array[Byte])]
@@ -66,8 +66,32 @@ object LoginService extends RemoteService {
   }
 }
 
-import com.weez.mercury._
+case class User(name: String, password: Array[Byte], staff: Ref[Staff])
 
-object Staffs extends DBCollection {
+object User extends DBObjectType[User] {
+  def nameInDB = "user"
 
+  def name = column[String]("name")
+
+  def password = column[Array[Byte]]("password")
+
+  def staff = column[Ref[Staff]]("staff")
+}
+
+object UserCollection extends RootCollection[User] {
+  def byName = defUniqueIndex("by-name", User.name)
+}
+
+case class Staff(code: String, name: String)
+
+object Staff extends DBObjectType[Staff] {
+  def nameInDB = "staff"
+
+  def code = column[String]("code")
+
+  def name = column[String]("name")
+}
+
+object StaffCollection extends RootCollection[Staff] {
+  def byCode = defUniqueIndex("by-code", Staff.name)
 }

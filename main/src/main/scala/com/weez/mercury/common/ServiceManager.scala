@@ -1,7 +1,6 @@
 package com.weez.mercury.common
 
 import com.typesafe.config.Config
-import com.weez.mercury.common.Context.DBSession
 
 import scala.language.implicitConversions
 import scala.language.existentials
@@ -35,9 +34,9 @@ object ServiceManager {
             if (!(tpe =:= ru.NoType)) {
               val paramType = tpe.typeArgs(0)
               val htype =
-                if (paramType =:= ru.typeOf[Context with DBPersist])
+                if (paramType =:= ru.typeOf[Context with DBSessionQueryable])
                   HandlerType.Persist
-                else if (paramType =:= ru.typeOf[Context with DBQuery])
+                else if (paramType =:= ru.typeOf[Context with DBSessionUpdatable])
                   HandlerType.Query
                 else if (paramType =:= ru.typeOf[Context])
                   HandlerType.Simple
@@ -104,10 +103,16 @@ class ServiceManager(system: ActorSystem) {
   class TaskHandler(name: String) {
     val counter = Iterator from 0
     val config = system.settings.config.getConfig(s"weez-mercury.workers.$name")
-    val db =
-      if (config.hasPath("database"))
-        Context.Database.forConfig(config.getString("database"), system.settings.config)
-      else null
+    val db = {
+      var path = system.settings.config.getString(config.getString("database"))
+      if (path.startsWith("~")) {
+        if (System.getProperty("os.name").startsWith("Windows")) {
+          System.getenv("USERPROFILE")
+        } else {
+          System.getenv("HOME")
+        }
+      }
+    }
     val maxWorkerCount = config.getInt("worker-count-max")
     val minWorkerCount = config.getInt("worker-count-min")
     val requestCountLimit = config.getInt("request-count-limit")
@@ -152,11 +157,6 @@ class ServiceManager(system: ActorSystem) {
   case class Task(func: ContextImpl => Unit, callback: () => Unit)
 
   class WorkerActor(taskContext: ContextImpl) extends Actor {
-    override def postStop() = {
-      val dbSession = taskContext.dbSession
-      if (dbSession != null) dbSession.close()
-    }
-
     def receive = {
       case Task(func, callback) =>
         try {
@@ -167,7 +167,7 @@ class ServiceManager(system: ActorSystem) {
     }
   }
 
-  class ContextImpl(val dbSession: DBSession) extends Context with DBPersist {
+  class ContextImpl extends Context with DBSessionUpdatable {
     var request: ModelObject = _
 
     var response: ModelObject = _
@@ -181,6 +181,16 @@ class ServiceManager(system: ActorSystem) {
     def sessionsByPeer(peer: String) = {
       sessionManager.getSessionsByPeer(peer)
     }
+
+    def beginTrans(): Unit
+
+    def endTrans(): Unit
+
+    def get[K, V](key: K): V
+
+    def get[K, V](start: K, end: K): Cursor[V]
+
+    def put[K, V](key: K, value: V): Unit
   }
 
 }

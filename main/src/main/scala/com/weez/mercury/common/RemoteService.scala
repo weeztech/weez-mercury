@@ -10,8 +10,8 @@ import scala.slick.jdbc._
 
 trait RemoteService {
   type SimpleCall = Context => Unit
-  type QueryCall = Context with DBQuery => Unit
-  type PersistCall = Context with DBPersist => Unit
+  type QueryCall = Context with DBSessionQueryable => Unit
+  type PersistCall = Context with DBSessionUpdatable => Unit
 
   def completeWith(fields: (String, Any)*)(implicit c: Context) = {
     if (c.response == null)
@@ -37,37 +37,6 @@ trait Context {
   def complete(response: ModelObject): Unit
 
   def sessionsByPeer(peer: String = session.peer): Seq[Session]
-}
-
-trait DBQuery extends DBImplicits {
-  self: Context =>
-  implicit val dbSession: Context.DBSession
-
-  implicit def sqlInterpolation(s: StringContext) = new Context.SQLInterpolation(s)
-}
-
-trait DBPersist extends DBQuery {
-  self: Context =>
-}
-
-object Context {
-
-  import MySQLDriver.simple
-
-  type DBSession = simple.Session
-
-  val Database = simple.Database
-
-  implicit class SQLInterpolation(val s: StringContext) extends AnyVal {
-    def sql() = new SQLInterpolationResult(s.parts, (), SetParameter.SetUnit)
-
-    def sqlp[P](param: P)(implicit pconv: SetParameter[P]) =
-      new SQLInterpolationResult[P](s.parts, param, pconv)
-
-    def sqlu[P](param: P)(implicit pconv: SetParameter[P]) =
-      sqlp(param).asUpdate
-  }
-
 }
 
 class ModelObject(private var map: Map[String, Any]) extends Dynamic {
@@ -187,29 +156,3 @@ object ModelObject {
 }
 
 class ModelException(msg: String) extends Exception(msg)
-
-trait DBImplicits {
-
-  implicit object GetResult4ByteArray extends GetResult[Array[Byte]] {
-    def apply(rs: PositionedResult) = rs.nextBytes
-  }
-
-  implicit object GetResult4ModelObject extends GetResult[ModelObject] {
-    def apply(rs: PositionedResult) = {
-      val builder = Map.newBuilder[String, Any]
-      val meta = rs.rs.getMetaData
-      while (rs.hasMoreColumns) {
-        builder += meta.getColumnName(rs.currentPos) -> rs.nextObject()
-      }
-      new ModelObject(builder.result)
-    }
-  }
-
-  implicit def getResult4caseclass1[A, T](f: A => T)(implicit a: GetResult[A]): GetResult[T] = new GetResult[T] {
-    def apply(rs: PositionedResult) = f(rs.<<)
-  }
-
-  implicit def getResult4caseclass2[A, B, T](f: (A, B) => T)(implicit a: GetResult[A], b: GetResult[B]): GetResult[T] = new GetResult[T] {
-    def apply(rs: PositionedResult) = f(rs.<<, rs.<<)
-  }
-}
