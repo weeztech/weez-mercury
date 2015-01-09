@@ -10,7 +10,7 @@ import spray.json._
 import akka.actor._
 
 object ServiceManager {
-  type RemoteContext = Context with DBPersist
+  type RemoteContext = Context
 
   val remoteServices = {
     import com.weez.mercury.product._

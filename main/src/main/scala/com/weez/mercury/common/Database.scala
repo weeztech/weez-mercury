@@ -28,6 +28,9 @@ trait UniqueIndex[K, V] extends IndexBase[K, V] {
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V]
 }
 
+trait ExtendIndex[K, V] extends UniqueIndex[K, V]
+
+
 trait Ref[T] {
   def isEmpty: Boolean
 
@@ -38,11 +41,16 @@ trait DBObjectType[T] {
 
   def nameInDB: String
 
-  def column[T](name: String) = Column[T](name)
+  def column[CT](name: String) = Column[CT](name)
+
+  def extend[ST <: DBObjectType[_]](name: String, source: ST) = Extend[ST](name, source)
 
   val id = column[Long]("id")
 
-  case class Column[T](name: String)
+
+  case class Extend[ST](name: String, source: ST)
+
+  case class Column[CT](name: String)
 
 }
 
@@ -56,5 +64,7 @@ trait RootCollection[T] extends KeyCollection[T] {
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
 
   def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???
+
+  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T] = ???
 }
 

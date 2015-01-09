@@ -84,7 +84,7 @@ object UserCollection extends RootCollection[User] {
 
 case class Staff(code: String, name: String)
 
-object Staff extends DBObjectType[Staff] {
+object Staff2 extends DBObjectType[Staff] {
   def nameInDB = "staff"
 
   def code = column[String]("code")
@@ -93,5 +93,5 @@ object Staff extends DBObjectType[Staff] {
 }
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", Staff.name)
+  def byCode = defUniqueIndex("by-code", Staff2.name)
 }
