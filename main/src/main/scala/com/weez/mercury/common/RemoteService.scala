@@ -1,12 +1,10 @@
 package com.weez.mercury.common
 
-import akka.actor.ActorContext
+import akka.event.LoggingAdapter
 
 import scala.language.dynamics
 import scala.language.implicitConversions
 import spray.json._
-import scala.slick.driver.MySQLDriver
-import scala.slick.jdbc._
 
 trait RemoteService {
   type SimpleCall = Context => Unit
@@ -27,6 +25,8 @@ trait RemoteService {
 
 trait Context {
   implicit val context = this
+
+  def log: LoggingAdapter
 
   def session: Session
 

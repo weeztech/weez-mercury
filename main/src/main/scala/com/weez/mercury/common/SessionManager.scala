@@ -13,7 +13,6 @@ class SessionManager(config: Config) {
   val sidGen = new Util.RandomIdGenerator(12)
   val sessionTimeout = config.getDuration("weez-mercury.http.session-timeout", TimeUnit.NANOSECONDS)
   val checkFreq = 5.seconds
-  val devmode = config.getBoolean("weez-mercury.devmode")
 
   def clean(): Unit = {
     // check session timeout
@@ -50,7 +49,7 @@ class SessionManager(config: Config) {
         case None =>
           val peer = sidGen.newId
           val session = new Session(peer, peer)
-          if (devmode) {
+          if (Util.devmode) {
             session.login(0L, "dev", "dev")
           }
           sessions.put(peer, session)

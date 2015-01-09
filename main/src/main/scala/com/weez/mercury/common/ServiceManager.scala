@@ -1,6 +1,6 @@
 package com.weez.mercury.common
 
-import com.typesafe.config.Config
+import akka.event.LoggingAdapter
 
 import scala.language.implicitConversions
 import scala.language.existentials
@@ -8,10 +8,9 @@ import scala.concurrent._
 import scala.util._
 import spray.json._
 import akka.actor._
+import com.typesafe.config.Config
 
 object ServiceManager {
-  type RemoteContext = Context with DBPersist
-
   val remoteServices = {
     import com.weez.mercury.product._
     Seq(
@@ -22,7 +21,7 @@ object ServiceManager {
 
   val remoteCallHandlers = {
     import scala.reflect.runtime.{universe => ru}
-    val builder = Map.newBuilder[String, (HandlerType.Value, RemoteContext => Unit)]
+    val builder = Map.newBuilder[String, Handler]
     val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
     remoteServices foreach { s =>
       val r = mirror.reflect(s)
@@ -33,18 +32,15 @@ object ServiceManager {
             val tpe = method.returnType.baseType(ru.typeOf[Function1[_, _]].typeSymbol)
             if (!(tpe =:= ru.NoType)) {
               val paramType = tpe.typeArgs(0)
-              val htype =
-                if (paramType =:= ru.typeOf[Context with DBSessionQueryable])
-                  HandlerType.Persist
-                else if (paramType =:= ru.typeOf[Context with DBSessionUpdatable])
-                  HandlerType.Query
-                else if (paramType =:= ru.typeOf[Context])
-                  HandlerType.Simple
-                else null
-              if (htype != null) {
-                val func = r.reflectMethod(method)().asInstanceOf[RemoteContext => Unit]
-                builder += method.fullName -> (htype -> func)
-              }
+              val handler: Handler = if (paramType =:= ru.typeOf[Context with DBSessionQueryable])
+                UpdateHandler(r.reflectMethod(method)().asInstanceOf[Context with DBSessionUpdatable => Unit])
+              else if (paramType =:= ru.typeOf[Context with DBSessionUpdatable])
+                QueryHandler(r.reflectMethod(method)().asInstanceOf[Context with DBSessionQueryable => Unit])
+              else if (paramType =:= ru.typeOf[Context])
+                SimpleHandler(r.reflectMethod(method)().asInstanceOf[Context => Unit])
+              else null
+              if (handler != null)
+                builder += method.fullName -> handler
             }
           }
         }
@@ -53,8 +49,20 @@ object ServiceManager {
     builder.result
   }
 
-  object HandlerType extends Enumeration {
-    val Simple, Query, Persist = Value
+  sealed trait Handler {
+    def apply(c: Context with DBSessionUpdatable): Unit
+  }
+
+  case class SimpleHandler(f: Context => Unit) extends Handler {
+    def apply(c: Context with DBSessionUpdatable) = f(c)
+  }
+
+  case class QueryHandler(f: Context with DBSessionQueryable => Unit) extends Handler {
+    def apply(c: Context with DBSessionUpdatable) = f(c)
+  }
+
+  case class UpdateHandler(f: Context with DBSessionUpdatable => Unit) extends Handler {
+    def apply(c: Context with DBSessionUpdatable) = f(c)
   }
 
 }
@@ -63,10 +71,10 @@ class ServiceManager(system: ActorSystem) {
 
   import ServiceManager._
 
-  val taskHandlers = Map[HandlerType.Value, TaskHandler](
-    HandlerType.Simple -> new TaskHandler("simple"),
-    HandlerType.Query -> new TaskHandler("query"),
-    HandlerType.Persist -> new TaskHandler("persist")
+  val taskHandlers = Map[Class[_], TaskHandler](
+    classOf[SimpleHandler] -> new TaskHandler("simple", _ => new SimpleContext),
+    classOf[QueryHandler] -> new TaskHandler("query", db => new QueryContext(db)),
+    classOf[UpdateHandler] -> new TaskHandler("update", db => new UpdateContext(db))
   )
 
   val sessionManager = new SessionManager(system.settings.config)
@@ -79,17 +87,14 @@ class ServiceManager(system: ActorSystem) {
       p.future.onComplete { _ =>
         sessionManager.returnAndUnlockSession(session)
       }
-      val (tpe, handle) = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      taskHandlers(tpe) { c =>
+      val handler = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
+      taskHandlers(handler.getClass) { c =>
         p.complete(Try {
           c.session = session
           c.request = req
-          if (c.dbSession == null)
-            handle(c)
-          else
-            c.dbSession.withTransaction {
-              handle(c)
-            }
+          c.withTransaction {
+            handler(c)
+          }
           if (c.response == null)
             throw new IllegalStateException("no response")
           ModelObject.toJson(c.response)
@@ -100,18 +105,14 @@ class ServiceManager(system: ActorSystem) {
     }
   }
 
-  class TaskHandler(name: String) {
+  class TaskHandler(name: String, contextFactory: Database => ContextImpl) {
     val counter = Iterator from 0
     val config = system.settings.config.getConfig(s"weez-mercury.workers.$name")
-    val db = {
-      var path = system.settings.config.getString(config.getString("database"))
-      if (path.startsWith("~")) {
-        if (System.getProperty("os.name").startsWith("Windows")) {
-          System.getenv("USERPROFILE")
-        } else {
-          System.getenv("HOME")
-        }
-      }
+    val database = {
+      if (config.hasPath("database")) {
+        val path = Util.resolvePath(config.getString("database"))
+        new RocksDB(path)
+      } else null
     }
     val maxWorkerCount = config.getInt("worker-count-max")
     val minWorkerCount = config.getInt("worker-count-min")
@@ -124,19 +125,26 @@ class ServiceManager(system: ActorSystem) {
       this.synchronized {
         if (idle.nonEmpty) {
           val worker = idle.dequeue()
-          worker ! Task(func, () => done(worker))
+          worker ! newTask(worker, func)
         } else if (workerCount < maxWorkerCount) {
-          val dbSession = if (db == null) null else db.createSession()
           val worker = system.actorOf(
-            Props(new WorkerActor(new ContextImpl(dbSession))),
+            Props(new WorkerActor(new ContextImpl(databse))),
             s"$name-worker-${counter.next}")
-          worker ! Task(func, () => done(worker))
+          worker ! newTask(worker, func)
           workerCount += 1
         } else if (queue.size + workerCount < requestCountLimit) {
           queue.enqueue(func)
         } else {
           ErrorCode.Reject.raise
         }
+      }
+    }
+
+    def newTask(worker: ActorRef, func: ContextImpl => Unit) = (c: ContextImpl) => {
+      try {
+        func(c)
+      } finally {
+        done(worker)
       }
     }
 
@@ -154,25 +162,14 @@ class ServiceManager(system: ActorSystem) {
     }
   }
 
-  case class Task(func: ContextImpl => Unit, callback: () => Unit)
-
-  class WorkerActor(taskContext: ContextImpl) extends Actor {
-    def receive = {
-      case Task(func, callback) =>
-        try {
-          func(taskContext)
-        } finally {
-          callback()
-        }
-    }
-  }
-
   class ContextImpl extends Context with DBSessionUpdatable {
     var request: ModelObject = _
 
     var response: ModelObject = _
 
     var session: Session = _
+
+    var log: LoggingAdapter = _
 
     def complete(response: ModelObject) = {
       this.response = response
@@ -182,15 +179,69 @@ class ServiceManager(system: ActorSystem) {
       sessionManager.getSessionsByPeer(peer)
     }
 
-    def beginTrans(): Unit
+    def withTransaction(f: => Unit): Unit = {
 
-    def endTrans(): Unit
+    }
+  }
 
-    def get[K, V](key: K): V
+  class SimpleContext extends ContextImpl {
+    def withTransaction(f: => Unit) = f
 
-    def get[K, V](start: K, end: K): Cursor[V]
+    def get[K: Packer, V: Packer](key: K): V = ???
 
-    def put[K, V](key: K, value: V): Unit
+    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = ???
+
+    def put[K: Packer, V: Packer](key: K, value: V): Unit = ???
+  }
+
+  class QueryContext(db: Database) extends ContextImpl {
+    var dbSession: DBSessionQueryable = _
+
+    def withTransaction(f: => Unit) = {
+      db.withQuery(log) { session =>
+        dbSession = session
+        try {
+          f
+        } finally {
+          dbSession = null
+        }
+      }
+    }
+
+    def get[K: Packer, V: Packer](key: K): V = dbSession.get(key)
+
+    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = dbSession.get(start, end)
+
+    def put[K: Packer, V: Packer](key: K, value: V): Unit = ???
+  }
+
+  class UpdateContext(db: Database) extends ContextImpl {
+    var dbSession: DBSessionUpdatable = _
+
+    def withTransaction(f: => Unit) = {
+      db.withUpdate(log) { session =>
+        dbSession = session
+        try {
+          f
+        } finally {
+          dbSession = null
+        }
+      }
+    }
+
+    def get[K: Packer, V: Packer](key: K): V = dbSession.get(key)
+
+    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = dbSession.get(start, end)
+
+    def put[K: Packer, V: Packer](key: K, value: V): Unit = dbSession.put(key, value)
+  }
+
+  class WorkerActor(taskContext: ContextImpl) extends Actor with ActorLogging {
+    taskContext.log = log
+
+    def receive = {
+      case f: (ContextImpl => Unit) => f(taskContext)
+    }
   }
 
 }

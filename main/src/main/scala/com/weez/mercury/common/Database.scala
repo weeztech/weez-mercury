@@ -1,16 +1,26 @@
 package com.weez.mercury.common
 
-trait DBSessionQueryable {
-  def get[K, V](key: K): V
+import akka.event.LoggingAdapter
 
-  def get[K, V](start: K, end: K): Cursor[V]
+trait Database {
+  def withQuery(log: LoggingAdapter)(f: DBSessionQueryable => Unit): Unit
+
+  def withUpdate(log: LoggingAdapter)(f: DBSessionUpdatable => Unit): Unit
+}
+
+trait DBSessionQueryable {
+  def get[K: Packer, V: Packer](key: K): V
+
+  def get[K: Packer, V: Packer](start: K, end: K): Cursor[V]
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
-  def put[K, V](key: K, value: V): Unit
+  def put[K: Packer, V: Packer](key: K, value: V): Unit
 }
 
-trait Cursor[T] extends Iterator[T]
+trait Cursor[T] extends Iterator[T] {
+  def close(): Unit
+}
 
 trait IndexBase[K, V] {
   def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V]
@@ -50,3 +60,8 @@ trait RootCollection[T] extends KeyCollection[T] {
   def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???
 }
 
+trait Packer[T] {
+  def apply(value: T): Array[Byte]
+
+  def unapply(buf: Array[Byte]): T
+}
