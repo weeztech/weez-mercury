@@ -5,17 +5,13 @@ import java.security.MessageDigest
 
 object LoginService extends RemoteService {
   def login: QueryCall = c => {
-
     import c._
-    val username: String = request.username
-    val q = sqlp"SELECT id, code, name, password FROM biz_staffs WHERE code = $username".as[(Long, String, String, Array[Byte])]
-    q.firstOption match {
-      case Some((userId, code, name, pass)) =>
-        val password = encodePassword(request.password)
-        if (!Arrays.equals(password, pass))
+    UserCollection.byCode(request.userName) match {
+      case Some(user: User) =>
+        if (!eqPassword(request.password, user.password))
           failWith("用户名或密码错误")
-        session.login(userId, code, name)
-        completeWith("username" -> code, "name" -> name)
+        session.login(user.id, user.name, user.staff().name)
+        completeWith("username" -> user.code, "name" -> user.name)
       case None => failWith("用户名或密码错误")
     }
   }
@@ -64,9 +60,13 @@ object LoginService extends RemoteService {
   def encodePassword(password: String) = {
     digest.get().digest(password.getBytes("UTF-8"))
   }
+
+  def eqPassword(pw1: String, pw2: Array[Byte]) = Arrays.equals(encodePassword(pw1), pw2)
+
+  def eqPassword(pw1: Array[Byte], pw2: String): Boolean = eqPassword(pw2, pw1)
 }
 
-case class User(name: String, password: Array[Byte], staff: Ref[Staff])
+case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff])
 
 object User extends DBObjectType[User] {
   def nameInDB = "user"
@@ -79,12 +79,12 @@ object User extends DBObjectType[User] {
 }
 
 object UserCollection extends RootCollection[User] {
-  def byName = defUniqueIndex("by-name", User.name)
+  def byCode = defUniqueIndex("by-name", User.name)
 }
 
 case class Staff(code: String, name: String)
 
-object Staff extends DBObjectType[Staff] {
+object Staff2 extends DBObjectType[Staff] {
   def nameInDB = "staff"
 
   def code = column[String]("code")
@@ -93,5 +93,5 @@ object Staff extends DBObjectType[Staff] {
 }
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", Staff.name)
+  def byCode = defUniqueIndex("by-code", Staff2.name)
 }

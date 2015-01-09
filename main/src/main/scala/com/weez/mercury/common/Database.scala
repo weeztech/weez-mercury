@@ -9,12 +9,16 @@ trait Database {
 }
 
 trait DBSessionQueryable {
+  implicit val dbSession = this
+
   def get[K: Packer, V: Packer](key: K): V
 
   def get[K: Packer, V: Packer](start: K, end: K): Cursor[V]
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
+  override implicit val dbSession = this
+
   def put[K: Packer, V: Packer](key: K, value: V): Unit
 }
 
@@ -23,7 +27,9 @@ trait Cursor[T] extends Iterator[T] {
 }
 
 trait IndexBase[K, V] {
-  def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply()(implicit db: DBSessionQueryable): Cursor[V]
+
+  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 trait Index[K, V] extends IndexBase[K, V]
@@ -31,6 +37,9 @@ trait Index[K, V] extends IndexBase[K, V]
 trait UniqueIndex[K, V] extends IndexBase[K, V] {
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V]
 }
+
+trait ExtendIndex[K, V] extends UniqueIndex[K, V]
+
 
 trait Ref[T] {
   def isEmpty: Boolean
@@ -42,9 +51,16 @@ trait DBObjectType[T] {
 
   def nameInDB: String
 
-  def column[T](name: String) = Column[T](name)
+  def column[CT](name: String) = Column[CT](name)
 
-  case class Column[T](name: String)
+  def extend[ST <: DBObjectType[_]](name: String, source: ST) = Extend[ST](name, source)
+
+  val id = column[Long]("id")
+
+
+  case class Extend[ST](name: String, source: ST)
+
+  case class Column[CT](name: String)
 
 }
 
@@ -58,6 +74,8 @@ trait RootCollection[T] extends KeyCollection[T] {
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
 
   def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???
+
+  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T] = ???
 }
 
 trait Packer[T] {

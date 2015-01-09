@@ -6,29 +6,63 @@ import com.weez.mercury.common._
 object DataService extends RemoteService {
   def availableAssistants: QueryCall = c => {
     import c._
-    val items = sql"""SELECT a.id,s.name,a.price,a.description
-             FROM biz_assistants a JOIN biz_staffs s ON s.id = a.id
-         """.as[ModelObject].list
+    val items = AssistantCollection.byStaffName().map { a =>
+      ModelObject("id" -> a.id,
+        "name" -> a.staff().name,
+        "price" -> a.price,
+        "description" -> a.description)
+    }
     completeWith("items" -> items)
   }
 
   def availableRooms: QueryCall = c => {
     import c._
-    val items = sql"SELECT id,title,price,description FROM biz_rooms".as[ModelObject].list
+    val items = RoomCollection.byTitle().map { r =>
+      ModelObject("id" -> r.id,
+        "title" -> r.title,
+        "price" -> r.price,
+        "description" -> r.description)
+    }
     completeWith("items" -> items)
   }
 
   def availableDevices: QueryCall = c => {
     import c._
-    def getProducts(keywords: String, start: Int, count: Int) = {
-      sqlp"""SELECT id,code,title,price,description FROM biz_product_models
-           WHERE title LIKE CONCAT('%',$keywords,'%') LIMIT $start,$count""".as[ModelObject]
+    val keyword: String = request.keywords
+    val items = ProductModelCollection.byTitle().filter(_.title.indexOf(keyword) >= 0)
+      .drop(request.start).take(request.count).map { pm =>
+      ModelObject("id" -> pm.id,
+        "title" -> pm.code,
+        "title" -> pm.title,
+        "description" -> pm.description)
     }
-    completeWith("items" -> getProducts(request.keywords, request.start, request.count).list)
+    completeWith("items" -> items)
   }
 }
 
-case class Product(code: String,
+case class ProductModel(id: Long,
+                        code: String,
+                        title: String,
+                        description: String)
+
+object ProductModel extends DBObjectType[ProductModel] {
+  def nameInDB = "product"
+
+  val code = column[String]("code")
+
+  val title = column[String]("title")
+
+  val description = column[String]("description")
+}
+
+object ProductModelCollection extends RootCollection[ProductModel] {
+  val byCode = defUniqueIndex("by-code", ProductModel.code)
+  val byTitle = defUniqueIndex("by-Title", ProductModel.title)
+}
+
+
+case class Product(id: Long,
+                   code: String,
                    title: String,
                    description: String,
                    price: Double)
@@ -37,29 +71,30 @@ object Product extends DBObjectType[Product] {
   def nameInDB = "product"
 
   val code = column[String]("code")
-
   val title = column[String]("title")
+  val description = column[String]("description")
 }
 
 object ProductCollection extends RootCollection[Product] {
   val byCode = defUniqueIndex("by-code", Product.code)
+  val byTitle = defUniqueIndex("by-code", Product.title)
 }
 
-
-
-case class Assistant(code: String,
-                     title: String)
+case class Assistant(id: Long,
+                     price: Double,
+                     staff: Ref[Staff],
+                     description: String)
 
 object Assistant extends DBObjectType[Assistant] {
   def nameInDB = "assistant"
 
-  val code = column[String]("code")
-
-  val title = column[String]("title")
+  val description = column[String]("description")
+  val price = column[Double]("price")
+  val staff = extend("staff", Staff2)
 }
 
 object AssistantCollection extends RootCollection[Assistant] {
-  val byCode = defUniqueIndex("by-code", Assistant.code)
+  val byStaffName = defExtendIndex("by-staff-name", Assistant.staff.source.name)
 }
 
 
@@ -70,7 +105,6 @@ object Customer extends DBObjectType[Customer] {
   def nameInDB = "customer"
 
   val code = column[String]("code")
-
   val title = column[String]("title")
 }
 
@@ -105,4 +139,17 @@ object SaleOrderCollection extends RootCollection[SaleOrder] {
   val byCode = defUniqueIndex("by-code", SaleOrder.code)
 }
 
-case class Room(code: String)
+case class Room(id: Long, title: String, price: Double, description: String)
+
+object Room extends DBObjectType[Room] {
+  def nameInDB = "room"
+
+  val title = column[String]("title")
+  val price = column[Double]("price")
+  val description = column[String]("description")
+
+}
+
+object RoomCollection extends RootCollection[Room] {
+  val byTitle = defUniqueIndex("by-code", Room.title)
+}
