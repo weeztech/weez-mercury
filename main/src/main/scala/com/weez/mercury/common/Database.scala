@@ -1,19 +1,25 @@
 package com.weez.mercury.common
 
 trait DBSessionQueryable {
+  implicit val dbSession = this
+
   def get[K, V](key: K): V
 
   def get[K, V](start: K, end: K): Cursor[V]
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
+  override implicit val dbSession = this
+
   def put[K, V](key: K, value: V): Unit
 }
 
 trait Cursor[T] extends Iterator[T]
 
 trait IndexBase[K, V] {
-  def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply()(implicit db: DBSessionQueryable): Cursor[V]
+
+  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 trait Index[K, V] extends IndexBase[K, V]
@@ -33,6 +39,8 @@ trait DBObjectType[T] {
   def nameInDB: String
 
   def column[T](name: String) = Column[T](name)
+
+  val id = column[Long]("id")
 
   case class Column[T](name: String)
 
