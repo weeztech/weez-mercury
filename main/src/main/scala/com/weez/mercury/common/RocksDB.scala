@@ -13,23 +13,20 @@ object RocksDB {
 class RocksDB(path: String) extends Database {
   private val db = org.rocksdb.RocksDB.open(path)
 
-  def withQuery(log: LoggingAdapter)(f: DBSessionQueryable => Unit) = {
-    val session = new ReadSession(log)
-    try {
-      f(session)
-    } finally {
-      session.close()
-    }
-  }
+  def createSession() =
+    new DBSession {
+      def close() = ()
 
-  def withUpdate(log: LoggingAdapter)(f: DBSessionUpdatable => Unit) = {
-    val session = new WriteSession(log)
-    try {
-      f(session)
-    } finally {
-      session.close()
+      def withTransaction(log: LoggingAdapter)(f: DBTransaction => Unit) = {
+        val trans =
+          if (Util.devmode) new DevTransaction(log) else new Transaction(log)
+        try {
+          f(trans)
+        } finally {
+          trans.close()
+        }
+      }
     }
-  }
 
   def close() = {
     db.close()
@@ -38,14 +35,14 @@ class RocksDB(path: String) extends Database {
 
   @inline def packer[T: Packer] = implicitly[Packer[T]]
 
-  class CursorImpl[V](itor: RocksIterator, startBuf: Array[Byte], endBuf: Array[Byte]) extends Cursor[V] {
-    val pv = packer[V]
+  class CursorImpl[K, V](itor: RocksIterator, startBuf: Array[Byte], endBuf: Array[Byte])(implicit pk: Packer[K], pv: Packer[V]) extends Cursor[K, V] {
     itor.seek(startBuf)
 
-    def next(): V = {
+    def next(): (K, V) = {
+      val k = itor.key()
       val v = itor.value()
       itor.next()
-      pv.unapply(v)
+      pk.unapply(k) -> pv.unapply(v)
     }
 
     def hasNext: Boolean = {
@@ -57,61 +54,22 @@ class RocksDB(path: String) extends Database {
     }
   }
 
-  class ReadSession(log: LoggingAdapter) extends DBSessionQueryable {
+  class Transaction(log: LoggingAdapter) extends DBTransaction {
     val snapshot = db.getSnapshot
     val readOption = new ReadOptions()
-    var dbiterators: List[RocksIterator] = Nil
-
-    readOption.setSnapshot(snapshot)
-
-    def get[K: Packer, V: Packer](key: K): V = {
-      packer[V].unapply(db.get(readOption, packer[K].apply(key)))
-    }
-
-    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = {
-      val pk = packer[K]
-      val itor = db.newIterator()
-      dbiterators = itor :: dbiterators
-      new CursorImpl[V](itor, pk(start), pk(end)) {
-        override def close() = {
-          dbiterators = dbiterators.filterNot(_ eq itor)
-          super.close()
-        }
-      }
-    }
-
-    def close(): Unit = {
-      db.releaseSnapshot(snapshot)
-      snapshot.dispose()
-      readOption.dispose()
-      dbiterators.foreach(_.dispose())
-      dbiterators = Nil
-    }
-  }
-
-  class WriteSession(log: LoggingAdapter) extends DBSessionUpdatable {
-    val keyWrites =
-      if (Util.devmode)
-        scala.collection.mutable.SortedSet[Array[Byte]]()(ByteArrayOrdering)
-      else
-        null
 
     var dbiterators: List[RocksIterator] = Nil
     var writeBatch: WriteBatch = _
 
-    def get[K: Packer, V: Packer](key: K): V = {
-      val keyBuf = packer[K].apply(key)
-      if (Util.devmode && keyWrites.contains(keyBuf)) {
-        log.error("read the key which is written by current transaction")
-      }
-      packer[V].unapply(db.get(keyBuf))
+    def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): V = {
+      val keyBuf = pk(key)
+      pv.unapply(db.get(readOption, keyBuf))
     }
 
-    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = {
-      val pk = packer[K]
+    def get[K, V](start: K, end: K)(implicit pk: Packer[K], pv: Packer[V]): Cursor[K, V] = {
       val itor = db.newIterator()
       dbiterators = itor :: dbiterators
-      new CursorImpl[V](itor, pk(start), pk(end)) {
+      new CursorImpl[K, V](itor, pk(start), pk(end)) {
         override def close() = {
           dbiterators = dbiterators.filterNot(_ eq itor)
           super.close()
@@ -126,13 +84,46 @@ class RocksDB(path: String) extends Database {
     }
 
     def close(): Unit = {
-      val writeOption = new WriteOptions()
-      try {
-        db.write(writeOption, writeBatch)
-      } finally {
-        writeOption.dispose()
-        dbiterators.foreach(_.dispose())
-        dbiterators = Nil
+      dbiterators.foreach(_.dispose())
+      dbiterators = Nil
+      db.releaseSnapshot(snapshot)
+      snapshot.dispose()
+      if (writeBatch != null) {
+        val writeOption = new WriteOptions()
+        try {
+          db.write(writeOption, writeBatch)
+        } finally {
+          writeBatch.dispose()
+          writeOption.dispose()
+        }
+      }
+    }
+  }
+
+  class DevTransaction(log: LoggingAdapter) extends Transaction(log) {
+    val keyWrites = scala.collection.mutable.Set[Any]()
+
+    override def get[K: Packer, V: Packer](key: K): V = {
+      if (keyWrites.contains(key)) {
+        log.error("read the key which is written by current transaction")
+      }
+      super.get[K, V](key)
+    }
+
+    override def get[K: Packer, V: Packer](start: K, end: K) = {
+      val c = super.get[K, V](start, end)
+      new Cursor[K, V] {
+        def next() = {
+          val tp = c.next()
+          if (keyWrites.contains(tp._1)) {
+            log.error("read the key which is written by current transaction")
+          }
+          tp
+        }
+
+        def hasNext: Boolean = c.hasNext
+
+        def close() = c.close()
       }
     }
   }

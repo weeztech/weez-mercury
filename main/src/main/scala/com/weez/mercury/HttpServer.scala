@@ -38,14 +38,19 @@ object HttpServer {
     }
   }
 
+  case class WebRoot(tpe: String, path: String)
+
   class ServerActor(serviceManager: ServiceManager) extends HttpServiceActor {
     val config = context.system.settings.config.getConfig("weez-mercury.http")
     val host = config.getString("host")
     val port = config.getInt("port")
 
     val webRoot = {
-      val s = config.getString("root")
-      if (s.endsWith("/")) s.substring(0, s.length - 1) else s
+      var s = config.getString("root")
+      s = if (s.endsWith("/")) s.substring(0, s.length - 1) else s
+      val i = s.indexOf(':')
+      if (i < 0) throw new Exception("invalid config: weez-mercury.http.root")
+      WebRoot(s.substring(0, i), s.substring(i + 1))
     }
 
     override def preStart = {
@@ -83,18 +88,11 @@ object HttpServer {
             pathSingleSlash {
               withPeer { peer =>
                 setCookie(HttpCookie(PEER_NAME, peer)) {
-                  if (webRoot.length == 0)
-                    getFromResource("web/index.html")
-                  else
-                    getFromFile(webRoot + "/index.html")
+                  staticServe(Some("/index.html"))
                 }
               }
-            } ~ {
-            if (webRoot.length == 0)
-              getFromResourceDirectory("web")
-            else
-              getFromDirectory(webRoot)
-          }
+            } ~
+            staticServe()
         }
     }
 
@@ -129,6 +127,29 @@ object HttpServer {
           log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
           complete(out.toString)(ctx)
         case Failure(ex) => exceptionHandler(ex)(ctx)
+      }
+    }
+
+    def staticServe(file: Option[String] = None): Route = {
+      val path = file.map { s =>
+        if (!s.startsWith("/")) "/" + s else s
+      }
+      webRoot.tpe match {
+        case "resource" =>
+          path match {
+            case Some(x) => getFromResource(webRoot.path + file)
+            case None => getFromResourceDirectory(webRoot.path)
+          }
+        case "file" =>
+          def normalize(p: String) = {
+            import java.io.File.separator
+            if (separator != "/") p.replace("/", separator) else p
+          }
+          path match {
+            case Some(x) => getFromFile(normalize(webRoot.path + file))
+            case None => getFromDirectory(normalize(webRoot.path))
+          }
+        case _ => throw new Exception("invalid config: weez-mercury.http.root")
       }
     }
   }

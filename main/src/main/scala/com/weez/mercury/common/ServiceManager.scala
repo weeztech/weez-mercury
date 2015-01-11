@@ -32,15 +32,13 @@ object ServiceManager {
             val tpe = method.returnType.baseType(ru.typeOf[Function1[_, _]].typeSymbol)
             if (!(tpe =:= ru.NoType)) {
               val paramType = tpe.typeArgs(0)
-              val handler: Handler = if (paramType =:= ru.typeOf[Context with DBSessionQueryable])
-                UpdateHandler(r.reflectMethod(method)().asInstanceOf[Context with DBSessionUpdatable => Unit])
-              else if (paramType =:= ru.typeOf[Context with DBSessionUpdatable])
-                QueryHandler(r.reflectMethod(method)().asInstanceOf[Context with DBSessionQueryable => Unit])
-              else if (paramType =:= ru.typeOf[Context])
-                SimpleHandler(r.reflectMethod(method)().asInstanceOf[Context => Unit])
-              else null
-              if (handler != null)
-                builder += method.fullName -> handler
+              if (ru.typeOf[InternalContext] <:< paramType) {
+                builder += method.fullName -> Handler(
+                  r.reflectMethod(method)().asInstanceOf[InternalContext => Unit],
+                  paramType <:< ru.typeOf[SessionState],
+                  paramType <:< ru.typeOf[DBSessionQueryable],
+                  paramType <:< ru.typeOf[DBSessionUpdatable])
+              }
             }
           }
         }
@@ -49,33 +47,34 @@ object ServiceManager {
     builder.result
   }
 
-  sealed trait Handler {
-    def apply(c: Context with DBSessionUpdatable): Unit
-  }
+  case class Handler(f: InternalContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
-  case class SimpleHandler(f: Context => Unit) extends Handler {
-    def apply(c: Context with DBSessionUpdatable) = f(c)
-  }
-
-  case class QueryHandler(f: Context with DBSessionQueryable => Unit) extends Handler {
-    def apply(c: Context with DBSessionUpdatable) = f(c)
-  }
-
-  case class UpdateHandler(f: Context with DBSessionUpdatable => Unit) extends Handler {
-    def apply(c: Context with DBSessionUpdatable) = f(c)
-  }
-
+  type InternalContext = Context with SessionState with DBSessionUpdatable
 }
 
 class ServiceManager(system: ActorSystem) {
 
   import ServiceManager._
 
-  val taskHandlers = Map[Class[_], TaskHandler](
-    classOf[SimpleHandler] -> new TaskHandler("simple", _ => new SimpleContext),
-    classOf[QueryHandler] -> new TaskHandler("query", db => new QueryContext(db)),
-    classOf[UpdateHandler] -> new TaskHandler("update", db => new UpdateContext(db))
-  )
+  val database: Database = {
+    val path = system.settings.config.getString("weez.database")
+    new RocksDB(Util.resolvePath(path))
+  }
+
+  val workerPools = {
+    val builder = Seq.newBuilder[WorkerPool]
+    val workers = system.settings.config.getConfig("weez.workers")
+    val itor = workers.entrySet().iterator()
+    while (itor.hasNext) {
+      val e = itor.next()
+      val name = e.getKey
+      if (e.getValue().isInstanceOf[Config]) {
+        val config = e.getValue().asInstanceOf[Config]
+        builder += new WorkerPool(name, config)
+      }
+    }
+    builder.result
+  }
 
   val sessionManager = new SessionManager(system.settings.config)
 
@@ -83,52 +82,57 @@ class ServiceManager(system: ActorSystem) {
     try {
       val mo: ModelObject = ModelObject.parse(request)
       val req: ModelObject = if (mo.hasProperty("request")) mo.request else null
-      val session = sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise)
-      p.future.onComplete { _ =>
-        sessionManager.returnAndUnlockSession(session)
-      }
-      val handler = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      taskHandlers(handler.getClass) { c =>
-        p.complete(Try {
-          c.session = session
-          c.request = req
-          c.withTransaction {
-            handler(c)
+      val h = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
+      workerPools.find(p =>
+        p.permitSessionState == h.sessionState &&
+          p.permitDBQuery == h.dbQuery &&
+          p.permitDBUpdate == h.dbUpdate) match {
+        case Some(x) =>
+          // get session before worker start to avoid session timeout.
+          val sessionState =
+            if (x.permitSessionState) {
+              new SessionStateImpl(
+                sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise))
+            } else null
+          x.post { c =>
+            p.complete(Try {
+              c.sessionState = sessionState
+              c.request = req
+              h.f(c)
+              if (c.response == null)
+                throw new IllegalStateException("no response")
+              ModelObject.toJson(c.response)
+            })
+            if (sessionState != null)
+              sessionManager.returnAndUnlockSession(sessionState.session)
           }
-          if (c.response == null)
-            throw new IllegalStateException("no response")
-          ModelObject.toJson(c.response)
-        })
+        case None => ErrorCode.NotAcceptable.raise
       }
     } catch {
       case ex: Throwable => p.failure(ex)
     }
   }
 
-  class TaskHandler(name: String, contextFactory: Database => ContextImpl) {
+  class WorkerPool(name: String, config: Config) {
     val counter = Iterator from 0
-    val config = system.settings.config.getConfig(s"weez-mercury.workers.$name")
-    val database = {
-      if (config.hasPath("database")) {
-        val path = Util.resolvePath(config.getString("database"))
-        new RocksDB(path)
-      } else null
-    }
     val maxWorkerCount = config.getInt("worker-count-max")
     val minWorkerCount = config.getInt("worker-count-min")
     val requestCountLimit = config.getInt("request-count-limit")
+    val permitSessionState = config.getBoolean("session-state")
+    val permitDBQuery = config.getBoolean("db-query")
+    val permitDBUpdate = config.getBoolean("db-update")
     private var workerCount = 0
     private val queue = scala.collection.mutable.Queue[ContextImpl => Unit]()
     private val idle = scala.collection.mutable.Queue[ActorRef]()
 
-    def apply(func: ContextImpl => Unit): Unit = {
+    def post(func: ContextImpl => Unit): Unit = {
       this.synchronized {
         if (idle.nonEmpty) {
           val worker = idle.dequeue()
           worker ! newTask(worker, func)
         } else if (workerCount < maxWorkerCount) {
           val worker = system.actorOf(
-            Props(new WorkerActor(new ContextImpl(databse))),
+            Props(new WorkerActor(permitDBQuery, permitDBUpdate)),
             s"$name-worker-${counter.next}")
           worker ! newTask(worker, func)
           workerCount += 1
@@ -140,11 +144,13 @@ class ServiceManager(system: ActorSystem) {
       }
     }
 
-    def newTask(worker: ActorRef, func: ContextImpl => Unit) = (c: ContextImpl) => {
-      try {
-        func(c)
-      } finally {
-        done(worker)
+    def newTask(worker: ActorRef, func: ContextImpl => Unit) = {
+      Task { c =>
+        try {
+          func(c)
+        } finally {
+          done(worker)
+        }
       }
     }
 
@@ -162,86 +168,68 @@ class ServiceManager(system: ActorSystem) {
     }
   }
 
-  class ContextImpl extends Context with DBSessionUpdatable {
+  class ContextImpl extends Context with SessionState with DBSessionUpdatable {
     var request: ModelObject = _
 
     var response: ModelObject = _
 
-    var session: Session = _
-
     var log: LoggingAdapter = _
+
 
     def complete(response: ModelObject) = {
       this.response = response
     }
 
-    def sessionsByPeer(peer: String) = {
-      sessionManager.getSessionsByPeer(peer)
-    }
+    var sessionState: SessionState = _
 
-    def withTransaction(f: => Unit): Unit = {
+    @inline def session = sessionState.session
 
-    }
+    @inline def sessionsByPeer(peer: String) = sessionState.sessionsByPeer(peer)
+
+    var dbTransQuery: DBTransaction = _
+    var dbTransUpdate: DBTransaction = _
+
+    @inline def get[K: Packer, V: Packer](key: K): V = dbTransQuery.get[K, V](key)
+
+    @inline def get[K: Packer, V: Packer](start: K, end: K): Cursor[K, V] = dbTransQuery.get[K, V](start, end)
+
+    @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
   }
 
-  class SimpleContext extends ContextImpl {
-    def withTransaction(f: => Unit) = f
-
-    def get[K: Packer, V: Packer](key: K): V = ???
-
-    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = ???
-
-    def put[K: Packer, V: Packer](key: K, value: V): Unit = ???
+  class SessionStateImpl(val session: Session) extends SessionState {
+    @inline def sessionsByPeer(peer: String = session.peer) = sessionManager.getSessionsByPeer(peer)
   }
 
-  class QueryContext(db: Database) extends ContextImpl {
-    var dbSession: DBSessionQueryable = _
-
-    def withTransaction(f: => Unit) = {
-      db.withQuery(log) { session =>
-        dbSession = session
-        try {
-          f
-        } finally {
-          dbSession = null
-        }
-      }
+  class WorkerActor(permitDBQuery: Boolean, permitDBUpdate: Boolean) extends Actor with ActorLogging {
+    val taskContext = new ContextImpl
+    // reuse db session, so that worker pool is also pool of db sessions.
+    val dbSession: DBSession = {
+      if (permitDBQuery || permitDBUpdate)
+        database.createSession()
+      else null
     }
 
-    def get[K: Packer, V: Packer](key: K): V = dbSession.get(key)
-
-    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = dbSession.get(start, end)
-
-    def put[K: Packer, V: Packer](key: K, value: V): Unit = ???
-  }
-
-  class UpdateContext(db: Database) extends ContextImpl {
-    var dbSession: DBSessionUpdatable = _
-
-    def withTransaction(f: => Unit) = {
-      db.withUpdate(log) { session =>
-        dbSession = session
-        try {
-          f
-        } finally {
-          dbSession = null
-        }
-      }
-    }
-
-    def get[K: Packer, V: Packer](key: K): V = dbSession.get(key)
-
-    def get[K: Packer, V: Packer](start: K, end: K): Cursor[V] = dbSession.get(start, end)
-
-    def put[K: Packer, V: Packer](key: K, value: V): Unit = dbSession.put(key, value)
-  }
-
-  class WorkerActor(taskContext: ContextImpl) extends Actor with ActorLogging {
     taskContext.log = log
 
+    override def postStop() = {
+      if (dbSession != null) dbSession.close()
+    }
+
     def receive = {
-      case f: (ContextImpl => Unit) => f(taskContext)
+      case task: Task =>
+        dbSession.withTransaction(log) { trans =>
+          try {
+            if (permitDBQuery) taskContext.dbTransQuery = trans
+            if (permitDBUpdate) taskContext.dbTransUpdate = trans
+            task.f(taskContext)
+          } finally {
+            taskContext.dbTransQuery = null
+            taskContext.dbTransUpdate = null
+          }
+        }
     }
   }
+
+  case class Task(f: ContextImpl => Unit)
 
 }
