@@ -84,6 +84,8 @@ trait KeyCollection[T] {
 }
 
 abstract class RootCollection[T: Packer] extends KeyCollection[T] {
+  rootCollection =>
+
   def name: String = ???
 
   val indexes = collection.mutable.Map[String, UniqueIndex[_, T]]()
@@ -109,7 +111,11 @@ abstract class RootCollection[T: Packer] extends KeyCollection[T] {
   }
 
   private class UniqueIndexImpl[K: Packer](val name: String, keyColumns: Seq[DBObjectType[T]#Column[_]]) extends UniqueIndex[K, T] {
-    def apply(key: K)(implicit db: DBSessionQueryable): Option[T] = ???
+
+    def apply(key: K)(implicit db: DBSessionQueryable): Option[T] = {
+      db.get[(String, String, K), T]((rootCollection.name, this.name, key))
+    }
+
 
     def apply()(implicit db: DBSessionQueryable): Cursor[T] = ???
   }
@@ -129,12 +135,11 @@ abstract class RootCollection[T: Packer] extends KeyCollection[T] {
   }
 
   def defUniqueIndex2[S <: DBObjectType[T], K1: Packer, K2: Packer](name: String, column1: S#Column[K1], column2: S#Column[K2]): UniqueIndex[(K1, K2), T] = {
-    val index = new UniqueIndexImpl[(K1, K2)](name, Seq(column1, column2))(Packer.tuple[K1, K2])
-    putIndex(index)
+    putIndex(new UniqueIndexImpl[(K1, K2)](name, Seq(column1, column2)))
   }
 
   def defUniqueIndex3[S <: DBObjectType[T], K1: Packer, K2: Packer, K3: Packer](name: String, column1: S#Column[K1], column2: S#Column[K2], column3: S#Column[K3]): UniqueIndex[(K1, K2, K3), T] = {
-    putIndex(new UniqueIndexImpl[(K1, K2, K3)](name, Seq(column1, column2, column3))(Packer.tuple[K1, K2,K3]))
+    putIndex(new UniqueIndexImpl[(K1, K2, K3)](name, Seq(column1, column2, column3)))
   }
 
   def defExtendIndex[S <: DBObjectType[_], K: Packer](name: String, column: S#Column[K]): ExtendIndex[K, T] = ???
