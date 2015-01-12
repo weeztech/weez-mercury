@@ -1,27 +1,44 @@
 package com.weez.mercury.common
 
 import java.util.Arrays
-
 import akka.event.LoggingAdapter
-import org.rocksdb
-import org.rocksdb.{RocksIterator, WriteOptions, WriteBatch, ReadOptions}
+import org.rocksdb._
 
-object RocksDB {
-  org.rocksdb.RocksDB.loadLibrary()
+object RocksDBBackend extends DatabaseFactory {
+  RocksDB.loadLibrary()
+
+  def createNew(path: String): Database = {
+    import java.nio.file._
+    val p = Util.resolvePath(path)
+    if (Files.exists(Paths.get(p), LinkOption.NOFOLLOW_LINKS))
+      throw new Exception("already exists")
+    new RocksDBBackend(p)
+  }
+
+  def open(path: String): Database = {
+    import java.nio.file._
+    val p = Util.resolvePath(path)
+    if (!Files.isDirectory(Paths.get(p)))
+      throw new Exception("not a database directory")
+    new RocksDBBackend(p)
+  }
+
+  def delete(path: String) =
+    Util.deleteDirectory(Util.resolvePath(path))
 }
 
-class RocksDB(path: String) extends Database {
-  private val db = org.rocksdb.RocksDB.open(path)
+private class RocksDBBackend(path: String) extends Database {
+  private val db = RocksDB.open(path)
 
   def createSession() =
     new DBSession {
       def close() = ()
 
       def withTransaction(log: LoggingAdapter)(f: DBTransaction => Unit) = {
-        val trans =
-          if (Util.devmode) new DevTransaction(log) else new Transaction(log)
+        val trans = if (Util.devmode) new DevTransaction(log) else new Transaction(log)
         try {
           f(trans)
+          trans.commit()
         } finally {
           trans.close()
         }
@@ -35,7 +52,7 @@ class RocksDB(path: String) extends Database {
 
   @inline def packer[T: Packer] = implicitly[Packer[T]]
 
-  class CursorImpl[K, V](itor: RocksIterator, startBuf: Array[Byte], endBuf: Array[Byte])(implicit pk: Packer[K], pv: Packer[V]) extends Cursor[K, V] {
+  class CursorImpl[K, V](itor: RocksIterator, startBuf: Array[Byte], endBuf: Array[Byte])(implicit pk: Packer[K], pv: Packer[V]) extends DBCursor[K, V] {
     itor.seek(startBuf)
 
     def next(): (K, V) = {
@@ -66,7 +83,7 @@ class RocksDB(path: String) extends Database {
       pv.unapply(db.get(readOption, keyBuf))
     }
 
-    def get[K, V](start: K, end: K)(implicit pk: Packer[K], pv: Packer[V]): Cursor[K, V] = {
+    def get[K, V](start: K, end: K)(implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
       val itor = db.newIterator()
       dbiterators = itor :: dbiterators
       new CursorImpl[K, V](itor, pk(start), pk(end)) {
@@ -83,19 +100,26 @@ class RocksDB(path: String) extends Database {
       writeBatch.put(packer[K].apply(key), packer[V].apply(value))
     }
 
-    def close(): Unit = {
-      dbiterators.foreach(_.dispose())
-      dbiterators = Nil
-      db.releaseSnapshot(snapshot)
-      snapshot.dispose()
+    def commit() = {
       if (writeBatch != null) {
         val writeOption = new WriteOptions()
         try {
           db.write(writeOption, writeBatch)
         } finally {
-          writeBatch.dispose()
           writeOption.dispose()
         }
+      }
+    }
+
+    def close(): Unit = {
+      dbiterators.foreach(_.dispose())
+      dbiterators = Nil
+      db.releaseSnapshot(snapshot)
+      snapshot.dispose()
+      readOption.dispose()
+      if (writeBatch != null) {
+        writeBatch.dispose()
+        writeBatch = null
       }
     }
   }
@@ -112,7 +136,7 @@ class RocksDB(path: String) extends Database {
 
     override def get[K: Packer, V: Packer](start: K, end: K) = {
       val c = super.get[K, V](start, end)
-      new Cursor[K, V] {
+      new DBCursor[K, V] {
         def next() = {
           val tp = c.next()
           if (keyWrites.contains(tp._1)) {

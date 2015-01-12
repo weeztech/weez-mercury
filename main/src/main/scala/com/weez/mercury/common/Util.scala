@@ -1,15 +1,13 @@
 package com.weez.mercury.common
 
-import java.security.SecureRandom
-
-import org.parboiled.common.Base64
-
-import scala.util.matching.Regex
-
 object Util {
   val devmode = com.typesafe.config.ConfigFactory.load().getBoolean("weez-mercury.devmode")
 
   class RandomIdGenerator(len: Int) {
+
+    import org.parboiled.common.Base64
+    import java.security.SecureRandom
+
     private var seed = 0
     private val base64 = Base64.rfc2045()
     private val secureRandom = {
@@ -31,6 +29,7 @@ object Util {
   }
 
   def resolvePath(pathExp: String) = {
+    import scala.util.matching.Regex
     val re = new Regex("^(~)|\\$([a-zA-Z0-9_]+)|\\$\\{([a-zA-Z0-9_]+)\\}")
     re.replaceAllIn(pathExp, m => {
       var exp: String = null
@@ -46,9 +45,47 @@ object Util {
       val sep = java.io.File.separator
       exp = if (exp.endsWith(sep)) exp.substring(0, exp.length - 1) else exp
       if (sep != "/")
-        exp.replace(sep, "/")
+        exp.replace("/", sep)
       else
         exp
     })
+  }
+
+  def deleteDirectory(path: String): Unit = {
+    import java.nio.file._
+    val p = Paths.get(path)
+    if (Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
+      if (Files.isSymbolicLink(p)) {
+        Files.delete(p)
+      } else if (Files.isDirectory(p)) {
+        val dirs = scala.collection.mutable.Stack[Path]()
+        val emptyDirs = scala.collection.mutable.Stack[Path]()
+        dirs.push(p)
+        while (dirs.nonEmpty) {
+          val p = dirs.pop
+          emptyDirs.push(p)
+          val dir = Files.newDirectoryStream(p)
+          val toDelete = scala.collection.mutable.ListBuffer[Path]()
+          try {
+            val itor = dir.iterator()
+            while (itor.hasNext) {
+              val p = itor.next()
+              if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS))
+                dirs.push(p)
+              else
+                toDelete.append(p)
+            }
+            toDelete foreach Files.delete
+            toDelete.clear()
+          } finally {
+            dir.close()
+          }
+        }
+        while (emptyDirs.nonEmpty) {
+          Files.delete(emptyDirs.pop)
+        }
+      } else
+        throw new Exception("not a directory")
+    }
   }
 }

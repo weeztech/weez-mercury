@@ -23,21 +23,21 @@ trait SessionState {
 trait DBSessionQueryable {
   def get[K: Packer, V: Packer](key: K): V
 
-  def get[K: Packer, V: Packer](start: K, end: K): Cursor[K, V]
+  def get[K: Packer, V: Packer](start: K, end: K): DBCursor[K, V]
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
   def put[K: Packer, V: Packer](key: K, value: V): Unit
 }
 
-trait Cursor[K, V] extends Iterator[(K, V)] {
+trait Cursor[T] extends Iterator[T] {
   def close(): Unit
 }
 
 trait IndexBase[K, V] {
-  def apply()(implicit db: DBSessionQueryable): Cursor[K, V]
+  def apply()(implicit db: DBSessionQueryable): Cursor[V]
 
-  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[K, V]
+  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 trait Index[K, V] extends IndexBase[K, V]
@@ -65,7 +65,6 @@ trait DBObjectType[T] {
 
   val id = column[Long]("id")
 
-
   case class Extend[ST](name: String, source: ST)
 
   case class Column[CT](name: String)
@@ -73,12 +72,28 @@ trait DBObjectType[T] {
 }
 
 trait KeyCollection[T] {
+  def apply()(implicit db: DBSessionQueryable): Cursor[T]
+
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T]
 
+  def update(id: Long, value: T)(implicit db: DBSessionUpdatable): Unit
+
   def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T]
+
+  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T]
 }
 
-trait RootCollection[T] extends KeyCollection[T] {
+abstract class RootCollection[T: Packer] extends KeyCollection[T] {
+  def name: String = ???
+
+  def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
+    ???
+  }
+
+  def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
+    db.put((name, id), value)
+  }
+
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
 
   def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???

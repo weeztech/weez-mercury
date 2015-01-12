@@ -58,7 +58,7 @@ class ServiceManager(system: ActorSystem) {
 
   val database: Database = {
     val path = system.settings.config.getString("weez.database")
-    new RocksDB(Util.resolvePath(path))
+    RocksDBBackend.open(Util.resolvePath(path))
   }
 
   val workerPools = {
@@ -111,6 +111,10 @@ class ServiceManager(system: ActorSystem) {
     } catch {
       case ex: Throwable => p.failure(ex)
     }
+  }
+
+  def close(): Unit = {
+    database.close()
   }
 
   class WorkerPool(name: String, config: Config) {
@@ -191,7 +195,7 @@ class ServiceManager(system: ActorSystem) {
 
     @inline def get[K: Packer, V: Packer](key: K): V = dbTransQuery.get[K, V](key)
 
-    @inline def get[K: Packer, V: Packer](start: K, end: K): Cursor[K, V] = dbTransQuery.get[K, V](start, end)
+    @inline def get[K: Packer, V: Packer](start: K, end: K): DBCursor[K, V] = dbTransQuery.get[K, V](start, end)
 
     @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
   }
