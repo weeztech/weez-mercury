@@ -7,27 +7,29 @@ import scala.reflect.runtime.{universe => ru, ReflectionUtils}
 
 object Test {
   def main(args: Array[String]): Unit = {
-    val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
-    val pkg = mirror.staticPackage("com.weez")
+    makePackers()
+  }
 
-    import scala.language.dynamics
+  def makePackers() = {
+    import Template._
 
-
-    def f(a: Double, b: String, c: Int) = ???
-
-
-    //    def get: Query
-
-    val tp = ("", 1)
-    tp match {
-      case (name, id) => name + (id + 1)
+    System.out.println {
+      rep(22, 2) { n =>
+        s"""
+         |implicit def tuple[${rt(n)}](tp: (${rt(n)}))(implicit ${r(n, i => s"p$i: Packer[${t(i)}]")}): Packer[(${rt(n)})] =
+         |  new ProductPacker[(${rt(n)})](${rv(n, "p")})(a => (${r(n, i => s"a($i).asInstanceOf[${t(i)}]")}))
+        """.stripMargin
+      }
     }
-    //    select { r =>
-    //      (r.name, r.code, r.price, r.items.select(i => (i.name, i.code)))
-    //    }.map {
-    //      case (name, code, price, items: List[(String, String)]) =>
-    //        (name + 1, code, items)
-    //    }.range()
+
+    System.out.println {
+      rep(22) { n =>
+        s"""
+         |def apply[Z <: Product, ${rt(n)}](f: (${rt(n)}) => Z)(implicit ${r(n, i => s"p$i: Packer[${t(i)}]")}): Packer[Z] =
+         |  new ProductPacker[Z](${rv(n, "p")})(a => f(${r(n, i => s"a($i).asInstanceOf[${t(i)}]")}))
+        """.stripMargin
+      }
+    }
   }
 
 }

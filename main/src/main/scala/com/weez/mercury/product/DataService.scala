@@ -53,6 +53,8 @@ object ProductModel extends DBObjectType[ProductModel] {
   val title = column[String]("title")
 
   val description = column[String]("description")
+
+  implicit val packer = Packer(ProductModel.apply _)
 }
 
 object ProductModelCollection extends RootCollection[ProductModel] {
@@ -73,6 +75,8 @@ object Product extends DBObjectType[Product] {
   val code = column[String]("code")
   val title = column[String]("title")
   val description = column[String]("description")
+
+  implicit val packer = Packer(Product.apply _)
 }
 
 object ProductCollection extends RootCollection[Product] {
@@ -90,7 +94,9 @@ object Assistant extends DBObjectType[Assistant] {
 
   val description = column[String]("description")
   val price = column[Double]("price")
-  val staff = extend("staff", Staff2)
+  val staff = extend("staff", Staff)
+
+  implicit val packer = Packer(Assistant.apply _)
 }
 
 object AssistantCollection extends RootCollection[Assistant] {
@@ -106,6 +112,8 @@ object Customer extends DBObjectType[Customer] {
 
   val code = column[String]("code")
   val title = column[String]("title")
+
+  implicit val packer = Packer(Customer.apply _)
 }
 
 object CustomerCollection extends RootCollection[Customer] {
@@ -133,6 +141,8 @@ object SaleOrder extends DBObjectType[SaleOrder] {
 
   case class RoomItem(room: Ref[Room], startTime: DateTime, endTime: DateTime)
 
+  implicit val packer2 = Packer(RoomItem)
+  implicit val packer = Packer(SaleOrder.apply _)
 }
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
@@ -148,6 +158,7 @@ object Room extends DBObjectType[Room] {
   val price = column[Double]("price")
   val description = column[String]("description")
 
+  implicit val packer = Packer(Room.apply _)
 }
 
 object RoomCollection extends RootCollection[Room] {

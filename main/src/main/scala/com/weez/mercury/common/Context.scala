@@ -49,7 +49,7 @@ trait UniqueIndex[K, V] extends IndexBase[K, V] {
 trait ExtendIndex[K, V] extends UniqueIndex[K, V]
 
 
-trait Ref[T] {
+trait Ref[+T] {
   def isEmpty: Boolean
 
   def apply()(implicit db: DBSessionQueryable): T
@@ -91,7 +91,8 @@ abstract class RootCollection[T: Packer] extends KeyCollection[T] {
   }
 
   def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
-    db.put((name, id), value)
+    import Packer._
+    ???
   }
 
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???

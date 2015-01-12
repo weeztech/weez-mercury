@@ -76,6 +76,8 @@ object User extends DBObjectType[User] {
   def password = column[Array[Byte]]("password")
 
   def staff = column[Ref[Staff]]("staff")
+
+  implicit val packer = Packer(User.apply _)
 }
 
 object UserCollection extends RootCollection[User] {
@@ -84,14 +86,16 @@ object UserCollection extends RootCollection[User] {
 
 case class Staff(code: String, name: String)
 
-object Staff2 extends DBObjectType[Staff] {
+object Staff extends DBObjectType[Staff] {
   def nameInDB = "staff"
 
   def code = column[String]("code")
 
   def name = column[String]("name")
+
+  implicit val packer = Packer(Staff.apply _)
 }
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", Staff2.name)
+  def byCode = defUniqueIndex("by-code", Staff.name)
 }
