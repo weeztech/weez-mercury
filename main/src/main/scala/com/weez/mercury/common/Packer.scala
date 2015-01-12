@@ -132,7 +132,7 @@ object Packer {
     }
   }
 
-  class TuplePacker[T <: Product](packers: Packer[_]*) extends Packer[T] {
+  class ProductPacker[T <: Product](packers: Packer[_]*) extends Packer[T] {
     def pack(value: T, buf: Array[Byte], offset: Int) = {
       buf(offset) = TYPE_TUPLE
       var itor = value.productIterator
@@ -170,39 +170,6 @@ object Packer {
       }
       i
     }
-  }
-
-  implicit def tuple2[A, B](tp: (A, B))(implicit p1: Packer[A], p2: Packer[B]) = new Packer[(A, B)] with TuplePacker {
-    def unapply(buf: Array[Byte]) = {
-      val arr = parseSeq(buf)
-      require(arr.length == 2)
-    }
-
-    def findEnd(buf: Array[Byte], offset: Int) =
-      p2.findEnd(buf, p1.findEnd(buf, offset + 1) + 1) + 1
-  }
-
-
-  class SeqPacker[T](implicit pv: Packer[T]) extends PackerBase[Seq[T]] {
-    def apply(value: V) = {
-      var len = 0
-      val arr = value.map { i =>
-        val b = pv.apply(i)
-        len += b.length
-        b
-      }
-      val buf = new Array[Byte](2 + len)
-      buf(0) = TYPE_SEQ
-      buf(len - 1) = TYPE_END
-      len = 0
-      arr.foreach { i =>
-        System.arraycopy(i, 0, buf, len, i.length)
-        len += i.length
-      }
-      buf
-    }
-
-
   }
 
 }
