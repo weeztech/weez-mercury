@@ -23,7 +23,7 @@ trait SessionState {
 trait DBSessionQueryable {
   def get[K: Packer, V: Packer](key: K): V
 
-  def get[K: Packer, V: Packer](start: K, end: K): DBCursor[K, V]
+  def newCursor[K: Packer, V: Packer]: DBCursor[K, V]
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
@@ -87,7 +87,7 @@ abstract class RootCollection[T: Packer] extends KeyCollection[T] {
   def name: String = ???
 
   def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
-    ???
+      ???
   }
 
   def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {

@@ -52,8 +52,12 @@ private class RocksDBBackend(path: String) extends Database {
 
   @inline def packer[T: Packer] = implicitly[Packer[T]]
 
-  class CursorImpl[K, V](itor: RocksIterator, startBuf: Array[Byte], endBuf: Array[Byte])(implicit pk: Packer[K], pv: Packer[V]) extends DBCursor[K, V] {
-    itor.seek(startBuf)
+  class CursorImpl[K, V](itor: RocksIterator)(implicit pk: Packer[K], pv: Packer[V]) extends DBCursor[K, V] {
+
+    def seek(key: K) = {
+      itor.seek(pk(key))
+      itor.isValid
+    }
 
     def next(): (K, V) = {
       val k = itor.key()
@@ -63,7 +67,7 @@ private class RocksDBBackend(path: String) extends Database {
     }
 
     def hasNext: Boolean = {
-      itor.isValid && ByteArrayOrdering.compare(endBuf, itor.value()) >= 0
+      itor.isValid
     }
 
     def close() = {
@@ -75,7 +79,7 @@ private class RocksDBBackend(path: String) extends Database {
     val snapshot = db.getSnapshot
     val readOption = new ReadOptions()
 
-    var dbiterators: List[RocksIterator] = Nil
+    var dbIterators: List[RocksIterator] = Nil
     var writeBatch: WriteBatch = _
 
     def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): V = {
@@ -83,12 +87,12 @@ private class RocksDBBackend(path: String) extends Database {
       pv.unapply(db.get(readOption, keyBuf))
     }
 
-    def get[K, V](start: K, end: K)(implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
-      val itor = db.newIterator()
-      dbiterators = itor :: dbiterators
-      new CursorImpl[K, V](itor, pk(start), pk(end)) {
+    def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
+      val iterator = db.newIterator()
+      dbIterators = iterator :: dbIterators
+      new CursorImpl[K, V](iterator) {
         override def close() = {
-          dbiterators = dbiterators.filterNot(_ eq itor)
+          dbIterators = dbIterators.filterNot(_ eq iterator)
           super.close()
         }
       }
@@ -112,8 +116,8 @@ private class RocksDBBackend(path: String) extends Database {
     }
 
     def close(): Unit = {
-      dbiterators.foreach(_.dispose())
-      dbiterators = Nil
+      dbIterators.foreach(_.dispose())
+      dbIterators = Nil
       db.releaseSnapshot(snapshot)
       snapshot.dispose()
       readOption.dispose()
@@ -134,9 +138,12 @@ private class RocksDBBackend(path: String) extends Database {
       super.get[K, V](key)
     }
 
-    override def get[K: Packer, V: Packer](start: K, end: K) = {
-      val c = super.get[K, V](start, end)
+
+    override def newCursor[K: Packer, V: Packer] = {
+      val c = super.newCursor[K, V]
       new DBCursor[K, V] {
+        def seek(key: K) = c.seek(key)
+
         def next() = {
           val tp = c.next()
           if (keyWrites.contains(tp._1)) {
