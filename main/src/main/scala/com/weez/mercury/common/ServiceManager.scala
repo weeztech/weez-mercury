@@ -68,9 +68,9 @@ class ServiceManager(system: ActorSystem) {
     while (itor.hasNext) {
       val e = itor.next()
       val name = e.getKey
-      if (e.getValue().isInstanceOf[Config]) {
-        val config = e.getValue().asInstanceOf[Config]
-        builder += new WorkerPool(name, config)
+      e.getValue match {
+        case config: Config =>
+          builder += new WorkerPool(name, config)
       }
     }
     builder.result
