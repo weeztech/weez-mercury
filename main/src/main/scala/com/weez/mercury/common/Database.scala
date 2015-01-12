@@ -29,12 +29,13 @@ trait DBSession {
 trait DBTransaction {
   def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): V
 
-  def get[K, V](start: K, end: K)(implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V]
+  def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V]
 
   def put[K, V](key: K, value: V)(implicit pk: Packer[K], pv: Packer[V]): Unit
 }
 
 trait DBCursor[K, V] extends Iterator[(K, V)] {
+  def seek(key: K): Boolean
   def close(): Unit
 }
 

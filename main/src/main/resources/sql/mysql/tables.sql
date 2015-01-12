@@ -21,10 +21,10 @@ CREATE TABLE biz_product_models (
 /** 商品 **/
 CREATE TABLE biz_products (
   id          BIGINT PRIMARY KEY NOT NULL,
+  model_id    BIGINT             NOT NULL,
   code        VARCHAR(254)       NOT NULL,
   name        VARCHAR(254)       NOT NULL,
   description VARCHAR(254)       NOT NULL,
-  model_id    BIGINT             NOT NULL,
   FOREIGN KEY (model_id) REFERENCES biz_product_models (id)
 );
 CREATE INDEX model_fk ON biz_products (model_id);
@@ -54,9 +54,35 @@ CREATE TABLE biz_rooms (
   description VARCHAR(254)
 );
 
-/** 仓库 **/
+CREATE TABLE biz_stock_types (
+  id    INT PRIMARY KEY NOT NULL,
+  code  VARCHAR(254)    NOT NULL,
+  title VARCHAR(254)    NOT NULL
+);
+
+INSERT INTO biz_stock_types (id, code, title)
+VALUES
+  (1, 'store', '仓库'),
+  (2, 'customer', '顾客'),
+  (3, 'provider', '供应商'),
+  (4, 'department', '部门'),
+  (5, 'staff', '员工');
+
+#库，物品流转得基数据，
 CREATE TABLE biz_stocks (
-  id    BIGINT PRIMARY KEY NOT NULL,
-  code  VARCHAR(254)       NOT NULL,
-  title VARCHAR(254)       NOT NULL
-)
+  id      BIGINT PRIMARY KEY NOT NULL,
+  type_id INT                NOT NULL,
+  code    VARCHAR(254)       NOT NULL,
+  title   VARCHAR(254)       NOT NULL,
+  FOREIGN KEY (type_id) REFERENCES biz_stock_types (id)
+);
+
+# 流水
+CREATE TABLE biz_stock_ios (
+  time       DATETIME       NOT NULL COMMENT '时间',
+  shangpin_type INT,
+  product_id BIGINT         NOT NULL COMMENT '物品ID',
+  qty        DECIMAL(18, 2) NOT NULL COMMENT '数量',
+  from_id    BIGINT         NOT NULL COMMENT '来源ID',
+  to_id      BIGINT         NOT NULL COMMENT '目标ID'
+);
