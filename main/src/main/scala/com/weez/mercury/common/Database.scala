@@ -36,6 +36,7 @@ trait DBTransaction {
 
 trait DBCursor[K, V] extends Iterator[(K, V)] {
   def seek(key: K): Boolean
+
   def close(): Unit
 }
 
@@ -52,9 +53,9 @@ class KeyCollectionImpl[T](val key: Array[Byte]) extends KeyCollection[T] {
 
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
 
-  def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???
+  def defUniqueIndex[S <: DBObjectType[T], K: Packer](name: String, column: S#Column[K]): UniqueIndex[K, T] = ???
 
-  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T] = ???
+  def defExtendIndex[S <: DBObjectType[_], K: Packer](name: String, column: S#Column[K]): ExtendIndex[K, T] = ???
 }
 
 case class RefSome[T](key: Array[Byte]) extends Ref[T] {

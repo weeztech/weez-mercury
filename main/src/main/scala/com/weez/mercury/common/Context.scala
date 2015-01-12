@@ -21,7 +21,7 @@ trait SessionState {
 }
 
 trait DBSessionQueryable {
-  def get[K: Packer, V: Packer](key: K): V
+  def get[K: Packer, V: Packer](key: K): Option[V]
 
   def newCursor[K: Packer, V: Packer]: DBCursor[K, V]
 }
@@ -37,7 +37,7 @@ trait Cursor[T] extends Iterator[T] {
 trait IndexBase[K, V] {
   def apply()(implicit db: DBSessionQueryable): Cursor[V]
 
-  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
+  //  def apply(start: K, end: K, excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 trait Index[K, V] extends IndexBase[K, V]
@@ -78,26 +78,64 @@ trait KeyCollection[T] {
 
   def update(id: Long, value: T)(implicit db: DBSessionUpdatable): Unit
 
-  def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T]
+  def defUniqueIndex[S <: DBObjectType[T], K: Packer](name: String, column: S#Column[K]): UniqueIndex[K, T]
 
-  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T]
+  def defExtendIndex[S <: DBObjectType[_], K: Packer](name: String, column: S#Column[K]): ExtendIndex[K, T]
 }
 
 abstract class RootCollection[T: Packer] extends KeyCollection[T] {
   def name: String = ???
 
-  def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
-      ???
+  val indexes = collection.mutable.Map[String, UniqueIndex[_, T]]()
+
+
+  @inline def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
+    val dbCursor = db.newCursor[Long, T]
+    new Cursor[T] {
+      def next() = dbCursor.next()._2
+
+      def hasNext = dbCursor.hasNext
+
+      def close() = dbCursor.close()
+    }
   }
 
-  def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
-    import Packer._
-    ???
+  @inline def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
+    db.put(id, value)
   }
 
-  def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
+  @inline def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = {
+    db.get(id)
+  }
 
-  def defUniqueIndex[S <: DBObjectType[T], A](name: String, column: S#Column[A]): UniqueIndex[A, T] = ???
+  private class UniqueIndexImpl[K: Packer](val name: String, keyColumns: Seq[DBObjectType[T]#Column[_]]) extends UniqueIndex[K, T] {
+    def apply(key: K)(implicit db: DBSessionQueryable): Option[T] = ???
 
-  def defExtendIndex[S <: DBObjectType[_], A](name: String, column: S#Column[A]): ExtendIndex[A, T] = ???
+    def apply()(implicit db: DBSessionQueryable): Cursor[T] = ???
+  }
+
+  @inline def putIndex[K](index: UniqueIndexImpl[K]): UniqueIndex[K, T] = {
+    this.indexes.put(index.name, index) match {
+      case Some(old: UniqueIndex[_, T]) =>
+        this.indexes.put(index.name, old)
+        throw new IllegalArgumentException(s"index with name [${index.name}] already exists!")
+      case _ =>
+        index
+    }
+  }
+
+  def defUniqueIndex[S <: DBObjectType[T], K: Packer](name: String, column: S#Column[K]): UniqueIndex[K, T] = {
+    putIndex(new UniqueIndexImpl[K](name, Seq(column)))
+  }
+
+  def defUniqueIndex2[S <: DBObjectType[T], K1: Packer, K2: Packer](name: String, column1: S#Column[K1], column2: S#Column[K2]): UniqueIndex[(K1, K2), T] = {
+    val index = new UniqueIndexImpl[(K1, K2)](name, Seq(column1, column2))(Packer.tuple[K1, K2])
+    putIndex(index)
+  }
+
+  def defUniqueIndex3[S <: DBObjectType[T], K1: Packer, K2: Packer, K3: Packer](name: String, column1: S#Column[K1], column2: S#Column[K2], column3: S#Column[K3]): UniqueIndex[(K1, K2, K3), T] = {
+    putIndex(new UniqueIndexImpl[(K1, K2, K3)](name, Seq(column1, column2, column3))(Packer.tuple[K1, K2,K3]))
+  }
+
+  def defExtendIndex[S <: DBObjectType[_], K: Packer](name: String, column: S#Column[K]): ExtendIndex[K, T] = ???
 }
