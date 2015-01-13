@@ -66,7 +66,7 @@ object LoginService extends RemoteService {
   def eqPassword(pw1: Array[Byte], pw2: String): Boolean = eqPassword(pw2, pw1)
 }
 
-case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff])
+case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff]) extends Entity
 
 object User extends DBObjectType[User] {
   def nameInDB = "user"
@@ -81,10 +81,10 @@ object User extends DBObjectType[User] {
 }
 
 object UserCollection extends RootCollection[User] {
-  def byCode = defUniqueIndex("by-name", User.name)
+  def byCode = defUniqueIndex("by-name", _.name)
 }
 
-case class Staff(code: String, name: String)
+case class Staff(id: Long, code: String, name: String) extends Entity
 
 object Staff extends DBObjectType[Staff] {
   def nameInDB = "staff"
@@ -97,5 +97,5 @@ object Staff extends DBObjectType[Staff] {
 }
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", Staff.name)
+  def byCode = defUniqueIndex("by-code", _.name)
 }

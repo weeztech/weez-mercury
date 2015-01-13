@@ -40,7 +40,7 @@ trait DBCursor[K, V] extends Iterator[(K, V)] {
   def close(): Unit
 }
 
-class KeyCollectionImpl[T](val key: Array[Byte]) extends KeyCollection[T] {
+class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection[T] {
 
   def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
     ???
@@ -53,12 +53,10 @@ class KeyCollectionImpl[T](val key: Array[Byte]) extends KeyCollection[T] {
 
   def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
 
-  def defUniqueIndex[S <: DBObjectType[T], K: Packer](name: String, column: S#Column[K]): UniqueIndex[K, T] = ???
-
-  def defExtendIndex[S <: DBObjectType[_], K: Packer](name: String, column: S#Column[K]): ExtendIndex[K, T] = ???
+  def defUniqueIndex[K: Packer](name: String, keyGetter: T => K): UniqueIndex[K, T] = ???
 }
 
-case class RefSome[T](key: Array[Byte]) extends Ref[T] {
+case class RefSome[T <: Entity](key: Array[Byte]) extends Ref[T] {
   def isEmpty = false
 
   def apply()(implicit db: DBSessionQueryable): T = ???

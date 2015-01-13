@@ -43,7 +43,7 @@ object DataService extends RemoteService {
 case class ProductModel(id: Long,
                         code: String,
                         title: String,
-                        description: String)
+                        description: String) extends Entity
 
 object ProductModel extends DBObjectType[ProductModel] {
   def nameInDB = "product"
@@ -58,8 +58,8 @@ object ProductModel extends DBObjectType[ProductModel] {
 }
 
 object ProductModelCollection extends RootCollection[ProductModel] {
-  val byCode = defUniqueIndex("by-code", ProductModel.code)
-  val byTitle = defUniqueIndex("by-Title", ProductModel.title)
+  val byCode = defUniqueIndex("by-code", _.code)
+  val byTitle = defUniqueIndex("by-Title", _.title)
 }
 
 
@@ -67,7 +67,7 @@ case class Product(id: Long,
                    code: String,
                    title: String,
                    description: String,
-                   price: Double)
+                   price: Double) extends Entity
 
 object Product extends DBObjectType[Product] {
   def nameInDB = "product"
@@ -80,14 +80,14 @@ object Product extends DBObjectType[Product] {
 }
 
 object ProductCollection extends RootCollection[Product] {
-  val byCode = defUniqueIndex("by-code", Product.code)
-  val byTitle = defUniqueIndex("by-code", Product.title)
+  val byCode = defUniqueIndex("by-code", _.code)
+  val byTitle = defUniqueIndex("by-code", _.title)
 }
 
 case class Assistant(id: Long,
                      price: Double,
                      staff: Ref[Staff],
-                     description: String)
+                     description: String) extends ExtendEntity[Staff]
 
 object Assistant extends DBObjectType[Assistant] {
   def nameInDB = "assistant"
@@ -99,13 +99,13 @@ object Assistant extends DBObjectType[Assistant] {
   implicit val packer = Packer(Assistant.apply _)
 }
 
-object AssistantCollection extends RootCollection[Assistant] {
-  val byStaffName = defExtendIndex("by-staff-name", Assistant.staff.source.name)
+object AssistantCollection extends ExtendRootCollection[Assistant, Staff] {
+  val byStaffName = defExtendIndex("by-staff-name", _.name)
 }
 
 
-case class Customer(code: String,
-                    title: String)
+case class Customer(id: Long, code: String,
+                    title: String) extends Entity
 
 object Customer extends DBObjectType[Customer] {
   def nameInDB = "customer"
@@ -117,14 +117,15 @@ object Customer extends DBObjectType[Customer] {
 }
 
 object CustomerCollection extends RootCollection[Customer] {
-  val byCode = defUniqueIndex("by-code", Customer.code)
+  val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class SaleOrder(code: String,
+case class SaleOrder(id:Long,
+                     code: String,
                      time: DateTime,
                      customer: Ref[Customer],
                      rooms: KeyCollection[SaleOrder.RoomItem],
-                     ctime: DateTime)
+                     ctime: DateTime) extends Entity
 
 object SaleOrder extends DBObjectType[SaleOrder] {
   def nameInDB = "sale-order"
@@ -139,17 +140,17 @@ object SaleOrder extends DBObjectType[SaleOrder] {
 
   val rooms = column[KeyCollection[RoomItem]]("rooms")
 
-  case class RoomItem(room: Ref[Room], startTime: DateTime, endTime: DateTime)
+  case class RoomItem(id: Long, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
   implicit val packer2 = Packer(RoomItem)
   implicit val packer = Packer(SaleOrder.apply _)
 }
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
-  val byCode = defUniqueIndex("by-code", SaleOrder.code)
+  val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class Room(id: Long, title: String, price: Double, description: String)
+case class Room(id: Long, title: String, price: Double, description: String) extends Entity
 
 object Room extends DBObjectType[Room] {
   def nameInDB = "room"
@@ -162,5 +163,5 @@ object Room extends DBObjectType[Room] {
 }
 
 object RoomCollection extends RootCollection[Room] {
-  val byTitle = defUniqueIndex("by-code", Room.title)
+  val byTitle = defUniqueIndex("by-code", _.title)
 }
