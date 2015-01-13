@@ -13,21 +13,16 @@ scalacOptions in ThisBuild ++= Seq(
   "-target:jvm-1.7"
 )
 
-publishTo in ThisBuild := {
-  val nexus = "http://repo.slacktype.org/content/repositories/"
-  if (isSnapshot.value)
-    Some("snapshots" at nexus + "snapshots/")
-  else
-    Some("releases" at nexus + "releases/")
-}
+resolvers += Resolver.sonatypeRepo("snapshots")
 
-publishMavenStyle in ThisBuild := true
+resolvers += Resolver.sonatypeRepo("releases")
 
-publishArtifact in Test := false
+crossScalaVersions := Seq("2.11.1", "2.11.2", "2.11.3", "2.11.4")
 
-pomIncludeRepository in ThisBuild := { _ => false }
+addCompilerPlugin("org.scalamacros" % "paradise" % "2.0.1" cross CrossVersion.full)
 
 lazy val macros = project in file("macros")
 
-lazy val main = project in file("main")
+lazy val main = project in file("main") dependsOn macros
+
 

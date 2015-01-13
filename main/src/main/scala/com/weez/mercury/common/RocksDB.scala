@@ -82,9 +82,10 @@ private class RocksDBBackend(path: String) extends Database {
     var dbIterators: List[RocksIterator] = Nil
     var writeBatch: WriteBatch = _
 
-    def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): V = {
+    def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]) = {
       val keyBuf = pk(key)
-      pv.unapply(db.get(readOption, keyBuf))
+      val buf = db.get(readOption, keyBuf)
+      if (buf == null) None else Some(pv.unapply(buf))
     }
 
     def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
@@ -131,7 +132,7 @@ private class RocksDBBackend(path: String) extends Database {
   class DevTransaction(log: LoggingAdapter) extends Transaction(log) {
     val keyWrites = scala.collection.mutable.Set[Any]()
 
-    override def get[K: Packer, V: Packer](key: K): V = {
+    override def get[K: Packer, V: Packer](key: K) = {
       if (keyWrites.contains(key)) {
         log.error("read the key which is written by current transaction")
       }

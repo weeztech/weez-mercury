@@ -193,7 +193,7 @@ class ServiceManager(system: ActorSystem) {
     var dbTransQuery: DBTransaction = _
     var dbTransUpdate: DBTransaction = _
 
-    @inline def get[K: Packer, V: Packer](key: K): V = dbTransQuery.get[K, V](key)
+    @inline def get[K: Packer, V: Packer](key: K): Option[V] = dbTransQuery.get[K, V](key)
 
     @inline def newCursor[K: Packer, V: Packer]: DBCursor[K, V] = dbTransQuery.newCursor[K, V]
 

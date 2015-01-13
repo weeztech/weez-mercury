@@ -66,35 +66,15 @@ object LoginService extends RemoteService {
   def eqPassword(pw1: Array[Byte], pw2: String): Boolean = eqPassword(pw2, pw1)
 }
 
+@dbtype
 case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff]) extends Entity
-
-object User extends DBObjectType[User] {
-  def nameInDB = "user"
-
-  def name = column[String]("name")
-
-  def password = column[Array[Byte]]("password")
-
-  def staff = column[Ref[Staff]]("staff")
-
-  implicit val packer = Packer(User.apply _)
-}
 
 object UserCollection extends RootCollection[User] {
   def byCode = defUniqueIndex("by-name", _.name)
 }
 
+@dbtype
 case class Staff(id: Long, code: String, name: String) extends Entity
-
-object Staff extends DBObjectType[Staff] {
-  def nameInDB = "staff"
-
-  def code = column[String]("code")
-
-  def name = column[String]("name")
-
-  implicit val packer = Packer(Staff.apply _)
-}
 
 object StaffCollection extends RootCollection[Staff] {
   def byCode = defUniqueIndex("by-code", _.name)

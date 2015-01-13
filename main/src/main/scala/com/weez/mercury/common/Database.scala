@@ -27,7 +27,7 @@ trait DBSession {
 }
 
 trait DBTransaction {
-  def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): V
+  def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): Option[V]
 
   def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V]
 
