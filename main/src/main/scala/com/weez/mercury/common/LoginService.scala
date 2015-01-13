@@ -70,12 +70,14 @@ object LoginService extends RemoteService {
 case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff]) extends Entity
 
 object UserCollection extends RootCollection[User] {
-  def byCode = defUniqueIndex("by-name", _.name)
+  val name="user"
+  val byCode = defUniqueIndex("by-name", _.name)
 }
 
 @dbtype
 case class Staff(id: Long, code: String, name: String) extends Entity
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", _.name)
+  val name = "staff"
+  val byCode = defUniqueIndex("by-code", _.name)
 }
