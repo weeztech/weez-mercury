@@ -92,11 +92,6 @@ trait ExtendEntity[B <: Entity] extends Entity {
   //def base: Ref[B]
 }
 
-trait ExtendCollection[T <: ExtendEntity[B], B <: Entity] extends KeyCollection[T] {
-  def defExtendIndex[K: Packer](name: String, keyGetter: B => K): ExtendIndex[K, B, T]
-}
-
-
 class CursorImpl[K: Packer, T](prefix: String, dbCursor: DBCursor[(String, K), T]) extends Cursor[T] {
 
   def next(): T = ???
@@ -106,14 +101,33 @@ class CursorImpl[K: Packer, T](prefix: String, dbCursor: DBCursor[(String, K), T
   def close() = dbCursor.close()
 }
 
-
 abstract class RootCollection[T <: Entity : Packer] extends KeyCollection[T] {
   rootCollection =>
 
-  def name: String = ???
+  val name: String
 
-  val indexes = collection.mutable.Map[String, Any]()
+  private var extendCollections = Seq[ExtendRootCollection[_, T]]()
 
+  def registerExtend(extend: ExtendRootCollection[_, T]): Unit = {
+    extendCollections +:= extend
+  }
+
+  private val indexes = collection.mutable.Map[String, IndexBaseImpl[_, _]]()
+  private var uis = Seq[UniqueIndexImpl[_]]()
+
+  private def newIndex(name: String, index: IndexBaseImpl[_, _]): String = {
+    this.indexes.put(name, index) match {
+      case Some(old: IndexBaseImpl[_, T]) =>
+        this.indexes.put(name, old)
+        throw new IllegalArgumentException(s"index with name [$name] already exists!")
+      case _ =>
+        index match {
+          case ui: UniqueIndexImpl[_] =>
+            this.uis :+= ui;
+        }
+        this.name + '.' + name
+    }
+  }
 
   @inline def apply()(implicit db: DBSessionQueryable): Cursor[T] =
     new CursorImpl[Long, T](this.name, db.newCursor[(String, Long), T])
@@ -124,17 +138,17 @@ abstract class RootCollection[T <: Entity : Packer] extends KeyCollection[T] {
   }
 
   @inline def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
-    db.put(id, value)
+    if (uis.isEmpty) {
+      //无索引直接修改
+      db.put((this.name, id), value)
+    } else {
+      val key = (this.name, id)
+      val v = db.get(key)
+    }
   }
 
   abstract class IndexBaseImpl[K: Packer, KB](name: String, keyGetter: KB => K) extends IndexBase[K, T] {
-    rootCollection.indexes.put(name, this) match {
-      case Some(old: UniqueIndex[_, T]) =>
-        rootCollection.indexes.put(name, old)
-        throw new IllegalArgumentException(s"index with name [$name] already exists!")
-      case _ =>
-    }
-    val keyPrefix = rootCollection.name + '.' + name
+    val keyPrefix = rootCollection.newIndex(name, this)
 
     def apply(key: K)(implicit db: DBSessionQueryable): Option[T] = {
       db.get[(String, K), T]((keyPrefix, key))
@@ -153,7 +167,11 @@ abstract class RootCollection[T <: Entity : Packer] extends KeyCollection[T] {
 
 }
 
-abstract class ExtendRootCollection[T <: ExtendEntity[B] : Packer, B <: Entity : Packer] extends RootCollection[T] with ExtendCollection[T, B] {
+abstract class ExtendRootCollection[T <: ExtendEntity[B] : Packer, B <: Entity : Packer] extends RootCollection[T] {
+
+  def base: RootCollection[B]
+
+  this.base.registerExtend(this)
 
   private class ExtendIndexImpl[K: Packer](name: String, keyGetter: B => K) extends IndexBaseImpl[K, B](name, keyGetter) with ExtendIndex[K, B, T] {
     def apply(start: K, end: K, includeStart: Boolean, includeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???

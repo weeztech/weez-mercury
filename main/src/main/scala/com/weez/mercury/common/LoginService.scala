@@ -81,7 +81,8 @@ object User extends DBObjectType[User] {
 }
 
 object UserCollection extends RootCollection[User] {
-  def byCode = defUniqueIndex("by-name", _.name)
+  val name="user"
+  val byCode = defUniqueIndex("by-name", _.name)
 }
 
 case class Staff(id: Long, code: String, name: String) extends Entity
@@ -97,5 +98,6 @@ object Staff extends DBObjectType[Staff] {
 }
 
 object StaffCollection extends RootCollection[Staff] {
-  def byCode = defUniqueIndex("by-code", _.name)
+  val name = "staff"
+  val byCode = defUniqueIndex("by-code", _.name)
 }

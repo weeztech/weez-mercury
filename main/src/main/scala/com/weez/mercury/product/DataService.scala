@@ -58,6 +58,7 @@ object ProductModel extends DBObjectType[ProductModel] {
 }
 
 object ProductModelCollection extends RootCollection[ProductModel] {
+  val name = "product-model"
   val byCode = defUniqueIndex("by-code", _.code)
   val byTitle = defUniqueIndex("by-Title", _.title)
 }
@@ -80,6 +81,7 @@ object Product extends DBObjectType[Product] {
 }
 
 object ProductCollection extends RootCollection[Product] {
+  val name = "product"
   val byCode = defUniqueIndex("by-code", _.code)
   val byTitle = defUniqueIndex("by-code", _.title)
 }
@@ -100,6 +102,10 @@ object Assistant extends DBObjectType[Assistant] {
 }
 
 object AssistantCollection extends ExtendRootCollection[Assistant, Staff] {
+  val name = "assistant"
+
+  def base = StaffCollection
+
   val byStaffName = defExtendIndex("by-staff-name", _.name)
 }
 
@@ -117,10 +123,11 @@ object Customer extends DBObjectType[Customer] {
 }
 
 object CustomerCollection extends RootCollection[Customer] {
+  val name = "customer"
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class SaleOrder(id:Long,
+case class SaleOrder(id: Long,
                      code: String,
                      time: DateTime,
                      customer: Ref[Customer],
@@ -147,6 +154,7 @@ object SaleOrder extends DBObjectType[SaleOrder] {
 }
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
+  val name="sale-order"
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
@@ -163,5 +171,6 @@ object Room extends DBObjectType[Room] {
 }
 
 object RoomCollection extends RootCollection[Room] {
+  val name = "room"
   val byTitle = defUniqueIndex("by-code", _.title)
 }
