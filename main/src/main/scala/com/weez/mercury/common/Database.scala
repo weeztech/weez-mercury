@@ -32,6 +32,11 @@ trait DBTransaction {
   def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V]
 
   def put[K, V](key: K, value: V)(implicit pk: Packer[K], pv: Packer[V]): Unit
+
+  def exists[K](key: K)(implicit pk: Packer[K]): Boolean
+
+  def del[K](key: K)(implicit pk: Packer[K]): Unit
+
 }
 
 trait DBCursor[K, V] extends Iterator[(K, V)] {
@@ -42,9 +47,11 @@ trait DBCursor[K, V] extends Iterator[(K, V)] {
 
 class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection[T] {
 
-  def apply()(implicit db: DBSessionQueryable): Cursor[T] = {
-    ???
-  }
+  override def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
+
+  override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
+
+  override def delete(key: Long)(implicit db: DBSessionUpdatable): Unit = ???
 
   def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
     import Packer._

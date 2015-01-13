@@ -198,6 +198,10 @@ class ServiceManager(system: ActorSystem) {
     @inline def newCursor[K: Packer, V: Packer]: DBCursor[K, V] = dbTransQuery.newCursor[K, V]
 
     @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
+
+    override def del[K: Packer](key: K): Unit = dbTransUpdate.del(key)
+
+    override def exists[K: Packer](key: K): Boolean = dbTransQuery.exists(key)
   }
 
   class SessionStateImpl(val session: Session) extends SessionState {

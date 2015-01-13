@@ -88,6 +88,17 @@ private class RocksDBBackend(path: String) extends Database {
       if (buf == null) None else Some(pv.unapply(buf))
     }
 
+
+    override def exists[K](key: K)(implicit pk: Packer[K]): Boolean = {
+      db.get(readOption, pk(key)) != null
+    }
+
+    override def del[K](key: K)(implicit pk: Packer[K]): Unit = {
+      if (writeBatch == null)
+        writeBatch = new WriteBatch()
+      writeBatch.remove(pk(key))
+    }
+
     def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
       val iterator = db.newIterator()
       dbIterators = iterator :: dbIterators
