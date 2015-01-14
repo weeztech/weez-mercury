@@ -203,10 +203,7 @@ class ServiceManager(system: ActorSystem) {
 
     override def exists[K: Packer](key: K): Boolean = dbTransQuery.exists(key)
 
-    override private[common] def newUInt48: Long = dbTransUpdate.newUInt48
-
-    override private[common] def ensureDefineID(fullName: String): Int =
-      if (dbTransQuery != null) dbTransQuery.ensureDefineID(fullName) else dbTransUpdate.ensureDefineID(fullName)
+    override private[common] def schema: DBSchema = ???
   }
 
   class SessionStateImpl(val session: Session) extends SessionState {

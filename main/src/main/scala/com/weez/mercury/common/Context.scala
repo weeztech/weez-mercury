@@ -46,15 +46,13 @@ trait DBSessionQueryable {
 
   def newCursor[K: Packer, V: Packer]: DBCursor[K, V]
 
-  private[common] def ensureDefineID(fullName: String): Int
+  private[common] def schema: DBSchema
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
   def put[K: Packer, V: Packer](key: K, value: V): Unit
 
   def del[K: Packer](key: K): Unit
-
-  private[common] def newUInt48: Long
 }
 
 trait Cursor[+T <: Entity] extends Iterator[T] {
@@ -100,7 +98,7 @@ trait ExtendEntity[B <: Entity] extends Entity {
   //def base: Ref[B]
 }
 
-/*
+
 trait EntityCollection[T <: Entity] {
   def update(value: T)(implicit db: DBSessionUpdatable): Unit
 }
@@ -108,10 +106,10 @@ trait EntityCollection[T <: Entity] {
 trait PartitionCollection[T <: Entity] extends EntityCollection[T] {
 
 }
-trait HostCollection extends EntityCollection[T]{
+
+trait HostCollection[T <: Entity] extends EntityCollection[T] {
 
 }
-*/
 
 trait KeyCollection[T <: Entity] extends OrderedKV[Long, T] with UniqueKV[Long, T] {
 
@@ -127,7 +125,8 @@ trait UniqueOrderedKV[K, V <: Entity] extends OrderedKV[K, V] with UniqueKV[K, V
 
   @inline private[common] final def cid(implicit db: DBSessionQueryable) = {
     if (this._cid == 0) {
-      this._cid = db.ensureDefineID(this.fullName)
+      this._cid = db.schema.getHostCollection(this.fullName).id
+      ???
     }
     this._cid
   }
@@ -240,7 +239,7 @@ abstract class RootCollection[V <: Entity : Packer] extends UniqueOrderedKV[Long
 
   @inline private[common] final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 
-  @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.newUInt48)
+  @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.schema.newEntityID())
 
 
   @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = {
