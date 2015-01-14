@@ -2,6 +2,7 @@ package com.weez.mercury.product
 
 import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common._
+import com.weez.mercury.product.SaleOrder.RoomItem
 
 object DataService extends RemoteService {
   def availableAssistants: QueryCall = c => {
@@ -131,7 +132,7 @@ case class SaleOrder(id: Long,
                      code: String,
                      time: DateTime,
                      customer: Ref[Customer],
-                     rooms: KeyCollection[SaleOrder.RoomItem],
+                     rooms: KeyCollection[RoomItem],
                      ctime: DateTime) extends Entity
 
 object SaleOrder extends DBObjectType[SaleOrder] {

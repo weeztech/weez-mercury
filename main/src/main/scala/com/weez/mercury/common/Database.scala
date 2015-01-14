@@ -37,6 +37,9 @@ trait DBTransaction {
 
   def del[K](key: K)(implicit pk: Packer[K]): Unit
 
+  def newUInt48: Long
+
+  def ensureDefineID(fullName: String): Int
 }
 
 trait DBCursor[K, V] extends Iterator[(K, V)] {

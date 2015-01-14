@@ -28,7 +28,13 @@ object RocksDBBackend extends DatabaseFactory {
 }
 
 private class RocksDBBackend(path: String) extends Database {
+  backend =>
+
   private val db = RocksDB.open(path)
+
+  def newUInt48: Long = ???
+
+  def ensureDefineID(fullName: String): Int = ???
 
   def createSession() =
     new DBSession {
@@ -115,6 +121,11 @@ private class RocksDBBackend(path: String) extends Database {
         writeBatch = new WriteBatch()
       writeBatch.put(packer[K].apply(key), packer[V].apply(value))
     }
+
+
+    override def newUInt48: Long = backend.newUInt48
+
+    override def ensureDefineID(fullName: String): Int = backend.ensureDefineID(fullName)
 
     def commit() = {
       if (writeBatch != null) {
