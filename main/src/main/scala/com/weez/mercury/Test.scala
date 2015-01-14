@@ -2,7 +2,7 @@ package com.weez.mercury
 
 object Test {
 
-  @common.dbtype
+  @common.test(false)
   case class A(abc: String) extends AutoCloseable {
     def close(): Unit = ???
   }

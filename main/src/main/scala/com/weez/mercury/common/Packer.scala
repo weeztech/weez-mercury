@@ -237,7 +237,7 @@ object Packer extends ProductPackers {
     }
   }
 
-  implicit def ref[T<: Entity]: Packer[Ref[T]] =
+  implicit def ref[T <: Entity]: Packer[Ref[T]] =
     new RawPacker[Ref[T]](TYPE_REF) {
       def pack(value: Ref[T]) = {
         value match {
@@ -254,7 +254,7 @@ object Packer extends ProductPackers {
       }
     }
 
-  implicit def collection[T<: Entity]: Packer[KeyCollection[T]] =
+  implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
     new RawPacker[KeyCollection[T]](TYPE_COLLECTION) {
       def pack(value: KeyCollection[T]) = value.asInstanceOf[KeyCollectionImpl[T]].key
 
