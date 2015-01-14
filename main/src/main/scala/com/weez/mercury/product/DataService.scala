@@ -102,10 +102,10 @@ object Assistant extends DBObjectType[Assistant] {
   implicit val packer = Packer(Assistant.apply _)
 }
 
-object AssistantCollection extends ExtendRootCollection[Assistant, Staff] {
+object AssistantCollection extends RootCollection[Assistant] with ExtendCollection[Staff, Assistant] {
   val name = "assistant"
 
-  def base = StaffCollection
+  def extendFrom = StaffCollection
 
   val byStaffName = defExtendIndex("by-staff-name", _.name)
 }
@@ -128,12 +128,22 @@ object CustomerCollection extends RootCollection[Customer] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
+case class SaleOrderRoomItems(host:SaleOrder) extends PartitionCollection[SaleOrder, RoomItem] {
+
+  override def partitionOf = RoomItemCollection
+
+  val bySeqID = defUniqueIndex(partitionOf.bySeqID)
+  val byRoomID = defUniqueIndex(partitionOf.byRoomID)
+}
+
 case class SaleOrder(id: Long,
                      code: String,
                      time: DateTime,
                      customer: Ref[Customer],
-                     rooms: KeyCollection[RoomItem],
-                     ctime: DateTime) extends Entity
+                     ctime: DateTime) extends Entity{
+  lazy val rooms = SaleOrderRoomItems(this)
+  val roomsByRoomID = RoomItemCollection.byRoomID(this)
+}
 
 object SaleOrder extends DBObjectType[SaleOrder] {
   def nameInDB = "sale-order"
@@ -148,15 +158,23 @@ object SaleOrder extends DBObjectType[SaleOrder] {
 
   val rooms = column[KeyCollection[RoomItem]]("rooms")
 
-  case class RoomItem(id: Long, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
+  case class RoomItem(id: Long, parentID: Long, seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime)
+    extends SubEntity[SaleOrder]
 
   implicit val packer2 = Packer(RoomItem)
   implicit val packer = Packer(SaleOrder.apply _)
 }
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
-  val name="sale-order"
+  val name = "sale-order"
   val byCode = defUniqueIndex("by-code", _.code)
+}
+
+object RoomItemCollection extends RootCollection[RoomItem] with SubCollection[SaleOrder, RoomItem] {
+  override val name = "sale-order-room-item"
+  override val parent = SaleOrderCollection
+  val bySeqID = defPartitionIndex[Int]("bySeqID", _.seqID)
+  val byRoomID = defPartitionIndex[Long]("byRoom", _.room.refID)
 }
 
 case class Room(id: Long, title: String, price: Double, description: String) extends Entity

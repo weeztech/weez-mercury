@@ -6,7 +6,7 @@ trait DBSchema {
   def getHostCollection(name: String): HostCollectionMeta
 }
 
-case class IndexMeta(id: Int)
+case class IndexMeta(id: Int,name: String)
 
-case class HostCollectionMeta(id: Int, indexes: Map[String, IndexMeta])
+case class HostCollectionMeta(id: Int, indexes: Seq[IndexMeta])
 

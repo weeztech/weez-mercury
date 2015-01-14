@@ -48,9 +48,9 @@ class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection
 
   override def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
 
-  override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
+  def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
 
-  override def delete(key: Long)(implicit db: DBSessionUpdatable): Unit = ???
+  def delete(key: Long)(implicit db: DBSessionUpdatable): Unit = ???
 
   def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
     import Packer._
@@ -65,11 +65,14 @@ class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection
 case class RefSome[T <: Entity](key: Array[Byte]) extends Ref[T] {
   def isEmpty = false
 
+  def refID = ???
+
   def apply()(implicit db: DBSessionQueryable): T = ???
 }
 
 case object RefEmpty extends Ref[Nothing] {
   def isEmpty = true
+  def refID = 0L
 
   def apply()(implicit db: DBSessionQueryable) = ???
 }
