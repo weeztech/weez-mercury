@@ -407,8 +407,7 @@ trait PartitionIndex[P <: Entity, K, V <: SubEntity[P]] extends UniqueIndex[(Lon
 }
 
 
-trait SubCollection[P <: Entity, V <: SubEntity[P]]{
-  self: HostCollection[V] =>
+trait SubCollection[P <: Entity, V <: SubEntity[P]] extends HostCollection[V] {
   val parent: HostCollection[P]
 
   private class PartitionIndexImpl[K: Packer](name: String, keyGetter: V => K)
