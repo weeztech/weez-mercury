@@ -195,7 +195,7 @@ class ServiceManager(system: ActorSystem) {
 
     @inline def get[K: Packer, V: Packer](key: K): Option[V] = dbTransQuery.get[K, V](key)
 
-    @inline def newCursor[K: Packer, V: Packer]: DBCursor[K, V] = dbTransQuery.newCursor[K, V]
+    @inline def newCursor[K: Packer, V: Packer]: DBCursor = dbTransQuery.newCursor
 
     @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
 

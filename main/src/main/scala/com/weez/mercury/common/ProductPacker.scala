@@ -49,6 +49,9 @@ trait ProductPackers {
     }
   }
 
+  implicit def tuple1[A](implicit p0: Packer[A]): Packer[Tuple1[A]] =
+    new ProductPacker[Tuple1[A]](p0)(a => Tuple1(a(0).asInstanceOf[A]))
+
   implicit def tuple2[A, B](implicit p0: Packer[A], p1: Packer[B]): Packer[(A, B)] =
     new ProductPacker[(A, B)](p0, p1)(a => (a(0).asInstanceOf[A], a(1).asInstanceOf[B]))
 

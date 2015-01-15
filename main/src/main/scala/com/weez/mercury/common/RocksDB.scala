@@ -53,27 +53,43 @@ private class RocksDBBackend(path: String) extends Database {
 
   @inline def packer[T: Packer] = implicitly[Packer[T]]
 
-  class CursorImpl[K, V](itor: RocksIterator)(implicit pk: Packer[K], pv: Packer[V]) extends DBCursor[K, V] {
+  class CursorImpl(itor: RocksIterator) extends DBCursor {
 
-    def seek(key: K) = {
-      itor.seek(pk(key))
-      itor.isValid
+    private var valid: Boolean = _ //cache
+
+
+    def seek(key: Array[Byte]) = {
+      itor.seek(key)
+      valid = itor.isValid
+      valid
     }
 
-    def next(): (K, V) = {
-      val k = itor.key()
-      val v = itor.value()
-      itor.next()
-      pk.unapply(k) -> pv.unapply(v)
+
+    def next(n: Int) = {
+      var i = 0
+      if (n > 0) {
+        while (i < n && valid) {
+          itor.next()
+          valid = itor.isValid
+          i += 1
+        }
+      } else if (n < 0) {
+        while (i > n && valid) {
+          itor.prev()
+          valid = itor.isValid
+          i -= 1
+        }
+      }
+      valid
     }
 
-    def hasNext: Boolean = {
-      itor.isValid
-    }
+    def value() = itor.value()
 
-    def close() = {
-      itor.dispose()
-    }
+    def key() = itor.key()
+
+    def isValid = valid
+
+    def close() = itor.dispose()
   }
 
   class Transaction(log: LoggingAdapter) extends DBTransaction {
@@ -100,10 +116,10 @@ private class RocksDBBackend(path: String) extends Database {
       writeBatch.remove(pk(key))
     }
 
-    def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V] = {
+    def newCursor(): DBCursor = {
       val iterator = db.newIterator()
       dbIterators = iterator :: dbIterators
-      new CursorImpl[K, V](iterator) {
+      new CursorImpl(iterator) {
         override def close() = {
           dbIterators = dbIterators.filterNot(_ eq iterator)
           super.close()
@@ -152,22 +168,27 @@ private class RocksDBBackend(path: String) extends Database {
     }
 
 
-    override def newCursor[K: Packer, V: Packer] = {
-      val c = super.newCursor[K, V]
-      new DBCursor[K, V] {
-        def seek(key: K) = c.seek(key)
+    override def newCursor() = {
+      val c = super.newCursor()
+      new DBCursor {
+        override def seek(key: Array[Byte]) = c.seek(key)
 
-        def next() = {
-          val tp = c.next()
-          if (keyWrites.contains(tp._1)) {
-            log.error("read the key which is written by current transaction")
+        override def next(step: Int) = {
+          if (c.next(step)) {
+            if (keyWrites.contains(super.key())) {
+              log.error("read the key which is written by current transaction")
+            }
           }
-          tp
+          c.isValid
         }
 
-        def hasNext: Boolean = c.hasNext
+        override def isValid: Boolean = c.isValid
 
-        def close() = c.close()
+        override def key(): Array[Byte] = c.key()
+
+        override def value(): Array[Byte] = c.value()
+
+        override def close() = c.close()
       }
     }
   }
