@@ -253,22 +253,6 @@ object Packer extends ProductPackers {
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
 
-  //    new RawPacker[Ref[T]](TYPE_REF) {
-  //      def pack(value: Ref[T]) = {
-  //        value match {
-  //          case RefSome(key) => LongPacker.pack()
-  //          case RefEmpty => emptyByteArray
-  //        }
-  //      }
-  //
-  //      def unpack(buf: Array[Byte]) = {
-  //        if (buf.length > 0)
-  //          RefSome(buf)
-  //        else
-  //          RefEmpty
-  //      }
-  //    }
-
   implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
     new RawPacker[KeyCollection[T]](TYPE_COLLECTION) {
       def pack(value: KeyCollection[T]) = value.asInstanceOf[KeyCollectionImpl[T]].key
