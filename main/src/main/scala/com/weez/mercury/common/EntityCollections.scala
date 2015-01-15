@@ -1,5 +1,7 @@
 package com.weez.mercury.common
 
+import java.util
+
 
 private object EntityCollections {
 
@@ -55,14 +57,16 @@ private object EntityCollections {
 
   class HostCollectionImpl[V <: Entity : Packer](override val name: String) extends HostCollection[V] {
     host =>
-    var collectionID: Int = 0
+    @volatile var meta: DBType.Collection = null
     val valuePacker: Packer[V] = implicitly[Packer[V]]
 
     def bindDB()(implicit db: DBSessionQueryable): Unit = {
       if (this.synchronized {
-        if (this.collectionID == 0) {
-          val meta = db.schema.getHostCollection(this.name)
-          this.collectionID = meta.id
+        if (this.meta == null) {
+          this.meta = db.schema.getHostCollection(this.name)
+          if (this.meta == null) {
+            throw new IllegalArgumentException( s"""no such HostCollection named ${this.name}""")
+          }
           this.indexes.synchronized {
             for (idx <- this.indexes.values) {
               idx.indexID = meta.indexes.find(i => i.name == idx.name).get.id
@@ -74,17 +78,20 @@ private object EntityCollections {
         }
       }) {
         hostsByID.synchronized {
-          hostsByID.put(this.collectionID, this)
+          hostsByID.put(this.meta.id, this)
         }
       }
     }
 
-
-    @inline final def cid(implicit db: DBSessionQueryable) = {
-      if (this.collectionID == 0) {
+    @inline final def getMeta(implicit db: DBSessionQueryable) = {
+      if (this.meta == null) {
         this.bindDB()
       }
-      this.collectionID
+      this.meta
+    }
+
+    @inline final def getIndexID(name: String)(implicit db: DBSessionQueryable) = {
+      this.getMeta.indexes.find(i => i.name == name).get.id
     }
 
     abstract class IndexBaseImpl[K: Packer, KB <: Entity](keyGetter: KB => K) extends UniqueIndex[K, V] {
@@ -96,7 +103,7 @@ private object EntityCollections {
 
       def getIndexID(implicit db: DBSessionQueryable) = {
         if (this.indexID == 0) {
-          host.bindDB()
+          this.indexID = host.getIndexID(this.name)
         }
         this.indexID
       }
@@ -117,8 +124,8 @@ private object EntityCollections {
         this.getRefID(key).foreach(host.delete)
       }
 
-      override final def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-        new CursorImpl[K, Long, V](this.getIndexID, start, end, excludeStart, excludeEnd, id => db.get[Long, V](id).get)
+      override final def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+        new CursorImpl[K, Long, V](this.getIndexID, start, end, excludeStart, excludeEnd, if (forward) 1 else -1, id => db.get[Long, V](id).get)
       }
 
       override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -182,7 +189,7 @@ private object EntityCollections {
       }
     }
 
-    @inline private[common] final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.cid, id)
+    @inline private[common] final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.getMeta.id, id)
 
     @inline private[common] final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 
@@ -192,15 +199,15 @@ private object EntityCollections {
     @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = {
       if (id == 0) {
         None
-      } else if (collectionIDOf(id) != this.cid) {
+      } else if (collectionIDOf(id) != this.getMeta.id) {
         throw new IllegalArgumentException("not in this collection")
       } else {
         db.get[Long, V](id)
       }
     }
 
-    @inline final def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-      new CursorImpl[Long, V, V](this.cid, start, end, excludeStart, excludeEnd, v => v)
+    @inline final def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+      new CursorImpl[Long, V, V](this.getMeta.id, start, end, excludeStart, excludeEnd, if (forward) 1 else -1, v => v)
 
 
     final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -240,7 +247,9 @@ private object EntityCollections {
         if (this.indexes.get(name).isDefined) {
           throw new IllegalArgumentException( s"""index naming "$name" exist!""")
         }
-        this.indexes.put(name, new UniqueIndexImpl[K](name, keyGetter)).asInstanceOf[UniqueIndex[K, V]]
+        val idx = new UniqueIndexImpl[K](name, keyGetter)
+        this.indexes.put(name, idx)
+        idx
       }
     }
 
@@ -266,21 +275,100 @@ private object EntityCollections {
     def onKeyEntityDelete(oldEntity: KB)(implicit db: DBSessionUpdatable)
   }
 
-  class CursorImpl[K: Packer, V: Packer, T <: Entity](kCID: Int, keyStart: Option[K], keyEnd: Option[K],
-                                                      excludeStart: Boolean, excludeEnd: Boolean, v2t: V => T)
+  object cidPrefixHelper {
+    val cidPrefixPacker = Packer.tuple1[Int]
+    val cidPrefixLen = cidPrefixPacker.packLength(Tuple1(0))
+
+    @inline final def cidPrefix(cid: Int, bigger: Boolean = false) = {
+      val buf = new Array[Byte](if (bigger) cidPrefixLen + 1 else cidPrefixLen)
+      cidPrefixPacker.pack(Tuple1(cid), buf, 0)
+      if (bigger) buf(cidPrefixLen) = 0xFF.asInstanceOf[Byte]
+      buf
+    }
+  }
+
+
+  class CursorImpl[K: Packer, V: Packer, T <: Entity](cid: Int, keyStart: Option[K], keyEnd: Option[K],
+                                                      excludeStart: Boolean, excludeEnd: Boolean, step: Int, v2t: V => T)
                                                      (implicit db: DBSessionQueryable) extends Cursor[T] {
+    self =>
+    var remaining: Int = Int.MaxValue
+    val fullKeyPacker = implicitly[Packer[(Int, K)]]
 
-    private var dbCursor: DBCursor[(Int, K), T] = null
+    def packFullKey(key: Option[K], end: Boolean) = {
+      key.fold[Array[Byte]](cidPrefixHelper.cidPrefix(cid, end))(k => this.fullKeyPacker((cid, k)))
+    }
 
-    def next(): T = ???
+    val rangeStart: Array[Byte] = packFullKey(keyStart, false)
+    val rangeEnd: Array[Byte] = packFullKey(keyEnd, true)
+    val dbCursor: DBCursor = db.newCursor
 
-    def hasNext = dbCursor.hasNext
-
-    def close() = {
-      if (dbCursor != null) {
-        dbCursor.close()
+    def checkRange() = {
+      if (remaining > 0) {
+        if (step > 0) {
+          val c = Util.compareUInt8s(dbCursor.key(), rangeEnd)
+          if (c > 0 || (c == 0 && excludeEnd)) {
+            remaining = 0
+          }
+        } else {
+          val c = Util.compareUInt8s(dbCursor.key(), rangeStart)
+          if (c < 0 || (c == 0 && excludeStart)) {
+            remaining = 0
+          }
+        }
       }
     }
+
+    if (step match {
+      case 1 =>
+        dbCursor.seek(rangeStart)
+      case -1 =>
+        dbCursor.seek(rangeEnd)
+    }) {
+      checkRange()
+    } else {
+      remaining = 0
+    }
+    if (remaining <= 0) {
+      this.close()
+    }
+
+    override def size: Int = 0
+
+    override def slice(from: Int, until: Int): Cursor[T] = {
+      if (from > 0) {
+        var toDrop = from
+        do {
+          val skip = toDrop max 100
+          dbCursor.next(step * skip)
+          remaining -= skip
+          checkRange()
+          toDrop -= skip
+        } while (toDrop > 0 && remaining > 0)
+      }
+      remaining = remaining min (until - from)
+      if (remaining <= 0) {
+        close()
+      }
+      this
+    }
+
+    def next(): T = {
+      if (remaining <= 0) {
+        throw new IllegalStateException("EOF")
+      }
+      val value = implicitly[Packer[V]].unapply(this.dbCursor.value())
+      checkRange()
+      remaining -= 1
+      if (remaining <= 0) {
+        this.close()
+      }
+      v2t(value)
+    }
+
+    def hasNext = remaining > 0
+
+    def close() = this.dbCursor.close()
   }
 
 }

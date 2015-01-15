@@ -45,7 +45,7 @@ trait DBSessionQueryable {
 
   def exists[K: Packer](key: K): Boolean
 
-  def newCursor[K: Packer, V: Packer]: DBCursor[K, V]
+  def newCursor: DBCursor
 
   private[common] def schema: DBSchema
 }
@@ -56,9 +56,14 @@ trait DBSessionUpdatable extends DBSessionQueryable {
   def del[K: Packer](key: K): Unit
 }
 
-trait Cursor[+T <: Entity] extends Iterator[T] {
-  //override def drop(n: Int): Cursor[T]
-  def close(): Unit
+trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
+  override def slice(from: Int, until: Int): Cursor[T] = throw new UnsupportedOperationException
+
+  @inline final override def take(n: Int): Cursor[T] = slice(0, n)
+
+  @inline final override def drop(n: Int): Cursor[T] = slice(n, Int.MaxValue)
+
+  override def close(): Unit
 }
 
 trait IndexBase[K, V <: Entity] {
@@ -68,7 +73,7 @@ trait IndexBase[K, V <: Entity] {
   @inline final def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V] =
     this.apply(Some(start), Some(end))
 
-  def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 
   def subIndex[PK, SK](prefix: PK, fullKeyGetter: (PK, SK) => K, subKeyGetter: K => SK): IndexBase[SK, V]
 }
@@ -90,8 +95,8 @@ trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
 
     override def apply(key: SK)(implicit db: DBSessionQueryable): Option[V] = self(fullKey(prefix, key))
 
-    override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-      self(start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd)
+    override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+      self(start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd, forward)
   }
 }
 
@@ -122,7 +127,7 @@ trait EntityCollection[V <: Entity] {
   def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V]
 }
 
-abstract class PartitionCollection[P:Packer, V <: Entity :Packer] extends EntityCollection[V] {
+abstract class PartitionCollection[P: Packer, V <: Entity : Packer] extends EntityCollection[V] {
   val partition: P
 
   def v2p(value: V): P
@@ -168,8 +173,8 @@ abstract class RootCollection[V <: Entity : Packer] extends HostCollection[V] {
 
   @inline final override def defUniqueIndex[K: Packer](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
 
-  @inline final override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-    impl(start, end, excludeStart, excludeEnd)
+  @inline final override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+    impl(start, end, excludeStart, excludeEnd, forward)
 }
 
 trait KeyCollection[T <: Entity] {

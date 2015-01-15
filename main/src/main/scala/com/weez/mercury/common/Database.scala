@@ -29,7 +29,7 @@ trait DBSession {
 trait DBTransaction {
   def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): Option[V]
 
-  def newCursor[K, V](implicit pk: Packer[K], pv: Packer[V]): DBCursor[K, V]
+  def newCursor: DBCursor
 
   def put[K, V](key: K, value: V)(implicit pk: Packer[K], pv: Packer[V]): Unit
 
@@ -38,8 +38,17 @@ trait DBTransaction {
   def del[K](key: K)(implicit pk: Packer[K]): Unit
 }
 
-trait DBCursor[K, V] extends Iterator[(K, V)] {
-  def seek(key: K): Boolean
+trait DBCursor {
+
+  def seek(key: Array[Byte]): Boolean
+
+  def next(n: Int): Boolean
+
+  def isValid: Boolean
+
+  def key(): Array[Byte]
+
+  def value(): Array[Byte]
 
   def close(): Unit
 }

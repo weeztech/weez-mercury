@@ -88,4 +88,14 @@ object Util {
         throw new Exception("not a directory")
     }
   }
+
+  def compareUInt8s(a: Array[Byte], b: Array[Byte]): Int = {
+    val l = a.length max b.length
+    var i,c=0
+    while (c == 0 && i < l) {
+      c = (a(i) & 0xFF) - (b(i) & 0xFF)
+      i += 1
+    }
+    if (c != 0) c else a.length - b.length
+  }
 }
