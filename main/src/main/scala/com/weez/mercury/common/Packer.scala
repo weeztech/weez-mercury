@@ -237,24 +237,39 @@ object Packer extends ProductPackers {
     }
   }
 
-  implicit def ref[T<: Entity]: Packer[Ref[T]] =
-    new RawPacker[Ref[T]](TYPE_REF) {
-      def pack(value: Ref[T]) = {
-        value match {
-          case RefSome(key) => key
-          case RefEmpty => emptyByteArray
-        }
-      }
-
-      def unpack(buf: Array[Byte]) = {
-        if (buf.length > 0)
-          RefSome(buf)
-        else
-          RefEmpty
-      }
+  val refPacker = new FixedLengthPacker[Ref[_]](9) {
+    override def pack(value: Ref[_], buf: Array[Byte], offset: Int): Unit = {
+      buf(offset) = TYPE_REF
+      writeLong(value.id, buf, offset + 1)
     }
 
-  implicit def collection[T<: Entity]: Packer[KeyCollection[T]] =
+    override def unpack(buf: Array[Byte], offset: Int, length: Int): Ref[_] = {
+      require(buf(offset) == TYPE_REF, "not a ref")
+      require(buf.length >= offset + 9 && length == 9, "invalid length")
+      val id = readLong(buf, offset + 1)
+      if (id != 0) RefSome(id) else RefEmpty
+    }
+  }
+
+  implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
+
+  //    new RawPacker[Ref[T]](TYPE_REF) {
+  //      def pack(value: Ref[T]) = {
+  //        value match {
+  //          case RefSome(key) => LongPacker.pack()
+  //          case RefEmpty => emptyByteArray
+  //        }
+  //      }
+  //
+  //      def unpack(buf: Array[Byte]) = {
+  //        if (buf.length > 0)
+  //          RefSome(buf)
+  //        else
+  //          RefEmpty
+  //      }
+  //    }
+
+  implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
     new RawPacker[KeyCollection[T]](TYPE_COLLECTION) {
       def pack(value: KeyCollection[T]) = value.asInstanceOf[KeyCollectionImpl[T]].key
 

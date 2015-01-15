@@ -90,7 +90,7 @@ object ProductCollection extends RootCollection[Product] {
 case class Assistant(id: Long,
                      price: Double,
                      staff: Ref[Staff],
-                     description: String) extends ExtendEntity[Staff]
+                     description: String) extends Entity
 
 object Assistant extends DBObjectType[Assistant] {
   def nameInDB = "assistant"
@@ -102,12 +102,15 @@ object Assistant extends DBObjectType[Assistant] {
   implicit val packer = Packer(Assistant.apply _)
 }
 
-object AssistantCollection extends RootCollection[Assistant] with ExtendCollection[Staff, Assistant] {
+object AssistantCollection extends RootCollection[Assistant] {
   val name = "assistant"
 
   def extendFrom = StaffCollection
 
-  val byStaffName = defExtendIndex("by-staff-name", _.name)
+  val byStaffName = defUniqueIndex("by-staff-name", _ => {
+    ???;
+    "???"
+  })
 }
 
 
@@ -128,21 +131,13 @@ object CustomerCollection extends RootCollection[Customer] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class SaleOrderRoomItems(host:SaleOrder) extends PartitionCollection[SaleOrder, RoomItem] {
-
-  override def partitionOf = RoomItemCollection
-
-  val bySeqID = defUniqueIndex(partitionOf.bySeqID)
-  val byRoomID = defUniqueIndex(partitionOf.byRoomID)
-}
 
 case class SaleOrder(id: Long,
                      code: String,
                      time: DateTime,
                      customer: Ref[Customer],
-                     ctime: DateTime) extends Entity{
-  lazy val rooms = SaleOrderRoomItems(this)
-  val roomsByRoomID = RoomItemCollection.byRoomID(this)
+                     ctime: DateTime) extends Entity {
+  lazy val rooms = new SaleOrderRoomItems(this)
 }
 
 object SaleOrder extends DBObjectType[SaleOrder] {
@@ -158,23 +153,31 @@ object SaleOrder extends DBObjectType[SaleOrder] {
 
   val rooms = column[KeyCollection[RoomItem]]("rooms")
 
-  case class RoomItem(id: Long, parentID: Long, seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime)
-    extends SubEntity[SaleOrder]
+  case class RoomItem(id: Long, saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
   implicit val packer2 = Packer(RoomItem)
   implicit val packer = Packer(SaleOrder.apply _)
 }
+
+class SaleOrderRoomItems(host: SaleOrder) extends PartitionCollection[Ref[SaleOrder], RoomItem] {
+  override val name = "sale-order-room-items"
+  override def v2p(value: RoomItem): Ref[SaleOrder] = value.saleOrder
+
+  override val partition: Ref[SaleOrder] = host.newRef()
+  lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)
+  lazy val byRoom = defUniqueIndex("byRoom", _.room)
+}
+
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
   val name = "sale-order"
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-object RoomItemCollection extends RootCollection[RoomItem] with SubCollection[SaleOrder, RoomItem] {
-  override val name = "sale-order-room-item"
-  override val parent = SaleOrderCollection
-  val bySeqID = defPartitionIndex[Int]("bySeqID", _.seqID)
-  val byRoomID = defPartitionIndex[Long]("byRoom", _.room.refID)
+object RoomItemCollection extends RootCollection[RoomItem] {
+  override val name = "sale-order-room-items"
+  //val bySeqID = defUniqueIndex[(Long, Int)]("bySeqID", v => (v.saleOrder.refID, v.seqID))
+  //val byRoomID = defUniqueIndex[(Long, Long)]("byRoom", v => (v.saleOrder.refID, v.room.refID))
 }
 
 case class Room(id: Long, title: String, price: Double, description: String) extends Entity

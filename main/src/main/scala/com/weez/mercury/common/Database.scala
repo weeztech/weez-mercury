@@ -62,17 +62,13 @@ class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection
   def defUniqueIndex[K: Packer](name: String, keyGetter: T => K): UniqueIndex[K, T] = ???
 }
 
-case class RefSome[T <: Entity](key: Array[Byte]) extends Ref[T] {
-  def isEmpty = false
+case class RefSome[T <: Entity](id: Long) extends Ref[T] {
 
-  def refID = ???
-
-  def apply()(implicit db: DBSessionQueryable): T = ???
+  def apply()(implicit db: DBSessionQueryable): T = EntityCollections.getEntity(id)
 }
 
 case object RefEmpty extends Ref[Nothing] {
-  def isEmpty = true
-  def refID = 0L
+  def id = 0L
 
-  def apply()(implicit db: DBSessionQueryable) = ???
+  def apply()(implicit db: DBSessionQueryable) = throw new NoSuchElementException("RefEmpty()")
 }
