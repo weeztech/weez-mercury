@@ -45,7 +45,7 @@ trait DBSessionQueryable {
 
   def exists[K: Packer](key: K): Boolean
 
-  def newCursor: DBCursor
+  def newCursor(): DBCursor
 
   private[common] def schema: DBSchema
 }
@@ -75,7 +75,7 @@ trait IndexBase[K, V <: Entity] {
 
   def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 
-  def subIndex[PK, SK](prefix: PK, fullKeyGetter: (PK, SK) => K, subKeyGetter: K => SK): IndexBase[SK, V]
+  def subIndex[PK: Packer, SK](prefix: PK, fullKeyGetter: (PK, SK) => K, subKeyGetter: K => SK): IndexBase[SK, V]
 }
 
 trait Index[K, V <: Entity] extends IndexBase[K, V]
@@ -88,16 +88,8 @@ trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
 
   def update(value: V)(implicit db: DBSessionUpdatable): Unit
 
-  def subIndex[PK, SK](prefix: PK, fullKey: (PK, SK) => K, subKey: K => SK) = new UniqueIndex[SK, V] {
-    override def update(value: V)(implicit db: DBSessionUpdatable): Unit = self.update(value)
-
-    override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = self.delete(fullKey(prefix, key))
-
-    override def apply(key: SK)(implicit db: DBSessionQueryable): Option[V] = self(fullKey(prefix, key))
-
-    override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-      self(start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd, forward)
-  }
+  override def subIndex[PK: Packer, SK](prefix: PK, fullKey: (PK, SK) => K, subKey: K => SK): UniqueIndex[SK, V] =
+    throw new UnsupportedOperationException()
 }
 
 trait Ref[+T <: Entity] {

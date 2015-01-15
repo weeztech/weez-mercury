@@ -95,7 +95,7 @@ private object EntityCollections {
     }
 
     abstract class IndexBaseImpl[K: Packer, KB <: Entity](keyGetter: KB => K) extends UniqueIndex[K, V] {
-
+      index =>
       registerIndexEntryHelper(this)
 
       val name: String
@@ -116,19 +116,49 @@ private object EntityCollections {
 
       @inline final def getRefID(key: K)(implicit db: DBSessionQueryable): Option[Long] = db.get(getFullKey(key))(fullKeyPacker, implicitly[Packer[Long]])
 
-      override final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
+      @inline final override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
         this.getRefID(key).flatMap(db.get[Long, V])
       }
 
-      override final def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
+      @inline final override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
         this.getRefID(key).foreach(host.delete)
       }
 
-      override final def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-        new CursorImpl[K, Long, V](this.getIndexID, start, end, excludeStart, excludeEnd, if (forward) 1 else -1, id => db.get[Long, V](id).get)
+      @inline final override def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+        val range = new ScanRange[K](start, end, excludeStart, excludeEnd) {
+          val prefixPacker = implicitly[Packer[Tuple1[Int]]]
+
+          override def buildPrefixMin = prefixPacker(Tuple1(index.getIndexID))
+
+          override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
+
+        }
+        new CursorImpl[K, Long, V](range, forward, id => db.get[Long, V](id).get)
       }
 
-      override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
+
+      override def subIndex[PK: Packer, SK](prefix: PK, fullKey: (PK, SK) => K, subKey: (K) => SK): UniqueIndex[SK, V] = new UniqueIndex[SK, V] {
+        val partKeyPacker = implicitly[Packer[(Int, PK)]]
+
+        override def update(value: V)(implicit db: DBSessionUpdatable): Unit = index.update(value)
+
+        override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = index.delete(fullKey(prefix, key))
+
+        override def apply(key: SK)(implicit db: DBSessionQueryable): Option[V] = index(fullKey(prefix, key))
+
+        override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+          val range = new ScanRange[K](start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd) {
+
+            override def buildPrefixMin = partKeyPacker((index.getIndexID, prefix))
+
+            override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
+
+          }
+          new CursorImpl[K, Long, V](range, forward, id => db.get[Long, V](id).get)
+        }
+      }
+
+      @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
         host.update(value)
       }
 
@@ -206,8 +236,16 @@ private object EntityCollections {
       }
     }
 
-    @inline final def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-      new CursorImpl[Long, V, V](this.getMeta.id, start, end, excludeStart, excludeEnd, if (forward) 1 else -1, v => v)
+    final def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+      val range = new ScanRange(start, end, excludeStart, excludeEnd) {
+        override def buildPrefixMin = Packer.LongPacker(fixID(0l))
+
+        override def buildPrefixMax = Packer.LongPacker(fixID(-1l))
+
+        override def buildFullKey(id: Long) = Packer.LongPacker(fixID(id))
+      }
+      new CursorImpl[Long, V, V](range, forward, v => v)
+    }
 
 
     final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -275,100 +313,138 @@ private object EntityCollections {
     def onKeyEntityDelete(oldEntity: KB)(implicit db: DBSessionUpdatable)
   }
 
-  object cidPrefixHelper {
-    val cidPrefixPacker = Packer.tuple1[Int]
-    val cidPrefixLen = cidPrefixPacker.packLength(Tuple1(0))
+  val cidPrefixPacker = Packer.tuple1[Int]
 
-    @inline final def cidPrefix(cid: Int, bigger: Boolean = false) = {
-      val buf = new Array[Byte](if (bigger) cidPrefixLen + 1 else cidPrefixLen)
-      cidPrefixPacker.pack(Tuple1(cid), buf, 0)
-      if (bigger) buf(cidPrefixLen) = 0xFF.asInstanceOf[Byte]
-      buf
+  final val b_one = 1.asInstanceOf[Byte]
+  final val b_ff = 0xff.asInstanceOf[Byte]
+  final val b_zero = 0.asInstanceOf[Byte]
+
+  abstract class ScanRange[K](keyStart: Option[K], keyEnd: Option[K], excludeStart: Boolean, excludeEnd: Boolean) {
+    private final def keyAdd(key: Array[Byte], v: Int) = {
+      def add(i: Int, v: Int): Unit = {
+        if (i < 0 || v == 0) {
+          return
+        }
+        val r = (key(i) & 0xFF) + v
+        key(i) = r.asInstanceOf[Byte]
+        add(i - 1, r >> 8)
+      }
+      add(key.length - 1, v)
+      key
+    }
+
+    def buildPrefixMin: Array[Byte]
+
+    def buildPrefixMax = {
+      val k = buildPrefixMin
+      k(k.length - 1) = -1
+      k
+    }
+
+    def buildFullKey(key: K): Array[Byte]
+
+    @inline final def rangeMin(): Array[Byte] = {
+      keyAdd(keyStart.fold(buildPrefixMin)(buildFullKey), if (excludeStart) 1 else 0)
+    }
+
+    @inline final def rangeMax(): Array[Byte] = {
+      keyAdd(keyEnd.fold(buildPrefixMin)(buildFullKey), if (excludeEnd) -1 else 0)
     }
   }
 
 
-  class CursorImpl[K: Packer, V: Packer, T <: Entity](cid: Int, keyStart: Option[K], keyEnd: Option[K],
-                                                      excludeStart: Boolean, excludeEnd: Boolean, step: Int, v2t: V => T)
+  class CursorImpl[K: Packer, V: Packer, T <: Entity](range: ScanRange[K], forward: Boolean, v2t: V => T)
                                                      (implicit db: DBSessionQueryable) extends Cursor[T] {
     self =>
-    var remaining: Int = Int.MaxValue
-    val fullKeyPacker = implicitly[Packer[(Int, K)]]
-
-    def packFullKey(key: Option[K], end: Boolean) = {
-      key.fold[Array[Byte]](cidPrefixHelper.cidPrefix(cid, end))(k => this.fullKeyPacker((cid, k)))
+    val step = if (forward) 1 else -1
+    val rangeMin = range.rangeMin()
+    val rangeMax = range.rangeMax()
+    var dbCursor: DBCursor = null
+    var remaining = 0
+    if (Util.compareUInt8s(rangeMin, rangeMax) > 0) {
+      dbCursor = db.newCursor()
+      remaining = Int.MaxValue
+      checkRemain(dbCursor.seek(if (forward) rangeMin else rangeMax), 0)
     }
 
-    val rangeStart: Array[Byte] = packFullKey(keyStart, false)
-    val rangeEnd: Array[Byte] = packFullKey(keyEnd, true)
-    val dbCursor: DBCursor = db.newCursor
-
-    def checkRange() = {
-      if (remaining > 0) {
-        if (step > 0) {
-          val c = Util.compareUInt8s(dbCursor.key(), rangeEnd)
-          if (c > 0 || (c == 0 && excludeEnd)) {
-            remaining = 0
+    def checkRemain(valid: Boolean, count: Int = 1): Unit = {
+      if (valid) {
+        if (forward) {
+          if (Util.compareUInt8s(dbCursor.key(), rangeMax) > 0) {
+            close()
+          } else {
+            remaining -= count
+            if (remaining <= 0) {
+              close()
+            }
           }
         } else {
-          val c = Util.compareUInt8s(dbCursor.key(), rangeStart)
-          if (c < 0 || (c == 0 && excludeStart)) {
-            remaining = 0
+          val key = dbCursor.key()
+          if (Util.compareUInt8s(key, rangeMin) < 0) {
+            close()
+          } else if (count == 0) {
+            //seek
+            if (Util.compareUInt8s(key, rangeMax) > 0) {
+              checkRemain(dbCursor.next(step))
+            }
+          } else {
+            remaining -= count
+            if (remaining <= 0) {
+              close()
+            }
           }
         }
+      } else {
+        close()
       }
     }
 
-    if (step match {
-      case 1 =>
-        dbCursor.seek(rangeStart)
-      case -1 =>
-        dbCursor.seek(rangeEnd)
-    }) {
-      checkRange()
-    } else {
-      remaining = 0
+    override def size: Int = {
+      var s = 0
+      if (hasNext) {
+        val step = if (forward) 1 else -1
+        do {
+          s += 1
+          checkRemain(dbCursor.next(step))
+        } while (!hasNext)
+      }
+      s
     }
-    if (remaining <= 0) {
-      this.close()
-    }
-
-    override def size: Int = 0
 
     override def slice(from: Int, until: Int): Cursor[T] = {
-      if (from > 0) {
-        var toDrop = from
-        do {
-          val skip = toDrop max 100
-          dbCursor.next(step * skip)
-          remaining -= skip
-          checkRange()
-          toDrop -= skip
-        } while (toDrop > 0 && remaining > 0)
-      }
-      remaining = remaining min (until - from)
-      if (remaining <= 0) {
-        close()
+      if (hasNext) {
+        val r = until - from
+        if (r <= 0 || remaining < from) {
+          close()
+        } else if (from > 0) {
+          var toDrop = from
+          do {
+            val skip = toDrop max 100
+            checkRemain(dbCursor.next(step * skip), skip)
+            toDrop -= skip
+          } while (toDrop > 0 && hasNext)
+        }
+        remaining = remaining min r
       }
       this
     }
 
-    def next(): T = {
-      if (remaining <= 0) {
+    override def next(): T = {
+      if (!hasNext) {
         throw new IllegalStateException("EOF")
       }
-      val value = implicitly[Packer[V]].unapply(this.dbCursor.value())
-      checkRange()
-      remaining -= 1
-      if (remaining <= 0) {
-        this.close()
-      }
+      val value = implicitly[Packer[V]].unapply(dbCursor.value())
+      checkRemain(dbCursor.next(step))
       v2t(value)
     }
 
-    def hasNext = remaining > 0
+    @inline final def hasNext = remaining > 0
 
-    def close() = this.dbCursor.close()
+    @inline override final def close() = if (dbCursor != null) {
+      dbCursor.close()
+      dbCursor = null
+      remaining = 0
+    }
   }
 
 }
