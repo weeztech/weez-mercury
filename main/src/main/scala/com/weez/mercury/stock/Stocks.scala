@@ -1,7 +1,6 @@
 package com.weez.mercury.stock
 
 import java.util
-import javafx.scene.control.Separator
 
 import org.rocksdb._
 

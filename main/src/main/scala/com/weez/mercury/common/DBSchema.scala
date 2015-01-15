@@ -1,5 +1,8 @@
 package com.weez.mercury.common
 
+import akka.event.LoggingAdapter
+import com.weez.mercury.ClassFinder
+
 trait DBSchema {
   def newEntityID(): Long
 
@@ -42,7 +45,29 @@ trait DBExtendTypes {
 
 }
 
+/*
 object DBTypeEntityCollection extends RootCollection[DBType.Entity] {
   def name = "sys-types"
 
+}*/
+
+trait DatabaseChecker {
+  def check(log: LoggingAdapter): Unit = {
+    import scala.reflect.runtime.{universe => ru}
+    import com.weez.mercury.ClassFinder._
+    log.info("start checking database schema")
+    val start = System.nanoTime()
+    val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
+    scalaNamesIn(classpath.filter { f =>
+      f.isDirectory() || f.getName.contains("weez")
+    }) foreach {
+      case ScalaName(name, true, true, false) =>
+        val symbol = mirror.staticModule(name)
+        if (symbol.typeSignature <:< ru.typeOf[DBObjectType[_]]) {
+          mirror.reflectModule(symbol).instance.asInstanceOf[DBObjectType]
+        }
+      case _ =>
+    }
+    log.info(s"database schema checked in ${(System.nanoTime() - start) / 1000000} ms")
+  }
 }
