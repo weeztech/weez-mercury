@@ -29,24 +29,28 @@ private object EntityCollections {
     }
   }
 
-  def forPartitionHost[V <: Entity : Packer](pc: PartitionCollection[_, V]): HostCollection[V] = {
+  def forPartitionHost[V <: Entity : Packer](pc: SubCollection[V]): SubHostCollectionImpl[V] = {
     this.hosts.synchronized {
       this.hosts.get(pc.name) match {
-        case Some(host: HostCollectionImpl[_]) => host.asInstanceOf[HostCollectionImpl[V]]
-        case _ =>
-          val host = new HostCollectionImpl[V](pc.name)
+        case Some(host: SubHostCollectionImpl[V]) => host
+        case None =>
+          val host = new SubHostCollectionImpl[V](pc.name)
           this.hosts.put(pc.name, host)
           host
+        case _ =>
+          throw new IllegalArgumentException( s"""PartitionCollection name conflict :${pc.name}""")
       }
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String): HostCollection[V] = {
+  def newHost[V <: Entity : Packer](name: String): HostCollectionImpl[V] = {
     this.hosts.synchronized {
       if (this.hosts.get(name).isDefined) {
         throw new IllegalArgumentException( s"""HostCollection naming"$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name)
+      val host = new HostCollectionImpl[V](name){
+        override val valuePacker: Packer[V] = implicitly[Packer[V]]
+      }
       this.hosts.put(name, host)
       host
     }
@@ -55,21 +59,21 @@ private object EntityCollections {
   val hosts = collection.mutable.HashMap[String, HostCollectionImpl[_]]()
   val hostsByID = collection.mutable.HashMap[Int, HostCollectionImpl[_]]()
 
-  class HostCollectionImpl[V <: Entity : Packer](override val name: String) extends HostCollection[V] {
+  abstract class HostCollectionImpl[V <: Entity](override val name: String) extends HostCollection[V] {
     host =>
-    @volatile var meta: DBType.Collection = null
-    val valuePacker: Packer[V] = implicitly[Packer[V]]
+    @volatile var _meta: DBType.Collection = null
+    implicit val valuePacker: Packer[V]
 
     def bindDB()(implicit db: DBSessionQueryable): Unit = {
-      if (this.synchronized {
-        if (this.meta == null) {
-          this.meta = db.schema.getHostCollection(this.name)
-          if (this.meta == null) {
+      if (synchronized {
+        if (_meta == null) {
+          _meta = db.schema.getHostCollection(this.name)
+          if (_meta == null) {
             throw new IllegalArgumentException( s"""no such HostCollection named ${this.name}""")
           }
-          this.indexes.synchronized {
-            for (idx <- this.indexes.values) {
-              idx.indexID = meta.indexes.find(i => i.name == idx.name).get.id
+          indexes.synchronized {
+            for (idx <- indexes.values) {
+              idx.indexID = _meta.indexes.find(i => i.name == idx.name).get.id
             }
           }
           true
@@ -78,24 +82,35 @@ private object EntityCollections {
         }
       }) {
         hostsByID.synchronized {
-          hostsByID.put(this.meta.id, this)
+          hostsByID.put(_meta.id, this)
         }
       }
     }
 
-    @inline final def getMeta(implicit db: DBSessionQueryable) = {
-      if (this.meta == null) {
-        this.bindDB()
+    @inline final def meta(implicit db: DBSessionQueryable) = {
+      if (_meta == null) {
+        bindDB()
       }
-      this.meta
+      _meta
     }
 
     @inline final def getIndexID(name: String)(implicit db: DBSessionQueryable) = {
-      this.getMeta.indexes.find(i => i.name == name).get.id
+      meta.indexes.find(i => i.name == name).get.id
     }
 
-    abstract class IndexBaseImpl[K: Packer, KB <: Entity](keyGetter: KB => K) extends UniqueIndex[K, V] {
+    abstract class IndexBaseImpl[K: Packer, KB <: Entity, R <: Entity : Packer](keyGetter: KB => K)
+      extends UniqueIndex[K, R]
+      with IndexEntryInserter[KB]
+      with IndexEntryDeleter[KB]
+      with IndexEntryUpdater[KB] {
       index =>
+
+      def kb2r(keyBase: KB): R
+
+      def r2v(r: R): V
+
+      def v2r(v: V): R
+
       registerIndexEntryHelper(this)
 
       val name: String
@@ -112,19 +127,19 @@ private object EntityCollections {
 
       @inline final def getFullKey(key: K)(implicit db: DBSessionQueryable): (Int, K) = (this.getIndexID, key)
 
-      @inline final def getFullKeyOfKB(keyBase: KB)(implicit db: DBSessionQueryable): (Int, K) = this.getFullKey(keyGetter(keyBase))
+      @inline final def getFullKeyOfKB(keyBase: KB)(implicit db: DBSessionQueryable): (Int, K) = getFullKey(keyGetter(keyBase))
 
       @inline final def getRefID(key: K)(implicit db: DBSessionQueryable): Option[Long] = db.get(getFullKey(key))(fullKeyPacker, implicitly[Packer[Long]])
 
-      @inline final override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
-        this.getRefID(key).flatMap(db.get[Long, V])
+      @inline final override def apply(key: K)(implicit db: DBSessionQueryable): Option[R] = {
+        this.getRefID(key).flatMap(db.get[Long, V]).map(v2r)
       }
 
       @inline final override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
         this.getRefID(key).foreach(host.delete)
       }
 
-      @inline final override def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+      @inline final override def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[R] = {
         val range = new ScanRange[K](start, end, excludeStart, excludeEnd) {
           val prefixPacker = implicitly[Packer[Tuple1[Int]]]
 
@@ -133,66 +148,59 @@ private object EntityCollections {
           override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
 
         }
-        new CursorImpl[K, Long, V](range, forward, id => db.get[Long, V](id).get)
+        new CursorImpl[K, Long, R](range, forward) {
+          override def v2r(id: Long) = index.v2r(db.get[Long, V](id).get)
+        }
       }
 
 
-      override def subIndex[PK: Packer, SK](prefix: PK, fullKey: (PK, SK) => K, subKey: (K) => SK): UniqueIndex[SK, V] = new UniqueIndex[SK, V] {
+      override def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]) = new UniqueIndex[SK, R] {
         val partKeyPacker = implicitly[Packer[(Int, PK)]]
 
-        override def update(value: V)(implicit db: DBSessionUpdatable): Unit = index.update(value)
+        override def update(value: R)(implicit db: DBSessionUpdatable): Unit = index.update(value)
 
-        override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = index.delete(fullKey(prefix, key))
+        override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = index.delete(keyMapper.fullKey(key))
 
-        override def apply(key: SK)(implicit db: DBSessionQueryable): Option[V] = index(fullKey(prefix, key))
+        override def apply(key: SK)(implicit db: DBSessionQueryable): Option[R] = index(keyMapper.fullKey(key))
 
-        override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-          val range = new ScanRange[K](start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd) {
+        override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[R] = {
+          val range = new ScanRange[K](start.map(keyMapper.fullKey), end.map(keyMapper.fullKey), excludeStart, excludeEnd) {
 
-            override def buildPrefixMin = partKeyPacker((index.getIndexID, prefix))
+            override def buildPrefixMin = partKeyPacker((index.getIndexID, keyMapper.prefixKey))
 
             override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
 
           }
-          new CursorImpl[K, Long, V](range, forward, id => db.get[Long, V](id).get)
+          new CursorImpl[K, Long, R](range, forward) {
+            override def v2r(id: Long): R = db.get[Long, R](id).get
+          }
         }
       }
 
-      @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-        host.update(value)
+      @inline final override def update(r: R)(implicit db: DBSessionUpdatable): Unit = {
+        host.update(r2v(r))
       }
 
-      @inline final def doUpdateEntry(oldKeyEntity: KB, newKeyEntity: KB, condition: () => Boolean)(implicit db: DBSessionUpdatable): Unit = {
-        val oldIndexEntryKey = keyGetter(oldKeyEntity)
-        val newIndexEntryKey = keyGetter(newKeyEntity)
-        if (!oldIndexEntryKey.equals(newIndexEntryKey) && condition()) {
-          db.del(this.getFullKey(oldIndexEntryKey))
-          db.put(this.getFullKey(newIndexEntryKey), newKeyEntity.id)
-        }
-      }
-    }
-
-    class UniqueIndexImpl[K: Packer](override val name: String, keyGetter: V => K)
-      extends IndexBaseImpl[K, V](keyGetter)
-      with UniqueIndex[K, V]
-      with IndexEntryInserter[V]
-      with IndexEntryDeleter[V]
-      with IndexEntryUpdater[V] {
-
-      def onKeyEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      def onKeyEntityInsert(newEntity: KB)(implicit db: DBSessionUpdatable): Unit = {
         db.put(this.getFullKeyOfKB(newEntity), newEntity.id)(this.fullKeyPacker, implicitly[Packer[Long]])
       }
 
-      def onKeyEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      def onKeyEntityDelete(oldEntity: KB)(implicit db: DBSessionUpdatable): Unit = {
         db.del(this.getFullKeyOfKB(oldEntity))(this.fullKeyPacker)
       }
 
-      def onKeyEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-        this.doUpdateEntry(oldEntity, newEntity, () => true)
+      def onKeyEntityUpdate(oldEntity: KB, newEntity: KB)(implicit db: DBSessionUpdatable): Unit = {
+        val oldIndexEntryKey = keyGetter(oldEntity)
+        val newIndexEntryKey = keyGetter(newEntity)
+        if (!oldIndexEntryKey.equals(newIndexEntryKey)) {
+          db.del(this.getFullKey(oldIndexEntryKey))
+          db.put(this.getFullKey(newIndexEntryKey), newEntity.id)
+        }
       }
+
     }
 
-    private val indexes = collection.mutable.Map[String, IndexBaseImpl[_, _]]()
+    val indexes = collection.mutable.Map[String, IndexBaseImpl[_, _, _]]()
 
     /**
      * 内部索引和外部的Extend索引
@@ -201,7 +209,7 @@ private object EntityCollections {
     private var idxInserters = Seq[IndexEntryInserter[V]]()
     private var idxDeleters = Seq[IndexEntryDeleter[V]]()
 
-    private[common] def registerIndexEntryHelper(er: AnyRef): Unit = {
+    def registerIndexEntryHelper(er: AnyRef): Unit = {
       er match {
         case er: IndexEntryUpdater[V] =>
           this.idxUpdaters :+= er
@@ -219,9 +227,9 @@ private object EntityCollections {
       }
     }
 
-    @inline private[common] final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.getMeta.id, id)
+    @inline final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.meta.id, id)
 
-    @inline private[common] final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
+    @inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 
     @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.schema.newEntityID())
 
@@ -229,7 +237,7 @@ private object EntityCollections {
     @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = {
       if (id == 0) {
         None
-      } else if (collectionIDOf(id) != this.getMeta.id) {
+      } else if (collectionIDOf(id) != this.meta.id) {
         throw new IllegalArgumentException("not in this collection")
       } else {
         db.get[Long, V](id)
@@ -244,12 +252,20 @@ private object EntityCollections {
 
         override def buildFullKey(id: Long) = Packer.LongPacker(fixID(id))
       }
-      new CursorImpl[Long, V, V](range, forward, v => v)
+      new CursorImpl[Long, V, V](range, forward) {
+        override def v2r(v: V): V = v
+      }
     }
 
+    @inline final def checkID(id: Long)(implicit db: DBSessionUpdatable): Long = {
+      if (collectionIDOf(id) != this.meta.id) {
+        throw new IllegalArgumentException("id is not belong this collection")
+      }
+      id
+    }
 
     final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-      val id = value.id
+      val id = checkID(value.id)
       if (!(this.idxUpdaters.isEmpty && this.idxInserters.isEmpty)) {
         //有索引，需要更新索引
         db.get(id) match {
@@ -267,6 +283,7 @@ private object EntityCollections {
     }
 
     final def delete(id: Long)(implicit db: DBSessionUpdatable): Unit = {
+      checkID(id)
       if (this.idxDeleters.isEmpty) {
         db.del(id)
       } else {
@@ -280,21 +297,22 @@ private object EntityCollections {
       }
     }
 
-    def defUniqueIndex[K: Packer](name: String, keyGetter: V => K): UniqueIndex[K, V] = {
+    def defUniqueIndex[K: Packer](indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
       this.indexes.synchronized[UniqueIndex[K, V]] {
-        if (this.indexes.get(name).isDefined) {
-          throw new IllegalArgumentException( s"""index naming "$name" exist!""")
+        if (this.indexes.get(indexName).isDefined) {
+          throw new IllegalArgumentException( s"""index naming "$indexName" exist!""")
         }
-        val idx = new UniqueIndexImpl[K](name, keyGetter)
+        val idx = new IndexBaseImpl[K, V, V](keyGetter) {
+          val name = indexName
+
+          override def v2r(v: V) = v
+
+          override def r2v(r: V) = r
+
+          override def kb2r(keyBase: V) = keyBase
+        }
         this.indexes.put(name, idx)
         idx
-      }
-    }
-
-    def defPartitionIndex[P: Packer, K: Packer](p: P, name: String, keyGetter: V => K): UniqueIndex[K, V] = {
-      this.indexes.synchronized[UniqueIndex[K, V]] {
-        val rawIndex = this.indexes.getOrElseUpdate(name, new UniqueIndexImpl[(P, K)](name, v => (p, keyGetter(v)))).asInstanceOf[UniqueIndexImpl[(P, K)]]
-        rawIndex.subIndex[P, K](p, (p, k) => (p, k), _._2)
       }
     }
   }
@@ -353,9 +371,10 @@ private object EntityCollections {
   }
 
 
-  class CursorImpl[K: Packer, V: Packer, T <: Entity](range: ScanRange[K], forward: Boolean, v2t: V => T)
-                                                     (implicit db: DBSessionQueryable) extends Cursor[T] {
+  abstract class CursorImpl[K: Packer, V: Packer, R <: Entity](range: ScanRange[K], forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
     self =>
+    def v2r(v: V): R
+
     val step = if (forward) 1 else -1
     val rangeMin = range.rangeMin()
     val rangeMax = range.rangeMax()
@@ -411,7 +430,7 @@ private object EntityCollections {
       s
     }
 
-    override def slice(from: Int, until: Int): Cursor[T] = {
+    override def slice(from: Int, until: Int): Cursor[R] = {
       if (hasNext) {
         val r = until - from
         if (r <= 0 || remaining < from) {
@@ -429,13 +448,13 @@ private object EntityCollections {
       this
     }
 
-    override def next(): T = {
+    override def next(): R = {
       if (!hasNext) {
         throw new IllegalStateException("EOF")
       }
       val value = implicitly[Packer[V]].unapply(dbCursor.value())
       checkRemain(dbCursor.next(step))
-      v2t(value)
+      v2r(value)
     }
 
     @inline final def hasNext = remaining > 0
@@ -445,6 +464,44 @@ private object EntityCollections {
       dbCursor = null
       remaining = 0
     }
+  }
+
+  case class SCE[V <: Entity](ownerID: Long, v: V) extends Entity {
+    def id = v.id
+  }
+
+  class SubHostCollectionImpl[V <: Entity : Packer](name: String) extends HostCollectionImpl[SCE[V]](name) {
+    override implicit val valuePacker: Packer[SCE[V]] = Packer(SCE[V] _)
+
+    final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
+      super.update(SCE(ownerID, value))
+    }
+
+    def defUniqueIndex[K: Packer](ownerID: Long, indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
+      indexes.synchronized[UniqueIndex[K, V]] {
+        val rawIndex = this.indexes.getOrElseUpdate(indexName,
+          new IndexBaseImpl[(Long, K), SCE[V], V](v => (ownerID, keyGetter(v.v))) {
+            override val name = indexName
+
+            override def kb2r(keyBase: SCE[V]): V = keyBase.v
+
+            override def v2r(v: SCE[V]): V = v.v
+
+            override def r2v(r: V): SCE[V] = SCE(ownerID, r)
+
+          }
+        ).asInstanceOf[IndexBaseImpl[(Long, K), SCE[V], V]]
+        rawIndex.subIndex[Long, K](new SubKeyMapper[(Long, K), Long, K] {
+
+          override def prefixKey: Long = ownerID
+
+          override def fullKey(subKey: K) = (ownerID, subKey)
+
+          override def subKey(fullKey: (Long, K)): K = fullKey._2
+        })
+      }
+    }
+
   }
 
 }

@@ -159,11 +159,9 @@ object SaleOrder extends DBObjectType[SaleOrder] {
   implicit val packer = Packer(SaleOrder.apply _)
 }
 
-class SaleOrderRoomItems(host: SaleOrder) extends PartitionCollection[Ref[SaleOrder], RoomItem] {
+class SaleOrderRoomItems(owner: Entity) extends SubCollection[RoomItem](owner) {
   override val name = "sale-order-room-items"
-  override def v2p(value: RoomItem): Ref[SaleOrder] = value.saleOrder
 
-  override val partition: Ref[SaleOrder] = host.newRef()
   lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)
   lazy val byRoom = defUniqueIndex("byRoom", _.room)
 }

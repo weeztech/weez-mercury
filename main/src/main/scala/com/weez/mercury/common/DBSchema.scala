@@ -39,8 +39,8 @@ trait DBExtendTypes {
   case class Collection(id: Int, valueType: DBType, indexes: Seq[Index]) extends DBType
 
   case class Index(id: Int, name: String, key: DBType)
-
 }
+
 
 object DBTypeEntityCollection extends RootCollection[DBType.Entity] {
   def name = "sys-types"
