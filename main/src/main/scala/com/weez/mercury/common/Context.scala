@@ -1,7 +1,7 @@
 package com.weez.mercury.common
 
 import akka.event.LoggingAdapter
-import com.weez.mercury.common.EntityCollections.HostCollectionImpl
+import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
 
 trait DBObjectType[T <: Entity] {
   dbObject =>
@@ -45,7 +45,7 @@ trait DBSessionQueryable {
 
   def exists[K: Packer](key: K): Boolean
 
-  def newCursor: DBCursor
+  def newCursor(): DBCursor
 
   private[common] def schema: DBSchema
 }
@@ -66,6 +66,14 @@ trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
   override def close(): Unit
 }
 
+trait SubKeyMapper[K, PK, SK] {
+  def prefixKey: PK
+
+  def fullKey(subKey: SK): K
+
+  def subKey(fullKey: K): SK
+}
+
 trait IndexBase[K, V <: Entity] {
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
     this.apply(None, None)
@@ -75,7 +83,7 @@ trait IndexBase[K, V <: Entity] {
 
   def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 
-  def subIndex[PK, SK](prefix: PK, fullKeyGetter: (PK, SK) => K, subKeyGetter: K => SK): IndexBase[SK, V]
+  def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]): IndexBase[SK, V]
 }
 
 trait Index[K, V <: Entity] extends IndexBase[K, V]
@@ -88,16 +96,8 @@ trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
 
   def update(value: V)(implicit db: DBSessionUpdatable): Unit
 
-  def subIndex[PK, SK](prefix: PK, fullKey: (PK, SK) => K, subKey: K => SK) = new UniqueIndex[SK, V] {
-    override def update(value: V)(implicit db: DBSessionUpdatable): Unit = self.update(value)
-
-    override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = self.delete(fullKey(prefix, key))
-
-    override def apply(key: SK)(implicit db: DBSessionQueryable): Option[V] = self(fullKey(prefix, key))
-
-    override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-      self(start.map(fullKey(prefix, _)), end.map(fullKey(prefix, _)), excludeStart, excludeEnd, forward)
-  }
+  override def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]): UniqueIndex[SK, V] =
+    throw new UnsupportedOperationException()
 }
 
 trait Ref[+T <: Entity] {
@@ -127,35 +127,22 @@ trait EntityCollection[V <: Entity] {
   def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V]
 }
 
-abstract class PartitionCollection[P: Packer, V <: Entity : Packer] extends EntityCollection[V] {
-  val partition: P
-
-  def v2p(value: V): P
-
-  @inline private def checkHost(value: V): Unit = {
-    if (!(partition match {
-      case id: Long => id == v2p(value).asInstanceOf[Long]
-      case els => v2p(value).equals(els)
-    })) {
-      throw new IllegalArgumentException("value is not in this partition")
-    }
-  }
+abstract class SubCollection[V <: Entity : Packer](owner: Entity) extends EntityCollection[V] {
+  val ownerID = owner.id
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-    this.checkHost(value)
-    this.all.update(value)
+    this.host.update(ownerID, value)
   }
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = {
-    this.checkHost(value)
-    this.all.delete(value.id)
+    this.host.delete(value.id)
   }
 
-  @inline final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = {
-    this.all.asInstanceOf[HostCollectionImpl[V]].defPartitionIndex[P, K](this.partition, name, getKey)
+  @inline final override def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = {
+    this.host.defUniqueIndex[K](ownerID, name, getKey)
   }
 
-  lazy val all: HostCollection[V] = EntityCollections.forPartitionHost[V](this)
+  private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
 trait HostCollection[V <: Entity] extends EntityCollection[V] with UniqueIndex[Long, V] {
@@ -178,8 +165,4 @@ abstract class RootCollection[V <: Entity : Packer] extends HostCollection[V] {
 }
 
 trait KeyCollection[T <: Entity] {
-
-  def update(value: T)(implicit db: DBSessionUpdatable): Unit
-
-  def defUniqueIndex[K: Packer](name: String, keyGetter: T => K): UniqueIndex[K, T]
 }
