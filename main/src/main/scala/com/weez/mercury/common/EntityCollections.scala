@@ -48,7 +48,7 @@ private object EntityCollections {
       if (this.hosts.get(name).isDefined) {
         throw new IllegalArgumentException( s"""HostCollection naming"$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name){
+      val host = new HostCollectionImpl[V](name) {
         override val valuePacker: Packer[V] = implicitly[Packer[V]]
       }
       this.hosts.put(name, host)
@@ -59,7 +59,7 @@ private object EntityCollections {
   val hosts = collection.mutable.HashMap[String, HostCollectionImpl[_]]()
   val hostsByID = collection.mutable.HashMap[Int, HostCollectionImpl[_]]()
 
-  abstract class HostCollectionImpl[V <: Entity](override val name: String) extends HostCollection[V] {
+  abstract class HostCollectionImpl[V <: Entity](val name: String) {
     host =>
     @volatile var _meta: DBType.Collection = null
     implicit val valuePacker: Packer[V]

@@ -145,12 +145,10 @@ abstract class SubCollection[V <: Entity : Packer](owner: Entity) extends Entity
   private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
-trait HostCollection[V <: Entity] extends EntityCollection[V] with UniqueIndex[Long, V] {
-  @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = this.delete(value.id)
-}
-
-abstract class RootCollection[V <: Entity : Packer] extends HostCollection[V] {
+abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] with UniqueIndex[Long, V] {
   private val impl = EntityCollections.newHost[V](name)
+
+  @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = impl.update(value)
 
