@@ -10,6 +10,8 @@ import spray.json._
 import akka.actor._
 import com.typesafe.config.Config
 
+import scala.util.control.NonFatal
+
 object ServiceManager {
   val remoteServices = {
     import com.weez.mercury.product._
@@ -109,7 +111,7 @@ class ServiceManager(system: ActorSystem) {
         case None => ErrorCode.NotAcceptable.raise
       }
     } catch {
-      case ex: Throwable => p.failure(ex)
+      case NonFatal(ex) => p.failure(ex)
     }
   }
 

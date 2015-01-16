@@ -20,7 +20,7 @@ trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
-object Packer extends ProductPackers {
+object Packer extends ProductPackers with CollectionPackers {
   val TYPE_STRING: Byte = 1
   val TYPE_INT: Byte = 2
   val TYPE_LONG: Byte = 3

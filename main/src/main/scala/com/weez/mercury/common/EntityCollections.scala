@@ -48,7 +48,7 @@ private object EntityCollections {
       if (this.hosts.get(name).isDefined) {
         throw new IllegalArgumentException( s"""HostCollection naming"$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name){
+      val host = new HostCollectionImpl[V](name) {
         override val valuePacker: Packer[V] = implicitly[Packer[V]]
       }
       this.hosts.put(name, host)
@@ -61,19 +61,19 @@ private object EntityCollections {
 
   abstract class HostCollectionImpl[V <: Entity](override val name: String) extends HostCollection[V] {
     host =>
-    @volatile var _meta: DBType.Collection = null
+    @volatile var _meta: RootCollectionMeta = null
     implicit val valuePacker: Packer[V]
 
     def bindDB()(implicit db: DBSessionQueryable): Unit = {
       if (synchronized {
         if (_meta == null) {
-          _meta = db.schema.getHostCollection(this.name)
+          _meta = db.schema.getRootCollectionMeta(this.name)
           if (_meta == null) {
             throw new IllegalArgumentException( s"""no such HostCollection named ${this.name}""")
           }
           indexes.synchronized {
             for (idx <- indexes.values) {
-              idx.indexID = _meta.indexes.find(i => i.name == idx.name).get.id
+              idx.indexID = _meta.indexes.find(i => i.name == idx.name).get.prefix
             }
           }
           true
@@ -82,7 +82,7 @@ private object EntityCollections {
         }
       }) {
         hostsByID.synchronized {
-          hostsByID.put(_meta.id, this)
+          hostsByID.put(_meta.prefix, this)
         }
       }
     }
@@ -95,7 +95,7 @@ private object EntityCollections {
     }
 
     @inline final def getIndexID(name: String)(implicit db: DBSessionQueryable) = {
-      meta.indexes.find(i => i.name == name).get.id
+      meta.indexes.find(i => i.name == name).get.prefix
     }
 
     abstract class IndexBaseImpl[K: Packer, KB <: Entity, R <: Entity : Packer](keyGetter: KB => K)
@@ -227,7 +227,7 @@ private object EntityCollections {
       }
     }
 
-    @inline final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.meta.id, id)
+    @inline final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.meta.prefix, id)
 
     @inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 

@@ -175,7 +175,8 @@ private class RocksDBBackend(path: String) extends Database {
 
         override def next(step: Int) = {
           if (c.next(step)) {
-            if (keyWrites.contains(super.key())) {
+            // TODO fix
+            if (keyWrites.contains(c.key())) {
               log.error("read the key which is written by current transaction")
             }
           }
