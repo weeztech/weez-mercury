@@ -10,6 +10,8 @@ import spray.json._
 import akka.actor._
 import com.typesafe.config.Config
 
+import scala.util.control.NonFatal
+
 object ServiceManager {
   val remoteServices = {
     import com.weez.mercury.product._
@@ -109,7 +111,7 @@ class ServiceManager(system: ActorSystem) {
         case None => ErrorCode.NotAcceptable.raise
       }
     } catch {
-      case ex: Throwable => p.failure(ex)
+      case NonFatal(ex) => p.failure(ex)
     }
   }
 
@@ -172,7 +174,7 @@ class ServiceManager(system: ActorSystem) {
     }
   }
 
-  class ContextImpl extends Context with SessionState with DBSessionUpdatable {
+  final class ContextImpl extends Context with SessionState with DBSessionUpdatable {
     var request: ModelObject = _
 
     var response: ModelObject = _
@@ -195,7 +197,7 @@ class ServiceManager(system: ActorSystem) {
 
     @inline def get[K: Packer, V: Packer](key: K): Option[V] = dbTransQuery.get[K, V](key)
 
-    @inline def newCursor[K: Packer, V: Packer]: DBCursor = dbTransQuery.newCursor
+    @inline def newCursor(): DBCursor = dbTransQuery.newCursor
 
     @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
 
@@ -206,7 +208,7 @@ class ServiceManager(system: ActorSystem) {
     override private[common] def schema: DBSchema = ???
   }
 
-  class SessionStateImpl(val session: Session) extends SessionState {
+  final class SessionStateImpl(val session: Session) extends SessionState {
     @inline def sessionsByPeer(peer: String = session.peer) = sessionManager.getSessionsByPeer(peer)
   }
 

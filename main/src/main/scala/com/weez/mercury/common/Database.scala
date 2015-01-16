@@ -8,10 +8,6 @@ trait Database {
   def close(): Unit
 }
 
-object Database {
-  val KEY_OBJECT_ID_COUNTER = "object-id-counter"
-}
-
 trait DatabaseFactory {
   def createNew(path: String): Database
 
@@ -21,7 +17,7 @@ trait DatabaseFactory {
 }
 
 trait DBSession {
-  def withTransaction(log: LoggingAdapter)(f: DBTransaction => Unit): Unit
+  def withTransaction[T](log: LoggingAdapter)(f: DBTransaction => T): T
 
   def close(): Unit
 }
@@ -55,7 +51,7 @@ trait DBCursor {
 
 class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection[T] {
 
-  override def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
+  def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
 
   def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
 

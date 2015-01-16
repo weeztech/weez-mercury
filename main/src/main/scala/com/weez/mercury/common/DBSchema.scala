@@ -5,55 +5,153 @@ import akka.event.LoggingAdapter
 trait DBSchema {
   def newEntityID(): Long
 
-  def getHostCollection(name: String): DBType.Collection
+  def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): RootCollectionMeta
 }
 
 sealed trait DBType
 
-object DBType extends DBPrimaryTypes with DBExtendTypes
+object DBType extends DBPrimaryTypes with DBExtendTypes with DBTypeImplicits
 
 trait DBPrimaryTypes {
 
-  object String extends DBType
+  case class SimpleType private[DBPrimaryTypes](typeCode: Int) extends DBType
 
-  object Int extends DBType
+  private object SimpleType
 
-  object Long extends DBType
+  val String = SimpleType(1)
+  val Int = SimpleType(2)
+  val Long = SimpleType(3)
+  val Double = SimpleType(4)
+  val Boolean = SimpleType(5)
+  val DateTime = SimpleType(6)
+  val Raw = SimpleType(7)
 
-  object Double extends DBType
-
-  object Boolean extends DBType
-
-  object DateTime extends DBType
-
-  object Raw extends DBType
-
+  def fromTypeCode(typeCode: Int): SimpleType = {
+    typeCode match {
+      case String.typeCode => String
+      case Int.typeCode => Int
+      case Long.typeCode => Long
+      case Double.typeCode => Double
+      case Boolean.typeCode => Boolean
+      case DateTime.typeCode => DateTime
+      case Raw.typeCode => Raw
+    }
+  }
 }
 
 trait DBExtendTypes {
 
   case class Tuple(parts: Seq[DBType]) extends DBType
 
-  case class Entity(name: String, columns: Seq[Column]) extends DBType
+  trait Named {
+    def name: String
+  }
 
-  case class Column(name: String, tpe: DBType)
+  case class Entity(name: String, columns: Seq[Column]) extends DBType with Named
 
-  case class Collection(valueType: DBType, indexes: Seq[Index]) extends DBType
+  case class Column(name: String, tpe: DBType) extends Named
 
-  case class Index(name: String, key: DBType)
-  
+  case class Collection(name: String, valueType: DBType, indexes: Seq[Index], isRoot: Boolean) extends DBType with Named
+
+  case class Index(name: String, key: DBType, unique: Boolean) extends Named
+
   case class Ref(name: String) extends DBType
 
 }
 
-/*
+trait DBTypeImplicits {
+  implicit val refPacker = Packer(DBType.Ref)
+  implicit val simplePacker = Packer(DBType.fromTypeCode _)
 
-object DBTypeEntityCollection extends RootCollection[DBType.Entity] {
-  def name = "sys-types"
+  implicit object DBTypePacker extends Packer[DBType] {
+    def pack(value: DBType, buf: Array[Byte], offset: Int) = {
+      value match {
+        case x: DBType.SimpleType => simplePacker.pack(x, buf, offset)
+        case x: DBType.Ref => refPacker.pack(x, buf, offset)
+        case _ => throw new IllegalArgumentException()
+      }
+    }
 
-}*/
+    def packLength(value: DBType) = {
+      value match {
+        case x: DBType.SimpleType => simplePacker.packLength(x)
+        case x: DBType.Ref => refPacker.packLength(x)
+        case _ => throw new IllegalArgumentException()
+      }
+    }
 
-trait DatabaseChecker {
+    def unpack(buf: Array[Byte], offset: Int, length: Int): DBType = {
+      buf(offset + 1) match {
+        case Packer.TYPE_INT => simplePacker.unpack(buf, offset, length)
+        case Packer.TYPE_STRING => refPacker.unpack(buf, offset, length)
+      }
+    }
+
+    def unpackLength(buf: Array[Byte], offset: Int) = {
+      buf(offset + 1) match {
+        case Packer.TYPE_INT => simplePacker.unpackLength(buf, offset)
+        case Packer.TYPE_STRING => refPacker.unpackLength(buf, offset)
+      }
+    }
+  }
+
+  implicit val tuplePacker = Packer(DBType.Tuple)
+  implicit val columnPacker = Packer(DBType.Column)
+  implicit val entityPacker = Packer(DBType.Entity)
+  implicit val indexPacker = Packer(DBType.Index)
+  implicit val collPacker = Packer(DBType.Collection)
+}
+
+@dbtype
+case class IndexMeta(id: Long, name: String, prefix: Int)
+
+@dbtype
+case class RootCollectionMeta(id: Long, name: String, prefix: Int, indexes: Seq[IndexMeta])
+
+object RootCollectionMetas extends RootCollection[RootCollectionMeta] {
+  val name = "root-collection-metas"
+
+  val byName = defUniqueIndex("by-name", _.name)
+}
+
+class DBSchemaImpl extends DBSchema {
+  val KEY_OBJECT_ID_COUNTER = "object-id-counter"
+
+  val dbSession: DBSession = null
+  val log: LoggingAdapter = null
+  val rootCollectionMeta = RootCollectionMeta(0, "root-collection-metas", 0, Seq(IndexMeta(0, "by-name", 0)))
+
+  private var allocIdLimit = {
+    dbSession.withTransaction(log) { trans =>
+      trans.get[String, Long](KEY_OBJECT_ID_COUNTER).get
+    }
+  }
+  private var currentId = allocIdLimit
+  private val allocIdBatch = 1024
+
+  def newEntityID() = {
+    this.synchronized {
+      if (currentId == allocIdLimit) {
+        allocIdLimit += allocIdBatch
+        dbSession.withTransaction(log) { trans =>
+          trans.put(KEY_OBJECT_ID_COUNTER, allocIdLimit)
+        }
+      }
+      currentId += 1
+      currentId
+    }
+  }
+
+  def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = {
+    if (name == rootCollectionMeta.name) {
+      rootCollectionMeta
+    } else {
+      RootCollectionMetas.byName(name) match {
+        case Some(x) => x
+        case None => throw new Error("meta of root-collection not found")
+      }
+    }
+  }
 
   import scala.reflect.runtime.universe._
   import scala.collection.mutable
@@ -73,57 +171,78 @@ trait DatabaseChecker {
   val refType = typeOf[Ref[_]]
 
   val entityType = typeOf[Entity]
-  val typeRootColl = typeOf[RootCollection[_]]
+  val collType = typeOf[EntityCollection[_]]
+  val rootCollType = typeOf[RootCollection[_]]
   val indexBaseType = typeOf[IndexBase[_, _]]
+  val uniqueIndexType = typeOf[UniqueIndex[_, _]]
 
-  def check(log: LoggingAdapter): Unit = {
+  def collectDBTypes(log: LoggingAdapter): Unit = {
     import com.weez.mercury.ClassFinder._
-    log.info("start checking database schema")
+    log.info("resolving dbtypes ...")
     val start = System.nanoTime()
     scalaNamesIn(classpath.filter { f =>
-      f.isDirectory() || f.getName.contains("weez")
+      f.isDirectory || f.getName.contains("weez")
     }) foreach {
       case ScalaName(name, true, true, false) =>
         reflectDBType(mirror.staticModule(name))
       case _ =>
     }
-    log.info(s"database schema checked in ${(System.nanoTime() - start) / 1000000} ms")
+    log.info(s"dbtypes resolved in ${(System.nanoTime() - start) / 1000000} ms")
+    if (unresolvedTypes.nonEmpty) {
+      val sb = new StringBuilder
+      sb.append("following types unresolved and used as dbtypes:\r\n")
+      unresolvedTypes foreach {
+        case (symbolName, refs) =>
+          sb.append(s"\t'$symbolName' used by\r\n")
+          refs foreach { ref =>
+            sb.append(s"\t\t$ref\r\n")
+          }
+      }
+      log.error(sb.toString())
+      throw new Error("unresolve types used as dbtypes!")
+    }
   }
 
+  def check(): Unit = ???
+
+
   def reflectDBType(symbol: ModuleSymbol): DBType = {
-    if (symbol.typeSignature <:< entityType) {
-      val ctor = symbol.typeSignature.decl(termNames.CONSTRUCTOR).asMethod
-      val dbtype = DBType.Entity(dbName(symbol.name),
-        ctor.paramLists(0) map { p =>
-          DBType.Column(dbName(p.name), getType(p.typeSignature, p.fullName))
-        })
-      resolvedTypes.put(dbtype.name, dbtype -> symbol.fullName) match {
-        case Some((_, x)) => throw new Exception(s"Entity name conflict: ${symbol.fullName} and $x")
-        case None =>
-      }
-      dbtype
-    } else if (symbol.typeSignature <:< typeRootColl) {
-      val rootCollType = symbol.typeSignature.baseType(typeRootColl.typeSymbol)
-      val valueType = rootCollType.typeArgs(0)
-      if (valueType =:= rootCollType) {
-      } else {
-        getType(valueType, rootCollType.typeSymbol.fullName)
-      }
-      symbol.typeSignature.members foreach { member =>
-        if (member.isMethod) {
-          val method = member.asMethod
-          if (method.returnType <:< indexBaseType) {
-            val indexType = method.returnType.baseType(indexBaseType.typeSymbol)
-            DBType.Index(method.name.toString, null)
+    val dbtype: DBType with DBType.Named =
+      if (symbol.typeSignature <:< entityType) {
+        val ctor = symbol.typeSignature.decl(termNames.CONSTRUCTOR).asMethod
+        DBType.Entity(dbName(symbol.name),
+          ctor.paramLists(0) map { p =>
+            DBType.Column(dbName(p.name), getType(p.typeSignature, p.fullName))
+          })
+      } else if (symbol.typeSignature <:< collType) {
+        val baseType = symbol.typeSignature.baseType(collType.typeSymbol)
+        val valueType = getType(baseType.typeArgs(0), symbol.fullName)
+        val builder = Seq.newBuilder[DBType.Index]
+        symbol.typeSignature.members foreach { member =>
+          if (member.isMethod) {
+            val tpe = member.asMethod.returnType
+            if (tpe <:< indexBaseType) {
+              val indexType = tpe.baseType(indexBaseType.typeSymbol)
+              builder += DBType.Index(dbName(member.name),
+                getType(indexType.typeArgs(0), member.fullName),
+                tpe <:< uniqueIndexType)
+            }
           }
         }
+        DBType.Collection(dbName(symbol.name), valueType, builder.result(), symbol.typeSignature <:< rootCollType)
+      } else null
+    if (dbtype != null) {
+      resolvedTypes.put(dbtype.name, dbtype -> symbol.fullName) match {
+        case Some((_, x)) => throw new Error(s"db-name conflict: ${symbol.fullName} and $x")
+        case None => unresolvedTypes.remove(symbol.fullName)
       }
     }
+    dbtype
   }
 
   def dbName(name: Name) = {
     import scala.util.matching.Regex
-    new Regex("[A-Z]").replaceAllIn(name.toString(), { m =>
+    new Regex("[A-Z]+").replaceAllIn(name.toString(), { m =>
       if (m.start == 0)
         m.matched.toLowerCase
       else
@@ -139,7 +258,9 @@ trait DatabaseChecker {
     else if (tpe =:= booleanType) DBType.Boolean
     else if (tpe =:= datetimeType) DBType.DateTime
     else if (tpe =:= rawType) DBType.Raw
-    else {
+    else if (tpe.typeSymbol.fullName startsWith "scala.Tuple") {
+      DBType.Tuple(tpe.typeArgs.map(getType(_, ref)))
+    } else {
       val name = dbName {
         if (tpe =:= refType) {
           val entity = tpe.typeArgs(0)
@@ -148,7 +269,7 @@ trait DatabaseChecker {
           tpe.typeSymbol.name
       }
       if (!resolvedTypes.contains(name))
-        unresolvedTypes.getOrElseUpdate(name, mutable.Set()).add(ref)
+        unresolvedTypes.getOrElseUpdate(tpe.typeSymbol.fullName, mutable.Set()).add(ref)
       DBType.Ref(name)
     }
   }

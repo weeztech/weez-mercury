@@ -73,31 +73,7 @@ trait MacroHelper {
     paramss match {
       case Nil => tq"() => $returnType"
       case params :: Nil =>
-        params.length match {
-          case 0 => tq"() => $returnType"
-          case 1 => tq"Function1[${params(0)}, $returnType]"
-          case 2 => tq"Function2[${params(0)}, ${params(1)}, $returnType]"
-          case 3 => tq"Function3[${params(0)}, ${params(1)}, ${params(2)}, $returnType]"
-          case 4 => tq"Function4[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, $returnType]"
-          case 5 => tq"Function5[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, $returnType]"
-          case 6 => tq"Function6[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, $returnType]"
-          case 7 => tq"Function7[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, $returnType]"
-          case 8 => tq"Function8[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, $returnType]"
-          case 9 => tq"Function9[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, $returnType]"
-          case 10 => tq"Function10[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, $returnType]"
-          case 11 => tq"Function11[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, $returnType]"
-          case 12 => tq"Function12[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, $returnType]"
-          case 13 => tq"Function13[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, $returnType]"
-          case 14 => tq"Function14[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, $returnType]"
-          case 15 => tq"Function15[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, $returnType]"
-          case 16 => tq"Function16[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, $returnType]"
-          case 17 => tq"Function17[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, $returnType]"
-          case 18 => tq"Function18[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, ${params(17)}, $returnType]"
-          case 19 => tq"Function19[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, ${params(17)}, ${params(18)}, $returnType]"
-          case 20 => tq"Function20[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, ${params(17)}, ${params(18)}, ${params(19)}, $returnType]"
-          case 21 => tq"Function21[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, ${params(17)}, ${params(18)}, ${params(19)}, ${params(20)}, $returnType]"
-          case 22 => tq"Function22[${params(0)}, ${params(1)}, ${params(2)}, ${params(3)}, ${params(4)}, ${params(5)}, ${params(6)}, ${params(7)}, ${params(8)}, ${params(9)}, ${params(10)}, ${params(11)}, ${params(12)}, ${params(13)}, ${params(14)}, ${params(15)}, ${params(16)}, ${params(17)}, ${params(18)}, ${params(19)}, ${params(20)}, ${params(21)}, $returnType]"
-        }
+        AppliedTypeTree(Ident(TypeName("Function" + params.length)), params :+ returnType)
       case head :: tail =>
         makeFunctionType(head :: Nil, makeFunctionType(tail, returnType))
     }

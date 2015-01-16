@@ -22,10 +22,7 @@ object Setup {
         backend.delete(dbPath)
         val db = backend.createNew(Util.resolvePath(dbPath))
         implicit val dbSession = db.createSession()
-        import Database._
-        dbSession.withTransaction(log) { t =>
-          t.put(KEY_OBJECT_ID_COUNTER, 0)
-        }
+
         dbSession.close()
         db.close()
         context.system.shutdown()

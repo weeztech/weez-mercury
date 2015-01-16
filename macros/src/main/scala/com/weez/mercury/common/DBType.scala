@@ -32,7 +32,7 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
             q"this"
           else
             flattenFunction(q"apply", caseClassParams)
-        val dbname = new Regex("[A-Z]").replaceAllIn(name.toString(), { m =>
+        val dbname = new Regex("[A-Z]+").replaceAllIn(name.toString(), { m =>
           if (m.start == 0)
             m.matched.toLowerCase
           else

@@ -35,11 +35,12 @@ private class RocksDBBackend(path: String) extends Database {
     new DBSession {
       def close() = ()
 
-      def withTransaction(log: LoggingAdapter)(f: DBTransaction => Unit) = {
+      def withTransaction[T](log: LoggingAdapter)(f: DBTransaction => T): T = {
         val trans = if (Util.devmode) new DevTransaction(log) else new Transaction(log)
         try {
-          f(trans)
+          val ret = f(trans)
           trans.commit()
+          ret
         } finally {
           trans.close()
         }
@@ -175,7 +176,8 @@ private class RocksDBBackend(path: String) extends Database {
 
         override def next(step: Int) = {
           if (c.next(step)) {
-            if (keyWrites.contains(super.key())) {
+            // TODO fix
+            if (keyWrites.contains(c.key())) {
               log.error("read the key which is written by current transaction")
             }
           }
