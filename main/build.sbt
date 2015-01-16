@@ -4,8 +4,6 @@ version := "0.0.1-SNAPSHOT"
 
 resolvers += "spray repo" at "http://repo.spray.io"
 
-resolvers += Resolver.sonatypeRepo("releases")
-
 libraryDependencies ++= Seq(
   "org.scala-lang" % "scala-reflect" % scalaVersion.value withSources() withJavadoc(),
   "com.typesafe.akka" %% "akka-actor" % "2.3.7" withSources() withJavadoc(),
