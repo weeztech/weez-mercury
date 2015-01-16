@@ -51,7 +51,7 @@ trait DBCursor {
 
 class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection[T] {
 
-  override def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
+  def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
 
   def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
 
