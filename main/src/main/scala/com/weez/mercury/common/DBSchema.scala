@@ -10,11 +10,9 @@ trait DBSchema {
 
 sealed trait DBType
 
-object DBType extends DBPrimaryTypes with DBExtendTypes with DBTypeImplicits
+object DBType {
 
-trait DBPrimaryTypes {
-
-  case class SimpleType private[DBPrimaryTypes](typeCode: Int) extends DBType
+  case class SimpleType private[DBType](typeCode: Int) extends DBType
 
   private object SimpleType
 
@@ -37,9 +35,43 @@ trait DBPrimaryTypes {
       case Raw.typeCode => Raw
     }
   }
-}
 
-trait DBExtendTypes {
+  @dbtype
+  case class Ref(name: String) extends DBType
+
+  val simpleTypePacker = Packer[SimpleType, Int]((tpe: SimpleType) => tpe.typeCode, i => fromTypeCode(i))
+
+  implicit object DBTypePacker extends Packer[DBType] {
+    def pack(value: DBType, buf: Array[Byte], offset: Int) = {
+      value match {
+        case x: SimpleType => simpleTypePacker.pack(x, buf, offset)
+        case x: Ref => Packer[Ref].pack(x, buf, offset)
+        case _ => throw new IllegalArgumentException()
+      }
+    }
+
+    def packLength(value: DBType) = {
+      value match {
+        case x: SimpleType => simpleTypePacker.packLength(x)
+        case x: Ref => Packer[Ref].packLength(x)
+        case _ => throw new IllegalArgumentException()
+      }
+    }
+
+    def unpack(buf: Array[Byte], offset: Int, length: Int): DBType = {
+      buf(offset) match {
+        case Packer.TYPE_UINT32 => simpleTypePacker.unpack(buf, offset, length)
+        case Packer.TYPE_TUPLE => Packer[Ref].unpack(buf, offset, length)
+      }
+    }
+
+    def unpackLength(buf: Array[Byte], offset: Int) = {
+      buf(offset) match {
+        case Packer.TYPE_UINT32 => simpleTypePacker.unpackLength(buf, offset)
+        case Packer.TYPE_TUPLE => Packer[Ref].unpackLength(buf, offset)
+      }
+    }
+  }
 
   case class Tuple(parts: Seq[DBType]) extends DBType
 
@@ -47,59 +79,18 @@ trait DBExtendTypes {
     def name: String
   }
 
-  case class Entity(name: String, columns: Seq[Column]) extends DBType with Named
-
+  @dbtype
   case class Column(name: String, tpe: DBType) extends Named
 
-  case class Collection(name: String, valueType: DBType, indexes: Seq[Index], isRoot: Boolean) extends DBType with Named
+  @dbtype
+  case class Entity(name: String, columns: Seq[Column]) extends DBType with Named
 
+  @dbtype
   case class Index(name: String, key: DBType, unique: Boolean) extends Named
 
-  case class Ref(name: String) extends DBType
+  @dbtype
+  case class Collection(name: String, valueType: DBType, indexes: Seq[Index], isRoot: Boolean) extends DBType with Named
 
-}
-
-trait DBTypeImplicits {
-  implicit val refPacker = Packer(DBType.Ref)
-  implicit val simplePacker = Packer(DBType.fromTypeCode _)
-
-  implicit object DBTypePacker extends Packer[DBType] {
-    def pack(value: DBType, buf: Array[Byte], offset: Int) = {
-      value match {
-        case x: DBType.SimpleType => simplePacker.pack(x, buf, offset)
-        case x: DBType.Ref => refPacker.pack(x, buf, offset)
-        case _ => throw new IllegalArgumentException()
-      }
-    }
-
-    def packLength(value: DBType) = {
-      value match {
-        case x: DBType.SimpleType => simplePacker.packLength(x)
-        case x: DBType.Ref => refPacker.packLength(x)
-        case _ => throw new IllegalArgumentException()
-      }
-    }
-
-    def unpack(buf: Array[Byte], offset: Int, length: Int): DBType = {
-      buf(offset + 1) match {
-        case Packer.TYPE_INT => simplePacker.unpack(buf, offset, length)
-        case Packer.TYPE_STRING => refPacker.unpack(buf, offset, length)
-      }
-    }
-
-    def unpackLength(buf: Array[Byte], offset: Int) = {
-      buf(offset + 1) match {
-        case Packer.TYPE_INT => simplePacker.unpackLength(buf, offset)
-        case Packer.TYPE_STRING => refPacker.unpackLength(buf, offset)
-      }
-    }
-  }
-
-  implicit val tuplePacker = Packer(DBType.Tuple)
-  implicit val columnPacker = Packer(DBType.Column)
-  implicit val entityPacker = Packer(DBType.Entity)
-  implicit val indexPacker = Packer(DBType.Index)
-  implicit val collPacker = Packer(DBType.Collection)
 }
 
 @dbtype

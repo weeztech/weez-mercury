@@ -7,15 +7,15 @@ trait DBObjectType[T <: Entity] {
   dbObject =>
   def nameInDB: String
 
-  def column[CT](name: String) = Column[CT](name)
+  def column[CT](name: String) = ColumnDef[CT](name)
 
-  def extend[ST <: DBObjectType[_]](name: String, source: ST) = Extend[ST](name, source)
+  def extend[ST <: DBObjectType[_]](name: String, source: ST) = ExtendDef[ST](name, source)
 
   val id = column[Long]("id")
 
-  case class Extend[ST](name: String, source: ST)
+  case class ExtendDef[ST](name: String, source: ST)
 
-  case class Column[CT](name: String) {
+  case class ColumnDef[CT](name: String) {
     def owner = dbObject
   }
 
