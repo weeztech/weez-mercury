@@ -18,6 +18,7 @@ trait CollectionPackers {
         end += packer.packLength(v)
       }
       buf(end) = 0
+      end + 1
     }
 
     def packLength(value: CC[X]): Int = {

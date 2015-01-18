@@ -11,7 +11,7 @@ trait Packer[T] {
 
   def unapply(buf: Array[Byte]): T = unpack(buf, 0, buf.length)
 
-  def pack(value: T, buf: Array[Byte], offset: Int)
+  def pack(value: T, buf: Array[Byte], offset: Int): Int
 
   def packLength(value: T): Int
 
@@ -20,19 +20,17 @@ trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
-object Packer extends ProductPackers with CollectionPackers {
+object Packer extends CollectionPackers with TuplePackers with CaseClassPackers {
   val TYPE_STRING: Byte = 1
-  val TYPE_INT: Byte = 2
-  val TYPE_LONG: Byte = 3
+  val TYPE_UINT32: Byte = 2
+  val TYPE_UINT64: Byte = 3
   val TYPE_FALSE: Byte = 4
   val TYPE_TRUE: Byte = 5
   val TYPE_RAW: Byte = 6
-  val TYPE_DOUBLE: Byte = 7
-  val TYPE_DATETIME: Byte = 8
   val TYPE_TUPLE: Byte = 10
-  val TYPE_REF: Byte = 11
-  val TYPE_COLLECTION: Byte = 12
   val TYPE_END: Byte = 0
+
+  @inline final def apply[T](implicit p: Packer[T]) = p
 
   def pack[T](value: T)(implicit packer: Packer[T]) = packer(value)
 
@@ -49,10 +47,11 @@ object Packer extends ProductPackers with CollectionPackers {
   implicit object StringPacker extends Packer[String] {
     def pack(value: String, buf: Array[Byte], offset: Int) = {
       val arr = value.getBytes(charset)
-      require(buf.length >= offset + arr.length, "buffer too small")
+      require(buf.length > offset + arr.length + 1, "buffer too small")
       buf(offset) = TYPE_STRING
-      buf(buf.length - 1) = TYPE_END
+      buf(offset + arr.length + 1) = TYPE_END
       System.arraycopy(arr, 0, buf, offset + 1, arr.length)
+      offset + arr.length + 2
     }
 
     def packLength(value: String): Int = {
@@ -94,15 +93,16 @@ object Packer extends ProductPackers with CollectionPackers {
   implicit object IntPacker extends FixedLengthPacker[Int](5) {
     def pack(value: Int, buf: Array[Byte], offset: Int) = {
       require(buf.length >= offset + 5, "buffer too small")
-      buf(offset) = TYPE_INT
+      buf(offset) = TYPE_UINT32
       buf(offset + 1) = (value >> 24).asInstanceOf[Byte]
       buf(offset + 2) = (value >> 16).asInstanceOf[Byte]
       buf(offset + 3) = (value >> 8).asInstanceOf[Byte]
       buf(offset + 4) = value.asInstanceOf[Byte]
+      offset + 5
     }
 
     def unpack(buf: Array[Byte], offset: Int, length: Int) = {
-      require(buf(offset) == TYPE_INT, "not a Int")
+      require(buf(offset) == TYPE_UINT32, "not a Int")
       require(buf.length >= offset + 5 && length == 5, "invalid length")
       ((buf(offset + 1) & 0xff) << 24) |
         ((buf(offset + 2) & 0xff) << 16) |
@@ -111,55 +111,32 @@ object Packer extends ProductPackers with CollectionPackers {
     }
   }
 
-  def writeLong(value: Long, buf: Array[Byte], offset: Int) = {
-    buf(offset) = (value >> 56).asInstanceOf[Byte]
-    buf(offset + 1) = (value >> 48).asInstanceOf[Byte]
-    buf(offset + 2) = (value >> 40).asInstanceOf[Byte]
-    buf(offset + 3) = (value >> 32).asInstanceOf[Byte]
-    buf(offset + 4) = (value >> 24).asInstanceOf[Byte]
-    buf(offset + 5) = (value >> 16).asInstanceOf[Byte]
-    buf(offset + 6) = (value >> 8).asInstanceOf[Byte]
-    buf(offset + 7) = value.asInstanceOf[Byte]
-  }
-
-  def readLong(buf: Array[Byte], offset: Int) = {
-    ((buf(offset) & 0xffL) << 56) |
-      ((buf(offset + 1) & 0xffL) << 48) |
-      ((buf(offset + 2) & 0xffL) << 40) |
-      ((buf(offset + 3) & 0xffL) << 32) |
-      ((buf(offset + 4) & 0xffL) << 24) |
-      ((buf(offset + 5) & 0xffL) << 16) |
-      ((buf(offset + 6) & 0xffL) << 8) |
-      (buf(offset + 7) & 0xffL)
-  }
-
   implicit object LongPacker extends FixedLengthPacker[Long](9) {
     def pack(value: Long, buf: Array[Byte], offset: Int) = {
       require(buf.length >= offset + 9, "buffer too small")
-      buf(offset) = TYPE_LONG
-      writeLong(value, buf, offset + 1)
+      buf(offset) = TYPE_UINT64
+      buf(offset + 1) = (value >> 56).asInstanceOf[Byte]
+      buf(offset + 2) = (value >> 48).asInstanceOf[Byte]
+      buf(offset + 3) = (value >> 40).asInstanceOf[Byte]
+      buf(offset + 4) = (value >> 32).asInstanceOf[Byte]
+      buf(offset + 5) = (value >> 24).asInstanceOf[Byte]
+      buf(offset + 6) = (value >> 16).asInstanceOf[Byte]
+      buf(offset + 7) = (value >> 8).asInstanceOf[Byte]
+      buf(offset + 8) = value.asInstanceOf[Byte]
+      offset + 9
     }
 
     def unpack(buf: Array[Byte], offset: Int, length: Int) = {
-      require(buf(offset) == TYPE_LONG, "not a Long")
+      require(buf(offset) == TYPE_UINT64, "not a Long")
       require(buf.length >= offset + 9 && length == 9, "invalid length")
-      readLong(buf, offset + 1)
-    }
-  }
-
-  implicit object DoublePacker extends FixedLengthPacker[Double](9) {
-    def pack(value: Double, buf: Array[Byte], offset: Int) = {
-      require(buf.length >= offset + 9, "buffer too small")
-      buf(offset) = TYPE_DOUBLE
-      val bits = java.lang.Double.doubleToLongBits(value)
-      writeLong(bits, buf, offset + 1)
-    }
-
-    def unpack(buf: Array[Byte], offset: Int, length: Int) = {
-      require(buf(offset) == TYPE_DOUBLE, "not a Double")
-      require(buf.length >= offset + 9 && length == 9, "invalid length")
-      val bits = readLong(buf, offset + 1)
-      java.lang.Double.longBitsToDouble(bits)
+      ((buf(offset + 1) & 0xffL) << 56) |
+        ((buf(offset + 2) & 0xffL) << 48) |
+        ((buf(offset + 3) & 0xffL) << 40) |
+        ((buf(offset + 4) & 0xffL) << 32) |
+        ((buf(offset + 5) & 0xffL) << 24) |
+        ((buf(offset + 6) & 0xffL) << 16) |
+        ((buf(offset + 7) & 0xffL) << 8) |
+        (buf(offset + 8) & 0xffL)
     }
   }
 
@@ -167,6 +144,7 @@ object Packer extends ProductPackers with CollectionPackers {
     def pack(value: Boolean, buf: Array[Byte], offset: Int) = {
       require(buf.length > offset, "buffer too small")
       buf(offset) = if (value) TYPE_TRUE else TYPE_FALSE
+      offset + 1
     }
 
     def unpack(buf: Array[Byte], offset: Int, length: Int) = {
@@ -180,27 +158,23 @@ object Packer extends ProductPackers with CollectionPackers {
 
   val emptyByteArray = new Array[Byte](0)
 
-  abstract class RawPacker[T](typeSign: Byte) extends Packer[T] {
-    def pack(value: T): Array[Byte]
-
-    def unpack(buf: Array[Byte]): T
-
-    def pack(value: T, buf: Array[Byte], offset: Int) = {
-      val arr = pack(value)
-      require(buf.length >= offset + arr.length + 2, "buffer too small")
+  implicit object ByteArrayPacker extends Packer[Array[Byte]] {
+    def pack(value: Array[Byte], buf: Array[Byte], offset: Int) = {
+      require(buf.length >= offset + value.length + 2, "buffer too small")
       require(buf.length < 256, "value too large")
-      buf(offset) = typeSign
-      buf(offset + 1) = arr.length.asInstanceOf[Byte]
-      System.arraycopy(arr, 0, buf, offset + 2, arr.length)
+      buf(offset) = TYPE_RAW
+      buf(offset + 1) = value.length.asInstanceOf[Byte]
+      System.arraycopy(value, 0, buf, offset + 2, value.length)
+      offset + value.length + 2
     }
 
-    def packLength(value: T): Int = {
-      pack(value).length + 2
+    def packLength(value: Array[Byte]): Int = {
+      value.length + 2
     }
 
     def unpack(buf: Array[Byte], offset: Int, length: Int) = {
-      require(buf(offset) == typeSign, "not a byte array")
-      require(buf(offset + 1) == length - 2, "invalid length")
+      require(buf(offset) == TYPE_RAW, "not a byte array")
+      require((buf(offset + 1) & 0xff) == length - 2, "invalid length")
       val arr =
         if (length > 2) {
           val arr = new Array[Byte](length - 2)
@@ -208,7 +182,7 @@ object Packer extends ProductPackers with CollectionPackers {
           arr
         } else
           emptyByteArray
-      unpack(arr)
+      arr
     }
 
     def unpackLength(buf: Array[Byte], offset: Int): Int = {
@@ -216,47 +190,31 @@ object Packer extends ProductPackers with CollectionPackers {
     }
   }
 
-  implicit object ByteArrayPacker extends RawPacker[Array[Byte]](TYPE_RAW) {
-    def pack(value: Array[Byte]) = value
+  def apply[A, B](to: A => B, from: B => A)(implicit underlying: Packer[B]): Packer[A] =
+    new Packer[A] {
+      def pack(value: A, buf: Array[Byte], offset: Int) = underlying.pack(to(value), buf, offset)
 
-    def unpack(buf: Array[Byte]) = buf
-  }
+      def packLength(value: A) = underlying.packLength(to(value))
 
-  implicit object DateTimePacker extends FixedLengthPacker[org.joda.time.DateTime](9) {
-    def pack(value: org.joda.time.DateTime, buf: Array[Byte], offset: Int) = {
-      require(buf.length >= offset + 9, "buffer too small")
-      buf(offset) = TYPE_DATETIME
-      writeLong(value.getMillis(), buf, offset + 1)
+      def unpack(buf: Array[Byte], offset: Int, length: Int) = from(underlying.unpack(buf, offset, length))
+
+      def unpackLength(buf: Array[Byte], offset: Int) = underlying.unpackLength(buf, offset)
     }
 
-    def unpack(buf: Array[Byte], offset: Int, length: Int) = {
-      require(buf(offset) == TYPE_DATETIME, "not a DateTime")
-      require(buf.length >= offset + 9 && length == 9, "invalid length")
-      val bits = readLong(buf, offset + 1)
-      new org.joda.time.DateTime(bits)
-    }
-  }
+  implicit val DoublePacker = apply[Double, Long](java.lang.Double.doubleToLongBits, java.lang.Double.longBitsToDouble)
 
-  val refPacker = new FixedLengthPacker[Ref[_]](9) {
-    override def pack(value: Ref[_], buf: Array[Byte], offset: Int): Unit = {
-      buf(offset) = TYPE_REF
-      writeLong(value.id, buf, offset + 1)
-    }
+  implicit val DateTimePacker = apply[org.joda.time.DateTime, Long](_.getMillis, new org.joda.time.DateTime(_))
 
-    override def unpack(buf: Array[Byte], offset: Int, length: Int): Ref[_] = {
-      require(buf(offset) == TYPE_REF, "not a ref")
-      require(buf.length >= offset + 9 && length == 9, "invalid length")
-      val id = readLong(buf, offset + 1)
-      if (id != 0) RefSome(id) else RefEmpty
-    }
-  }
+  val refPacker = apply[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
 
   implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
-    new RawPacker[KeyCollection[T]](TYPE_COLLECTION) {
-      def pack(value: KeyCollection[T]) = value.asInstanceOf[KeyCollectionImpl[T]].key
-
-      def unpack(buf: Array[Byte]) = new KeyCollectionImpl[T](buf)
-    }
+    apply[KeyCollection[T], Array[Byte]](_.asInstanceOf[KeyCollectionImpl[T]].key, new KeyCollectionImpl[T](_))
 }
+
+@tuplePackers
+trait TuplePackers
+
+@caseClassPackers
+trait CaseClassPackers
