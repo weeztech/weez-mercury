@@ -14,17 +14,51 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
   import c.universe._
 
   def impl(annottees: c.Expr[Any]*): c.Expr[Any] = {
+    def ensureEntityAsSuperType(parents: List[Tree]) = {
+      val entityType = tq"_root_.com.weez.mercury.common.Entity"
+      findInherit(parents, entityType) match {
+        case Some(_) => parents
+        case None => parents :+ entityType
+      }
+    }
+
+    def ensureIdParam(paramss: List[List[Tree]]) = {
+      findParam(paramss, "id", Some(tq"Long")) match {
+        case Some(_) => paramss
+        case None =>
+          val mods = Modifiers(Flag.CASEACCESSOR | Flag.PARAMACCESSOR)
+          (q"$mods val id: Long" :: paramss.head) :: paramss.tail
+      }
+    }
+
+    def addExtraApply(paramss: List[List[Tree]], name: TypeName) = {
+      val argss =
+        paramss map { params =>
+          params map {
+            case q"$mod val $name: $tpe = $rhs" =>
+              ValDef(Modifiers(Flag.PARAM), name, tpe, rhs)
+          }
+        }
+      var applyArgss =
+        argss map { params =>
+          params map {
+            case ValDef(_, name, _, _) => Ident(name): Tree
+          }
+        }
+      applyArgss = (Literal(Constant(0L)) :: applyArgss.head) :: applyArgss.tail
+      q"def apply(...$argss): ${Ident(name)} = apply(...$applyArgss)"
+    }
+
     withFirst(annottees) {
       val tree = annottees.head.tree
       withClass(tree, Some(Flag.CASE)) { (name, paramss, parents, body, mods, _, _) =>
-        val caseClassParents = ensureInherit(parents, tq"_root_.com.weez.mercury.common.Entity")
-        val caseClassParams = ensureParam(paramss, q"${Modifiers(Flag.CASEACCESSOR | Flag.PARAMACCESSOR)} val id: Long")
-        //val map = getAnnotation(classOf[dbtype].getName, Nil)
+        val caseClassParents = ensureEntityAsSuperType(parents)
+        val caseClassParams = ensureIdParam(paramss)
         val dbObjectType = tq"_root_.com.weez.mercury.common.DBObjectType[$name]"
         val companionType =
           if (caseClassParams.length == 1) {
             val functionType = makeFunctionTypeWithParamList(caseClassParams, Ident(name))
-            dbObjectType :: functionType :: Nil
+            functionType :: dbObjectType :: Nil
           } else
             dbObjectType :: Nil
         val packer =
@@ -32,19 +66,14 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
             q"this"
           else
             flattenFunction(q"apply", caseClassParams)
-        val dbname = new Regex("[A-Z]+").replaceAllIn(name.toString(), { m =>
-          if (m.start == 0)
-            m.matched.toLowerCase
-          else
-            "-" + m.matched.toLowerCase
-        })
+        var companionBody =
+          q"def nameInDB = ${Literal(Constant(camelCase2sepStyle(name.toString)))}" ::
+            q"implicit val packer = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
+        if (paramss.head.length < caseClassParams.head.length)
+          companionBody = addExtraApply(paramss, name) :: companionBody
         val tree = q"""
           $mods class $name(...$caseClassParams) extends ..$caseClassParents { ..$body }
-
-          object ${name.toTermName} extends ..$companionType {
-            def nameInDB = ${Literal(Constant(dbname))}
-            implicit val packer = _root_.com.weez.mercury.common.Packer($packer)
-          }
+          object ${name.toTermName} extends ..$companionType { ..$companionBody }
          """
         //println(show(tree))
         tree

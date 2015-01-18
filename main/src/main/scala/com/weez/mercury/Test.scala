@@ -1,33 +1,14 @@
 package com.weez.mercury
 
+trait C
+
 object Test {
+  trait D
 
   @common.test(false)
-  case class A(abc: String) extends AutoCloseable {
-    def close(): Unit = ???
-
-    trait C
-
-  }
-
-  object A {
-
-    trait B
-
-  }
-
-  trait B {
-
-    trait C
-
-    object C
-
-  }
-
-  object B {
+  case class A(abc: String) extends C with D
 
 
-  }
 
   def main(args: Array[String]): Unit = {
     import scala.reflect.runtime.{universe => ru}

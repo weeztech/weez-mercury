@@ -17,27 +17,65 @@ trait MacroHelper {
     }
   }
 
-  def ensureInherit(parents: List[Tree], check: Tree) = {
-    val baseType = c.typecheck(check, c.TYPEmode).tpe
-    val inherit = parents exists { p =>
-      c.typecheck(p, c.TYPEmode).tpe <:< baseType
+  def typecheckWorkaround0(tree: Tree, mode: c.TypecheckMode): Option[Type] = {
+    // http://stackoverflow.com/questions/24602433/macro-annotations-and-type-parameter
+    // https://github.com/scalamacros/paradise/issues/14
+    try {
+      Some(c.typecheck(tree, c.TYPEmode).tpe)
+    } catch {
+      case ex: c.TypecheckException =>
+        tree match {
+          case Ident(TypeName(_)) => // maybe local name
+          case _ => c.warning(tree.pos, ex.getMessage)
+        }
+        None
     }
-    if (inherit) parents else parents :+ check
   }
 
-  def ensureParam(paramss: List[List[Tree]], p: Tree) = {
-    val q"$_ val $name: $tpe = $_" = p
-    paramss.flatten collectFirst {
-      case q"$_ val $xname: $xtpe = $_" if xname.toString == name.toString =>
-        val pt = c.typecheck(tpe, c.TYPEmode).tpe
-        if (!(c.typecheck(xtpe, c.TYPEmode).tpe <:< pt))
-          c.error(xtpe.pos, "expect type " + pt.typeSymbol.fullName)
-    } match {
-      case Some(x) =>
-        paramss
-      case None =>
-        (p :: paramss.head) :: paramss.tail
+  def typecheckWorkaround1(tree: Tree, mode: c.TypecheckMode): Type = {
+    typecheckWorkaround0(tree, c.TYPEmode) match {
+      case Some(x) => x
+      case None => c.abort(tree.pos, "type not found")
     }
+  }
+
+  def findInherit(parents: List[Tree], expect: Tree): Option[Tree] = {
+    val baseType = typecheckWorkaround1(expect, c.TYPEmode)
+    parents find { p =>
+      typecheckWorkaround0(p, c.TYPEmode) match {
+        case Some(x) => x <:< baseType
+        case None => false
+      }
+    }
+  }
+
+  def findParam(paramss: List[List[Tree]], name: String, expectType: Option[Tree] = None): Option[Tree] = {
+    paramss.flatten collectFirst {
+      case p@q"$_ val $name0: $tpe = $_" if name0.toString == name =>
+        expectType match {
+          case Some(x) =>
+            val expect = typecheckWorkaround1(x, c.TYPEmode)
+            val typeEqual =
+              typecheckWorkaround0(tpe, c.TYPEmode) match {
+                case Some(x) => x <:< expect
+                case None => false
+              }
+            if (!typeEqual)
+              c.error(tpe.pos, "expect type " + expect.typeSymbol.fullName)
+          case None =>
+        }
+        p
+    }
+  }
+
+  def camelCase2sepStyle(name: String): String = {
+    import scala.util.matching.Regex
+    new Regex("[A-Z]+").replaceAllIn(name, { m =>
+      if (m.start == 0)
+        m.matched.toLowerCase
+      else
+        "-" + m.matched.toLowerCase
+    })
   }
 
   def withClass(tree: Tree, flags: Option[FlagSet] = None)(f: (TypeName, List[List[Tree]], List[Tree], List[Tree], Modifiers, List[Tree], Modifiers) => Tree): Tree = {
@@ -87,37 +125,29 @@ trait MacroHelper {
     Function(params, q"$name(...$paramss)")
   }
 
-  def getAnnotation(expectName: String, defaults: Seq[(String, Any)]): Map[String, Any] = {
+  def evalAnnotation[T: TypeTag](): T = {
     c.prefix.tree match {
-      case q"new $tpname(...$paramss)" =>
-        // http://stackoverflow.com/questions/24602433/macro-annotations-and-type-parameter
-        // https://github.com/scalamacros/paradise/issues/14
-        val actualType = c.typecheck(tpname, c.TYPEmode).tpe
-        val actualName = actualType.typeSymbol.fullName
-        if (expectName != actualName)
-          throw new PositionedException(tpname.pos, s"expect $expectName\nfound $actualName")
-        var i = 0
-        val builder = Map.newBuilder[String, Any]
-        builder ++= defaults
-        paramss foreach { params =>
-          params foreach { p =>
-            p match {
-              case Literal(Constant(value)) =>
-                val (prop, _) = defaults(i)
-                builder += prop -> value
-              case AssignOrNamedArg(Ident(TermName(prop)), Literal(Constant(value))) =>
-                builder += prop -> value
-              case _ =>
-                throw new PositionedException(p.pos, "expect literal or named-argument with literal")
-            }
-            i += 1
-          }
-        }
-        builder.result()
+      case q"new $_(...$paramss)" =>
+        val name = typeNameOf(typeOf[T].typeSymbol.fullName)
+        c.eval(c.Expr[T](q"new $name(...$paramss)"))
     }
   }
 
-  def importName(name: String): c.Tree = {
+  def typeNameOf(name: String): Tree = {
+    import scala.annotation.tailrec
+    @tailrec
+    def makeName(parts: List[String], tree: Tree): Tree = {
+      parts match {
+        case x :: Nil => Select(tree, TypeName(x))
+        case x :: tail => makeName(tail, Select(tree, TermName(x)))
+        case _ => throw new IllegalArgumentException
+      }
+    }
+    val parts = name.split("\\.").toList
+    makeName(if (parts.head == "_root_") parts.tail else parts, Ident(termNames.ROOTPKG))
+  }
+
+  def importName(name: String): Tree = {
     val arr = name.split("\\.")
     if (arr.length < 2)
       EmptyTree
