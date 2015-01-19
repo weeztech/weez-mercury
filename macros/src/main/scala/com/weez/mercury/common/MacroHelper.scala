@@ -122,7 +122,12 @@ trait MacroHelper {
       case q"$mod val $name: $tpe = $_" =>
         ValDef(Modifiers(Flag.PARAM), name, tpe, EmptyTree)
     }
-    Function(params, q"$name(...$paramss)")
+    val argss = paramss map {
+      _ map {
+        case q"$_ val $name: $_ = $_" => q"$name"
+      }
+    }
+    Function(params, q"$name(...$argss)")
   }
 
   def evalAnnotation[T: TypeTag](): T = {

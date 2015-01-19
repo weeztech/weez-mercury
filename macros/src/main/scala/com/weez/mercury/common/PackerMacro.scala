@@ -4,6 +4,10 @@ import scala.annotation.StaticAnnotation
 import scala.language.experimental.macros
 import scala.reflect.macros.whitebox.Context
 
+class packable extends StaticAnnotation {
+  def macroTransform(annottees: Any*): Any = macro PackerMacro.packableImpl
+}
+
 class tuplePackers extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro PackerMacro.tupleImpl
 }
@@ -15,6 +19,47 @@ class caseClassPackers extends StaticAnnotation {
 class PackerMacro(val c: Context) extends MacroHelper {
 
   import c.universe._
+
+  def packableImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
+    withFirst(annottees) {
+      val tree = annottees.head.tree
+      withClass(tree, Some(Flag.CASE)) { (name, paramss, parents, body, mods, tparams, _) =>
+        val packer = flattenFunction(q"apply", paramss)
+        var companionBody =
+          if (tparams.isEmpty) {
+            q"implicit val packer = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
+          } else {
+            val names = (tparams map {
+              case TypeDef(_, name, _, _) => name
+            }).toSet
+            val builder = List.newBuilder[Tree]
+            var i = 0
+            paramss foreach {
+              _ foreach {
+                case ValDef(_, _, tpt, _) =>
+                  val isGenericType =
+                    tpt match {
+                      case AppliedTypeTree(Ident(x: TypeName), _) => names.contains(x)
+                      case Ident(x: TypeName) => names.contains(x)
+                    }
+                  if (isGenericType) {
+                    builder += ValDef(Modifiers(Flag.PARAM | Flag.IMPLICIT),
+                      TermName("$implicit$p" + i), tq"_root_.com.weez.mercury.common.Packer[$tpt]", EmptyTree)
+                    i += 1
+                  }
+              }
+            }
+            val params = builder.result()
+            q"implicit def packer[..$tparams](..$params) = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
+          }
+        val all =
+          tree ::
+            q"object ${name.toTermName} { ..$companionBody }" ::
+            Nil
+        q"..$all"
+      }
+    }
+  }
 
   def tupleImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
     val tree =
