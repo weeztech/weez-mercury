@@ -30,7 +30,7 @@ object Packer extends CollectionPackers with TuplePackers with CaseClassPackers 
   val TYPE_TUPLE: Byte = 10
   val TYPE_END: Byte = 0
 
-  @inline final def apply[T](implicit p: Packer[T]) = p
+  @inline def apply[T](implicit p: Packer[T]) = p
 
   def pack[T](value: T)(implicit packer: Packer[T]) = packer(value)
 

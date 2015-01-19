@@ -3,25 +3,6 @@ package com.weez.mercury.common
 import akka.event.LoggingAdapter
 import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
 
-trait DBObjectType[T <: Entity] {
-  dbObject =>
-  def nameInDB: String
-
-  def column[CT](name: String) = ColumnDef[CT](name)
-
-  def extend[ST <: DBObjectType[_]](name: String, source: ST) = ExtendDef[ST](name, source)
-
-  val id = column[Long]("id")
-
-  case class ExtendDef[ST](name: String, source: ST)
-
-  case class ColumnDef[CT](name: String) {
-    def owner = dbObject
-  }
-
-}
-
-
 trait Context {
   implicit val context: this.type = this
 
@@ -47,10 +28,12 @@ trait DBSessionQueryable {
 
   def newCursor(): DBCursor
 
-  private[common] def schema: DBSchema
+  def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): DBType.CollectionMeta
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
+  def newEntityId(): Long
+
   def put[K: Packer, V: Packer](key: K, value: V): Unit
 
   def del[K: Packer](key: K): Unit

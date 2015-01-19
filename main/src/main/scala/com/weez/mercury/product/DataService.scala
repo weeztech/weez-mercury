@@ -41,22 +41,11 @@ object DataService extends RemoteService {
   }
 }
 
+@packable
 case class ProductModel(id: Long,
                         code: String,
                         title: String,
                         description: String) extends Entity
-
-object ProductModel extends DBObjectType[ProductModel] {
-  def nameInDB = "product"
-
-  val code = column[String]("code")
-
-  val title = column[String]("title")
-
-  val description = column[String]("description")
-
-  implicit val packer = Packer(ProductModel.apply _)
-}
 
 object ProductModelCollection extends RootCollection[ProductModel] {
   val name = "product-model"
@@ -64,22 +53,12 @@ object ProductModelCollection extends RootCollection[ProductModel] {
   val byTitle = defUniqueIndex("by-Title", _.title)
 }
 
-
+@packable
 case class Product(id: Long,
                    code: String,
                    title: String,
                    description: String,
                    price: Double) extends Entity
-
-object Product extends DBObjectType[Product] {
-  def nameInDB = "product"
-
-  val code = column[String]("code")
-  val title = column[String]("title")
-  val description = column[String]("description")
-
-  implicit val packer = Packer(Product.apply _)
-}
 
 object ProductCollection extends RootCollection[Product] {
   val name = "product"
@@ -87,20 +66,11 @@ object ProductCollection extends RootCollection[Product] {
   val byTitle = defUniqueIndex("by-code", _.title)
 }
 
+@packable
 case class Assistant(id: Long,
                      price: Double,
                      staff: Ref[Staff],
                      description: String) extends Entity
-
-object Assistant extends DBObjectType[Assistant] {
-  def nameInDB = "assistant"
-
-  val description = column[String]("description")
-  val price = column[Double]("price")
-  val staff = extend("staff", Staff)
-
-  implicit val packer = Packer(Assistant.apply _)
-}
 
 object AssistantCollection extends RootCollection[Assistant] {
   val name = "assistant"
@@ -113,24 +83,14 @@ object AssistantCollection extends RootCollection[Assistant] {
   })
 }
 
-
+@packable
 case class Customer(id: Long, code: String,
                     title: String) extends Entity
-
-object Customer extends DBObjectType[Customer] {
-  def nameInDB = "customer"
-
-  val code = column[String]("code")
-  val title = column[String]("title")
-
-  implicit val packer = Packer(Customer.apply _)
-}
 
 object CustomerCollection extends RootCollection[Customer] {
   val name = "customer"
   val byCode = defUniqueIndex("by-code", _.code)
 }
-
 
 case class SaleOrder(id: Long,
                      code: String,
@@ -140,18 +100,7 @@ case class SaleOrder(id: Long,
   lazy val rooms = new SaleOrderRoomItems(this)
 }
 
-object SaleOrder extends DBObjectType[SaleOrder] {
-  def nameInDB = "sale-order"
-
-  val code = column[String]("code")
-
-  val customer = column[Ref[Customer]]("code")
-
-  val time = column[DateTime]("time")
-
-  val ctime = column[DateTime]("ctime")
-
-  val rooms = column[KeyCollection[RoomItem]]("rooms")
+object SaleOrder {
 
   case class RoomItem(id: Long, saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
@@ -166,7 +115,6 @@ class SaleOrderRoomItems(owner: Entity) extends SubCollection[RoomItem](owner) {
   lazy val byRoom = defUniqueIndex("byRoom", _.room)
 }
 
-
 object SaleOrderCollection extends RootCollection[SaleOrder] {
   val name = "sale-order"
   val byCode = defUniqueIndex("by-code", _.code)
@@ -178,17 +126,8 @@ object RoomItemCollection extends RootCollection[RoomItem] {
   //val byRoomID = defUniqueIndex[(Long, Long)]("byRoom", v => (v.saleOrder.refID, v.room.refID))
 }
 
+@packable
 case class Room(id: Long, title: String, price: Double, description: String) extends Entity
-
-object Room extends DBObjectType[Room] {
-  def nameInDB = "room"
-
-  val title = column[String]("title")
-  val price = column[Double]("price")
-  val description = column[String]("description")
-
-  implicit val packer = Packer(Room.apply _)
-}
 
 object RoomCollection extends RootCollection[Room] {
   val name = "room"

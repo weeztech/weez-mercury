@@ -5,9 +5,10 @@ import scala.reflect.macros.whitebox.Context
 import scala.annotation.StaticAnnotation
 import scala.util.matching.Regex
 
-class dbtype extends StaticAnnotation {
+/*
+class dbtype() extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro DBTypeMacro.impl
-}
+}*/
 
 class DBTypeMacro(val c: Context) extends MacroHelper {
 
