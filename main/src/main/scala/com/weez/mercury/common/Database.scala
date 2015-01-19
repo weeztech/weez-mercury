@@ -23,15 +23,15 @@ trait DBSession {
 }
 
 trait DBTransaction {
-  def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]): Option[V]
+  def get(key: Array[Byte]): Array[Byte]
 
-  def newCursor: DBCursor
+  def newCursor(): DBCursor
 
-  def put[K, V](key: K, value: V)(implicit pk: Packer[K], pv: Packer[V]): Unit
+  def put(key: Array[Byte], value: Array[Byte]): Unit
 
-  def exists[K](key: K)(implicit pk: Packer[K]): Boolean
+  def exists(key: Array[Byte]): Boolean
 
-  def del[K](key: K)(implicit pk: Packer[K]): Unit
+  def del(key: Array[Byte]): Unit
 }
 
 trait DBCursor {

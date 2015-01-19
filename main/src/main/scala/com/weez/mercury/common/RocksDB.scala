@@ -1,6 +1,5 @@
 package com.weez.mercury.common
 
-import java.util.Arrays
 import akka.event.LoggingAdapter
 import org.rocksdb._
 
@@ -102,21 +101,16 @@ private class RocksDBBackend(path: String) extends Database {
     var dbIterators: List[RocksIterator] = Nil
     var writeBatch: WriteBatch = _
 
-    def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]) = {
-      val keyBuf = pk(key)
-      val buf = db.get(readOption, keyBuf)
-      if (buf == null) None else Some(pv.unapply(buf))
+    def get(key: Array[Byte]) = db.get(readOption, key)
+
+    def exists(key: Array[Byte]): Boolean = {
+      db.get(readOption, key) != null
     }
 
-
-    override def exists[K](key: K)(implicit pk: Packer[K]): Boolean = {
-      db.get(readOption, pk(key)) != null
-    }
-
-    override def del[K](key: K)(implicit pk: Packer[K]): Unit = {
+    def del(key: Array[Byte]): Unit = {
       if (writeBatch == null)
         writeBatch = new WriteBatch()
-      writeBatch.remove(pk(key))
+      writeBatch.remove(key)
     }
 
     def newCursor(): DBCursor = {
@@ -130,10 +124,10 @@ private class RocksDBBackend(path: String) extends Database {
       }
     }
 
-    def put[K: Packer, V: Packer](key: K, value: V): Unit = {
+    def put(key: Array[Byte], value: Array[Byte]): Unit = {
       if (writeBatch == null)
         writeBatch = new WriteBatch()
-      writeBatch.put(packer[K].apply(key), packer[V].apply(value))
+      writeBatch.put(key, value)
     }
 
     def commit() = {
@@ -161,13 +155,13 @@ private class RocksDBBackend(path: String) extends Database {
   }
 
   class DevTransaction(log: LoggingAdapter) extends Transaction(log) {
-    val keyWrites = scala.collection.mutable.Set[Any]()
+    val keyWrites = scala.collection.mutable.SortedSet[Array[Byte]]()(ByteArrayOrdering)
 
-    override def get[K: Packer, V: Packer](key: K) = {
+    override def get(key: Array[Byte]) = {
       if (keyWrites.contains(key)) {
         log.error("read the key which is written by current transaction")
       }
-      super.get[K, V](key)
+      super.get(key)
     }
 
 
@@ -178,7 +172,6 @@ private class RocksDBBackend(path: String) extends Database {
 
         override def next(step: Int) = {
           if (c.next(step)) {
-            // TODO fix
             if (keyWrites.contains(c.key())) {
               log.error("read the key which is written by current transaction")
             }

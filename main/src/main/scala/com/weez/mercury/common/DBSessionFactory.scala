@@ -27,13 +27,13 @@ class DBSessionFactory(dbSession: DBSession) {
     KEY_OBJECT_ID_COUNTER.synchronized {
       if (allocIdLimit == 0) {
         dbSession.withTransaction(log) { trans =>
-          allocIdLimit = trans.get[String, Long](KEY_OBJECT_ID_COUNTER).get
+          allocIdLimit = Packer.unpack[Long](trans.get(Packer.pack(KEY_OBJECT_ID_COUNTER)))
         }
       }
       if (currentId == allocIdLimit) {
         allocIdLimit += allocIdBatch
         dbSession.withTransaction(log) { trans =>
-          trans.put(KEY_OBJECT_ID_COUNTER, allocIdLimit)
+          trans.put(Packer.pack(KEY_OBJECT_ID_COUNTER), Packer.pack(allocIdLimit))
         }
       }
       currentId += 1
@@ -50,9 +50,12 @@ class DBSessionFactory(dbSession: DBSession) {
   }
 
   private final class DBSessionImpl(trans: DBTransaction, log: LoggingAdapter) extends DBSessionUpdatable {
-    @inline def get[K: Packer, V: Packer](key: K) = trans.get[K, V](key)
+    def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]) = {
+      val arr = trans.get(pk(key))
+      if (arr == null) None else Some(pv.unapply(arr))
+    }
 
-    @inline def exists[K: Packer](key: K) = trans.exists(key)
+    @inline def exists[K](key: K)(implicit pk: Packer[K]) = trans.exists(pk(key))
 
     @inline def newCursor() = trans.newCursor
 
@@ -69,9 +72,9 @@ class DBSessionFactory(dbSession: DBSession) {
 
     @inline def newEntityId() = allocId(log)
 
-    @inline def put[K: Packer, V: Packer](key: K, value: V) = trans.put(key, value)
+    @inline def put[K, V](key: K, value: V)(implicit pk: Packer[K], pv: Packer[V]) = trans.put(pk(key), pv(value))
 
-    @inline def del[K: Packer](key: K) = trans.del(key)
+    @inline def del[K](key: K)(implicit pk: Packer[K]) = trans.del(pk(key))
   }
 
 }
