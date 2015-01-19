@@ -48,9 +48,7 @@ private object EntityCollections {
       if (this.hosts.get(name).isDefined) {
         throw new IllegalArgumentException( s"""HostCollection naming"$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name) {
-        override val valuePacker: Packer[V] = implicitly[Packer[V]]
-      }
+      val host = new HostCollectionImpl[V](name) {}
       this.hosts.put(name, host)
       host
     }
@@ -59,21 +57,20 @@ private object EntityCollections {
   val hosts = collection.mutable.HashMap[String, HostCollectionImpl[_]]()
   val hostsByID = collection.mutable.HashMap[Int, HostCollectionImpl[_]]()
 
-  abstract class HostCollectionImpl[V <: Entity](val name: String) {
+  abstract class HostCollectionImpl[V <: Entity : Packer](val name: String) {
     host =>
-    @volatile var _meta: RootCollectionMeta = null
-    implicit val valuePacker: Packer[V]
+    @volatile var _meta: DBType.CollectionMeta = null
 
     def bindDB()(implicit db: DBSessionQueryable): Unit = {
       if (synchronized {
         if (_meta == null) {
-          _meta = db.schema.getRootCollectionMeta(this.name)
+          _meta = db.getRootCollectionMeta(this.name)
           if (_meta == null) {
             throw new IllegalArgumentException( s"""no such HostCollection named ${this.name}""")
           }
           indexes.synchronized {
             for (idx <- indexes.values) {
-              idx.indexID = _meta.indexes.find(i => i.name == idx.name).get.prefix
+              idx.indexID = _meta.indexPrefixOf(idx.name)
             }
           }
           true
@@ -95,7 +92,7 @@ private object EntityCollections {
     }
 
     @inline final def getIndexID(name: String)(implicit db: DBSessionQueryable) = {
-      meta.indexes.find(i => i.name == name).get.prefix
+      meta.indexPrefixOf(name)
     }
 
     abstract class IndexBaseImpl[K: Packer, KB <: Entity, R <: Entity : Packer](keyGetter: KB => K)
@@ -231,7 +228,7 @@ private object EntityCollections {
 
     @inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 
-    @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.schema.newEntityID())
+    @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.newEntityId())
 
 
     @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = {
@@ -330,8 +327,6 @@ private object EntityCollections {
   trait IndexEntryDeleter[KB] extends IndexEntryHelper[KB] {
     def onKeyEntityDelete(oldEntity: KB)(implicit db: DBSessionUpdatable)
   }
-
-  val cidPrefixPacker = Packer.tuple1[Int]
 
   final val b_one = 1.asInstanceOf[Byte]
   final val b_ff = 0xff.asInstanceOf[Byte]
@@ -466,13 +461,12 @@ private object EntityCollections {
     }
   }
 
+  @packable
   case class SCE[V <: Entity](ownerID: Long, v: V) extends Entity {
     def id = v.id
   }
 
   class SubHostCollectionImpl[V <: Entity : Packer](name: String) extends HostCollectionImpl[SCE[V]](name) {
-    override implicit val valuePacker: Packer[SCE[V]] = Packer(SCE[V] _)
-
     final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
       super.update(SCE(ownerID, value))
     }

@@ -91,11 +91,21 @@ object Util {
 
   def compareUInt8s(a: Array[Byte], b: Array[Byte]): Int = {
     val l = a.length max b.length
-    var i,c=0
+    var i, c = 0
     while (c == 0 && i < l) {
       c = (a(i) & 0xFF) - (b(i) & 0xFF)
       i += 1
     }
     if (c != 0) c else a.length - b.length
+  }
+
+  def camelCase2seqStyle(name: String) = {
+    import scala.util.matching.Regex
+    new Regex("[A-Z]+").replaceAllIn(name, { m =>
+      if (m.start == 0)
+        m.matched.toLowerCase
+      else
+        "-" + m.matched.toLowerCase
+    })
   }
 }
