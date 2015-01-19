@@ -72,4 +72,16 @@ trait CollectionPackers {
   implicit def arrayBuffer[T](implicit packer: Packer[T]): Packer[mutable.ArrayBuffer[T]] = new CollectionPacker(mutable.ArrayBuffer)
 
   implicit def listBuffer[T](implicit packer: Packer[T]): Packer[mutable.ListBuffer[T]] = new CollectionPacker(mutable.ListBuffer)
+
+  implicit def map[A, B](implicit packer: Packer[(A, B)]): Packer[Map[A, B]] = Packer[Map[A, B], Traversable[(A, B)]](m => m, t => t.toMap)
+
+  implicit def imap[A, B](implicit packer: Packer[(A, B)]): Packer[immutable.Map[A, B]] = Packer[immutable.Map[A, B], immutable.Traversable[(A, B)]](m => m, t => t.toMap)
+
+  implicit def mmap[A, B](implicit packer: Packer[(A, B)]): Packer[mutable.Map[A, B]] =
+    Packer[mutable.Map[A, B], mutable.Traversable[(A, B)]](m => m,
+      t => {
+        val b = mutable.Map.newBuilder[A, B]
+        b ++= t
+        b.result()
+      })
 }
