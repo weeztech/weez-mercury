@@ -21,61 +21,55 @@ class PackerMacro(val c: Context) extends MacroHelper {
   import c.universe._
 
   def packableImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
-    withFirst(annottees) {
-      val tree = annottees.head.tree
-      withClass(tree, Some(Flag.CASE)) { (name, paramss, parents, body, mods, tparams, _) =>
-        val packer = flattenFunction(q"apply", paramss)
-        var companionBody =
-          if (tparams.isEmpty) {
-            q"implicit val packer = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
-          } else {
-            val names = (tparams map {
-              case TypeDef(_, name, _, _) => name
-            }).toSet
-            val builder = List.newBuilder[Tree]
-            var i = 0
-            paramss foreach {
-              _ foreach {
-                case ValDef(_, _, tpt, _) =>
-                  val isGenericType =
-                    tpt match {
-                      case AppliedTypeTree(Ident(x: TypeName), _) => names.contains(x)
-                      case Ident(x: TypeName) => names.contains(x)
+    withException {
+      annottees.head.tree match {
+        case q"$mods class $name[..$tparams](...$paramss) extends ..$parents { ..$_ }" if mods.hasFlag(Flag.CASE) =>
+          val packer = flattenFunction(q"apply", paramss)
+          var companionBody =
+            if (tparams.isEmpty) {
+              q"implicit val packer = _root_.com.weez.mercury.common.Packer.caseClass($packer)" :: Nil
+            } else {
+              val names = (tparams map {
+                case TypeDef(_, name, _, _) => name
+              }).toSet
+              val builder = List.newBuilder[Tree]
+              var i = 0
+              paramss foreach {
+                _ foreach {
+                  case ValDef(_, _, tpt, _) =>
+                    val isGenericType =
+                      tpt match {
+                        case AppliedTypeTree(Ident(x: TypeName), _) => names.contains(x)
+                        case Ident(x: TypeName) => names.contains(x)
+                      }
+                    if (isGenericType) {
+                      builder += ValDef(Modifiers(Flag.PARAM | Flag.IMPLICIT),
+                        TermName("$implicit$p" + i), tq"_root_.com.weez.mercury.common.Packer[$tpt]", EmptyTree)
+                      i += 1
                     }
-                  if (isGenericType) {
-                    builder += ValDef(Modifiers(Flag.PARAM | Flag.IMPLICIT),
-                      TermName("$implicit$p" + i), tq"_root_.com.weez.mercury.common.Packer[$tpt]", EmptyTree)
-                    i += 1
-                  }
+                }
               }
+              val params = builder.result()
+              q"implicit def packer[..$tparams](..$params) = _root_.com.weez.mercury.common.Packer.caseClass($packer)" :: Nil
             }
-            val params = builder.result()
-            q"implicit def packer[..$tparams](..$params) = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
-          }
-        val all =
-          tree ::
-            q"object ${name.toTermName} { ..$companionBody }" ::
-            Nil
-        q"..$all"
+          val all =
+            annottees.head.tree ::
+              q"object ${name.toTermName} { ..$companionBody }" ::
+              Nil
+          //println(show(q"..$all"))
+          q"..$all"
+        case _ => throw new PositionedException(annottees.head.tree.pos, "expect case class")
       }
     }
   }
 
-  def tupleImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
-    val tree =
-      annottees.head.tree match {
-        case x: ClassDef =>
-          ClassDef(x.mods, x.name, x.tparams, Template(x.impl.parents, x.impl.self, x.impl.body ++ makeTupleFunctions()))
-        case x: ModuleDef =>
-          ModuleDef(x.mods, x.name, Template(x.impl.parents, x.impl.self, x.impl.body ++ makeTupleFunctions()))
-        case x =>
-          c.error(x.pos, "expect class/trait/object")
-          annottees.head.tree
-      }
-    c.Expr[Any](tree)
-  }
+  val packerType = tq"Packer"
 
-  val packerType = tq"_root_.com.weez.mercury.common.Packer"
+  def tupleImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
+    c.Expr[Any](refactBody(annottees.head.tree) {
+      _ ++ makeTupleFunctions()
+    })
+  }
 
   def makeTupleFunctions() = {
     def makeTupleApply(n: Int, prefix: String) = {
@@ -110,7 +104,7 @@ class PackerMacro(val c: Context) extends MacroHelper {
     }
 
     for (i <- 1 to 22) yield {
-      val name = TermName(s"tuple$i")
+      val name = TermName(s"imp_tuple$i")
       val typeArgs = makeTypeArgs(i)
       val typeArgsDef = makeTypeArgsDef(typeArgs)
       val params = makeParams(typeArgs)
@@ -147,7 +141,6 @@ class PackerMacro(val c: Context) extends MacroHelper {
       val tree =
         q"""
         implicit def $name[..$typeArgsDef](..$params): $packerType[$tupleType] = {
-          import com.weez.mercury.common.Packer.{TYPE_TUPLE, TYPE_END}
           new $packerType[$tupleType] {
             def pack(value: $tupleType, buf: Array[Byte], offset: Int) = { ..$f_pack }
             def packLength(value: $tupleType) = { ..$f_packLength }
@@ -161,17 +154,9 @@ class PackerMacro(val c: Context) extends MacroHelper {
   }
 
   def caseClassImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
-    val tree =
-      annottees.head.tree match {
-        case x: ClassDef =>
-          ClassDef(x.mods, x.name, x.tparams, Template(x.impl.parents, x.impl.self, x.impl.body ++ makeCaseClassFunctions()))
-        case x: ModuleDef =>
-          ModuleDef(x.mods, x.name, Template(x.impl.parents, x.impl.self, x.impl.body ++ makeCaseClassFunctions()))
-        case x =>
-          c.error(x.pos, "expect class/trait/object")
-          annottees.head.tree
-      }
-    c.Expr[Any](tree)
+    c.Expr[Any](refactBody(annottees.head.tree) {
+      _ ++ makeCaseClassFunctions()
+    })
   }
 
   def makeCaseClassFunctions() = {
@@ -240,8 +225,7 @@ class PackerMacro(val c: Context) extends MacroHelper {
           q"end + 1 - offset" :: Nil
       val tree =
         q"""
-        def apply[..$typeArgsDef](f: (..$typeArgs) => Z)(..$params): $packerType[Z] = {
-          import com.weez.mercury.common.Packer.{TYPE_TUPLE, TYPE_END}
+        def caseClass[..$typeArgsDef](f: (..$typeArgs) => Z)(..$params): $packerType[Z] = {
           new $packerType[Z] {
             def pack(value: Z, buf: Array[Byte], offset: Int) = { ..$f_pack }
             def packLength(value: Z) = { ..$f_packLength }
@@ -250,6 +234,7 @@ class PackerMacro(val c: Context) extends MacroHelper {
           }
         }
        """
+      //println(show(tree))
       tree
     }
   }

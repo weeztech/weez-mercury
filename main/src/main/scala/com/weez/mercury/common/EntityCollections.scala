@@ -46,7 +46,7 @@ private object EntityCollections {
   def newHost[V <: Entity : Packer](name: String): HostCollectionImpl[V] = {
     this.hosts.synchronized {
       if (this.hosts.get(name).isDefined) {
-        throw new IllegalArgumentException( s"""HostCollection naming"$name" exist!""")
+        throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
       }
       val host = new HostCollectionImpl[V](name) {}
       this.hosts.put(name, host)

@@ -8,15 +8,6 @@ trait MacroHelper {
 
   import c.universe._
 
-  def withFirst(annottees: Seq[c.Expr[Any]])(f: => Tree): c.Expr[Any] = {
-    if (annottees.length != 1) {
-      c.error(c.enclosingPosition, "expect case class")
-      c.Expr[Any](EmptyTree)
-    } else {
-      c.Expr[Any](f)
-    }
-  }
-
   def typecheckWorkaround0(tree: Tree, mode: c.TypecheckMode): Option[Type] = {
     // http://stackoverflow.com/questions/24602433/macro-annotations-and-type-parameter
     // https://github.com/scalamacros/paradise/issues/14
@@ -78,25 +69,49 @@ trait MacroHelper {
     })
   }
 
-  def withClass(tree: Tree, flags: Option[FlagSet] = None)(f: (TypeName, List[List[Tree]], List[Tree], List[Tree], Modifiers, List[Tree], Modifiers) => Tree): Tree = {
+  def refactBody(tree: Tree)(f: List[Tree] => List[Tree]): Tree = {
+    tree match {
+      case x: ClassDef =>
+        ClassDef(x.mods, x.name, x.tparams, Template(x.impl.parents, x.impl.self, f(x.impl.body)))
+      case x: ModuleDef =>
+        ModuleDef(x.mods, x.name, Template(x.impl.parents, x.impl.self, f(x.impl.body)))
+      case x =>
+        c.error(x.pos, "expect class/trait/object")
+        tree
+    }
+  }
+
+  def withException(f: => Tree): c.Expr[Any] = {
     try {
-      tree match {
-        case q"$mods class $tpname[..$tparams] $ctorMods(...$paramss) extends ..$parents { ..$body }" =>
-          if (flags.isEmpty || mods.hasFlag(flags.get)) {
-            f(tpname, paramss, parents, body, mods, tparams, ctorMods)
-          } else {
-            c.error(tree.pos, "expect class with " + flags)
-            EmptyTree
-          }
-        case _ =>
-          c.error(tree.pos, "expect class")
-          EmptyTree
-      }
+      c.Expr(f)
     } catch {
       case ex: PositionedException =>
         c.error(ex.pos, ex.getMessage)
-        EmptyTree
+        c.Expr(EmptyTree)
     }
+  }
+
+  def expect(condition: Boolean, pos: c.Position, message: String) = {
+    if (!condition) throw new PositionedException(pos, message)
+  }
+
+  def expect[T](tree: Tree, message: String): T = {
+    try {
+      tree.asInstanceOf[T]
+    } catch {
+      case ex: ClassCastException =>
+        throw new PositionedException(tree.pos, message)
+    }
+  }
+
+  def expectClass(tree: Tree): ClassDef = {
+    expect[ClassDef](tree, "expect class/trait")
+  }
+
+  def expectCaseClass(tree: Tree): ClassDef = {
+    val c = expect[ClassDef](tree, "expect case class")
+    expect(c.mods.hasFlag(Flag.CASE), c.pos, "expect case class")
+    c
   }
 
   def makeFunctionTypeWithParamList(paramss: List[List[Tree]], returnType: Tree): Tree = {

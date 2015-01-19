@@ -50,34 +50,35 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
       q"def apply(...$argss): ${Ident(name)} = apply(...$applyArgss)"
     }
 
-    withFirst(annottees) {
-      val tree = annottees.head.tree
-      withClass(tree, Some(Flag.CASE)) { (name, paramss, parents, body, mods, _, _) =>
-        val caseClassParents = ensureEntityAsSuperType(parents)
-        val caseClassParams = ensureIdParam(paramss)
-        val dbObjectType = tq"_root_.com.weez.mercury.common.DBObjectType[$name]"
-        val companionType =
-          if (caseClassParams.length == 1) {
-            val functionType = makeFunctionTypeWithParamList(caseClassParams, Ident(name))
-            functionType :: dbObjectType :: Nil
-          } else
-            dbObjectType :: Nil
-        val packer =
-          if (caseClassParams.length == 1)
-            q"this"
-          else
-            flattenFunction(q"apply", caseClassParams)
-        var companionBody =
-          q"def nameInDB = ${Literal(Constant(camelCase2sepStyle(name.toString)))}" ::
-            q"implicit val packer = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
-        if (paramss.head.length < caseClassParams.head.length)
-          companionBody = addExtraApply(paramss, name) :: companionBody
-        val tree = q"""
+    withException {
+      annottees.head.tree match {
+        case q"$mods class $name[..$tparams](...$paramss) extends ..$parents { ..$body }" if mods.hasFlag(Flag.CASE) =>
+          val caseClassParents = ensureEntityAsSuperType(parents)
+          val caseClassParams = ensureIdParam(paramss)
+          val dbObjectType = tq"_root_.com.weez.mercury.common.DBObjectType[$name]"
+          val companionType =
+            if (caseClassParams.length == 1) {
+              val functionType = makeFunctionTypeWithParamList(caseClassParams, Ident(name))
+              functionType :: dbObjectType :: Nil
+            } else
+              dbObjectType :: Nil
+          val packer =
+            if (caseClassParams.length == 1)
+              q"this"
+            else
+              flattenFunction(q"apply", caseClassParams)
+          var companionBody =
+            q"def nameInDB = ${Literal(Constant(camelCase2sepStyle(name.toString)))}" ::
+              q"implicit val packer = _root_.com.weez.mercury.common.Packer($packer)" :: Nil
+          if (paramss.head.length < caseClassParams.head.length)
+            companionBody = addExtraApply(paramss, name) :: companionBody
+          val tree = q"""
           $mods class $name(...$caseClassParams) extends ..$caseClassParents { ..$body }
           object ${name.toTermName} extends ..$companionType { ..$companionBody }
          """
-        //println(show(tree))
-        tree
+          //println(show(tree))
+          tree
+        case _ => throw new PositionedException(annottees.head.tree.pos, "expect case class")
       }
     }
   }

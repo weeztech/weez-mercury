@@ -35,7 +35,7 @@ object DBType {
   case class Ref(name: String) extends DBType
 
   implicit object DBTypePacker extends Packer[DBType] {
-    val seqPacker = Packer[Seq[DBType]]
+    val seqPacker = Packer.of[Seq[DBType]]
 
     def pack(value: DBType, buf: Array[Byte], offset: Int) = {
       value match {
@@ -93,13 +93,13 @@ object DBType {
 }
 
 object EntityMetaCollection extends RootCollection[DBType.EntityMeta] {
-  val name = "entity-meta-collection"
+  def name = "entity-meta-collection"
 
   val byName = defUniqueIndex("by-name", _.name)
 }
 
 object CollectionMetaCollection extends RootCollection[DBType.CollectionMeta] {
-  val name = "collection-meta-collection"
+  def name = "collection-meta-collection"
 
   val byName = defUniqueIndex("by-name", _.name)
 }

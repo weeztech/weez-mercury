@@ -100,7 +100,7 @@ trait Entity {
 }
 
 trait EntityCollection[V <: Entity] {
-  val name: String
+  def name: String
 
   //add or modify
   def update(value: V)(implicit db: DBSessionUpdatable): Unit

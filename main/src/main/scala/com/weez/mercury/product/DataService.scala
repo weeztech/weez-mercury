@@ -48,7 +48,8 @@ case class ProductModel(id: Long,
                         description: String) extends Entity
 
 object ProductModelCollection extends RootCollection[ProductModel] {
-  val name = "product-model"
+  def name = "product-model"
+
   val byCode = defUniqueIndex("by-code", _.code)
   val byTitle = defUniqueIndex("by-Title", _.title)
 }
@@ -61,7 +62,8 @@ case class Product(id: Long,
                    price: Double) extends Entity
 
 object ProductCollection extends RootCollection[Product] {
-  val name = "product"
+  def name = "product"
+
   val byCode = defUniqueIndex("by-code", _.code)
   val byTitle = defUniqueIndex("by-code", _.title)
 }
@@ -73,7 +75,7 @@ case class Assistant(id: Long,
                      description: String) extends Entity
 
 object AssistantCollection extends RootCollection[Assistant] {
-  val name = "assistant"
+  def name = "assistant"
 
   def extendFrom = StaffCollection
 
@@ -88,7 +90,8 @@ case class Customer(id: Long, code: String,
                     title: String) extends Entity
 
 object CustomerCollection extends RootCollection[Customer] {
-  val name = "customer"
+  def name = "customer"
+
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
@@ -104,24 +107,26 @@ object SaleOrder {
 
   case class RoomItem(id: Long, saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
-  implicit val packer2 = Packer(RoomItem)
-  implicit val packer = Packer(SaleOrder.apply _)
+  implicit val packer2 = Packer.caseClass(RoomItem)
+  implicit val packer = Packer.caseClass(SaleOrder.apply _)
 }
 
 class SaleOrderRoomItems(owner: Entity) extends SubCollection[RoomItem](owner) {
-  override val name = "sale-order-room-items"
+  def name = "sale-order-room-items"
 
   lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)
   lazy val byRoom = defUniqueIndex("byRoom", _.room)
 }
 
 object SaleOrderCollection extends RootCollection[SaleOrder] {
-  val name = "sale-order"
+  def name = "sale-order"
+
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
 object RoomItemCollection extends RootCollection[RoomItem] {
-  override val name = "sale-order-room-items"
+  def name = "sale-order-room-items"
+
   //val bySeqID = defUniqueIndex[(Long, Int)]("bySeqID", v => (v.saleOrder.refID, v.seqID))
   //val byRoomID = defUniqueIndex[(Long, Long)]("byRoom", v => (v.saleOrder.refID, v.room.refID))
 }
@@ -130,6 +135,7 @@ object RoomItemCollection extends RootCollection[RoomItem] {
 case class Room(id: Long, title: String, price: Double, description: String) extends Entity
 
 object RoomCollection extends RootCollection[Room] {
-  val name = "room"
+  def name = "room"
+
   val byTitle = defUniqueIndex("by-code", _.title)
 }

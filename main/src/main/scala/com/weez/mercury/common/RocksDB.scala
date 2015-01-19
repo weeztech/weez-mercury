@@ -9,10 +9,12 @@ object RocksDBBackend extends DatabaseFactory {
 
   def createNew(path: String): Database = {
     import java.nio.file._
-    val p = Util.resolvePath(path)
-    if (Files.exists(Paths.get(p), LinkOption.NOFOLLOW_LINKS))
+    val actualPath = Util.resolvePath(path)
+    val p = Paths.get(actualPath)
+    if (Files.exists(p, LinkOption.NOFOLLOW_LINKS))
       throw new Exception("already exists")
-    new RocksDBBackend(p)
+    Files.createDirectories(p)
+    new RocksDBBackend(actualPath)
   }
 
   def open(path: String): Database = {

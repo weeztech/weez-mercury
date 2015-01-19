@@ -49,36 +49,36 @@ trait CollectionPackers {
     }
   }
 
-  implicit def seq[T](implicit packer: Packer[T]): Packer[Seq[T]] = new CollectionPacker(Seq)
+  implicit def imp_seq[T](implicit packer: Packer[T]): Packer[Seq[T]] = new CollectionPacker(Seq)
 
-  implicit def iseq[T](implicit packer: Packer[T]): Packer[immutable.Seq[T]] = new CollectionPacker(immutable.Seq)
+  implicit def imp_iseq[T](implicit packer: Packer[T]): Packer[immutable.Seq[T]] = new CollectionPacker(immutable.Seq)
 
-  implicit def mseq[T](implicit packer: Packer[T]): Packer[mutable.Seq[T]] = new CollectionPacker(mutable.Seq)
+  implicit def imp_mseq[T](implicit packer: Packer[T]): Packer[mutable.Seq[T]] = new CollectionPacker(mutable.Seq)
 
-  implicit def traversable[T](implicit packer: Packer[T]): Packer[Traversable[T]] = new CollectionPacker(Traversable)
+  implicit def imp_traversable[T](implicit packer: Packer[T]): Packer[Traversable[T]] = new CollectionPacker(Traversable)
 
-  implicit def itraversable[T](implicit packer: Packer[T]): Packer[immutable.Traversable[T]] = new CollectionPacker(immutable.Traversable)
+  implicit def imp_itraversable[T](implicit packer: Packer[T]): Packer[immutable.Traversable[T]] = new CollectionPacker(immutable.Traversable)
 
-  implicit def mtraversable[T](implicit packer: Packer[T]): Packer[mutable.Traversable[T]] = new CollectionPacker(mutable.Traversable)
+  implicit def imp_mtraversable[T](implicit packer: Packer[T]): Packer[mutable.Traversable[T]] = new CollectionPacker(mutable.Traversable)
 
-  implicit def iterable[T](implicit packer: Packer[T]): Packer[Iterable[T]] = new CollectionPacker(Iterable)
+  implicit def imp_iterable[T](implicit packer: Packer[T]): Packer[Iterable[T]] = new CollectionPacker(Iterable)
 
-  implicit def iiterable[T](implicit packer: Packer[T]): Packer[immutable.Iterable[T]] = new CollectionPacker(immutable.Iterable)
+  implicit def imp_iiterable[T](implicit packer: Packer[T]): Packer[immutable.Iterable[T]] = new CollectionPacker(immutable.Iterable)
 
-  implicit def miterable[T](implicit packer: Packer[T]): Packer[mutable.Iterable[T]] = new CollectionPacker(mutable.Iterable)
+  implicit def imp_miterable[T](implicit packer: Packer[T]): Packer[mutable.Iterable[T]] = new CollectionPacker(mutable.Iterable)
 
-  implicit def list[T](implicit packer: Packer[T]): Packer[List[T]] = new CollectionPacker(List)
+  implicit def imp_list[T](implicit packer: Packer[T]): Packer[List[T]] = new CollectionPacker(List)
 
-  implicit def arrayBuffer[T](implicit packer: Packer[T]): Packer[mutable.ArrayBuffer[T]] = new CollectionPacker(mutable.ArrayBuffer)
+  implicit def imp_arrayBuffer[T](implicit packer: Packer[T]): Packer[mutable.ArrayBuffer[T]] = new CollectionPacker(mutable.ArrayBuffer)
 
-  implicit def listBuffer[T](implicit packer: Packer[T]): Packer[mutable.ListBuffer[T]] = new CollectionPacker(mutable.ListBuffer)
+  implicit def imp_listBuffer[T](implicit packer: Packer[T]): Packer[mutable.ListBuffer[T]] = new CollectionPacker(mutable.ListBuffer)
 
-  implicit def map[A, B](implicit packer: Packer[(A, B)]): Packer[Map[A, B]] = Packer[Map[A, B], Traversable[(A, B)]](m => m, t => t.toMap)
+  implicit def imp_map[A, B](implicit packer: Packer[(A, B)]): Packer[Map[A, B]] = Packer.map[Map[A, B], Traversable[(A, B)]](m => m, t => t.toMap)
 
-  implicit def imap[A, B](implicit packer: Packer[(A, B)]): Packer[immutable.Map[A, B]] = Packer[immutable.Map[A, B], immutable.Traversable[(A, B)]](m => m, t => t.toMap)
+  implicit def imp_imap[A, B](implicit packer: Packer[(A, B)]): Packer[immutable.Map[A, B]] = Packer.map[immutable.Map[A, B], immutable.Traversable[(A, B)]](m => m, t => t.toMap)
 
-  implicit def mmap[A, B](implicit packer: Packer[(A, B)]): Packer[mutable.Map[A, B]] =
-    Packer[mutable.Map[A, B], mutable.Traversable[(A, B)]](m => m,
+  implicit def imp_mmap[A, B](implicit packer: Packer[(A, B)]): Packer[mutable.Map[A, B]] =
+    Packer.map[mutable.Map[A, B], mutable.Traversable[(A, B)]](m => m,
       t => {
         val b = mutable.Map.newBuilder[A, B]
         b ++= t

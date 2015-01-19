@@ -20,7 +20,9 @@ trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
-object Packer extends CollectionPackers with TuplePackers with CaseClassPackers {
+@tuplePackers
+@caseClassPackers
+object Packer extends CollectionPackers {
   val TYPE_STRING: Byte = 1
   val TYPE_UINT32: Byte = 2
   val TYPE_UINT64: Byte = 3
@@ -30,7 +32,7 @@ object Packer extends CollectionPackers with TuplePackers with CaseClassPackers 
   val TYPE_TUPLE: Byte = 10
   val TYPE_END: Byte = 0
 
-  @inline def apply[T](implicit p: Packer[T]) = p
+  @inline def of[T](implicit p: Packer[T]) = p
 
   def pack[T](value: T)(implicit packer: Packer[T]) = packer(value)
 
@@ -190,7 +192,7 @@ object Packer extends CollectionPackers with TuplePackers with CaseClassPackers 
     }
   }
 
-  def apply[A, B](to: A => B, from: B => A)(implicit underlying: Packer[B]): Packer[A] =
+  def map[A, B](to: A => B, from: B => A)(implicit underlying: Packer[B]): Packer[A] =
     new Packer[A] {
       def pack(value: A, buf: Array[Byte], offset: Int) = underlying.pack(to(value), buf, offset)
 
@@ -201,20 +203,14 @@ object Packer extends CollectionPackers with TuplePackers with CaseClassPackers 
       def unpackLength(buf: Array[Byte], offset: Int) = underlying.unpackLength(buf, offset)
     }
 
-  implicit val DoublePacker = apply[Double, Long](java.lang.Double.doubleToLongBits, java.lang.Double.longBitsToDouble)
+  implicit val DoublePacker = map[Double, Long](java.lang.Double.doubleToLongBits, java.lang.Double.longBitsToDouble)
 
-  implicit val DateTimePacker = apply[org.joda.time.DateTime, Long](_.getMillis, new org.joda.time.DateTime(_))
+  implicit val DateTimePacker = map[org.joda.time.DateTime, Long](_.getMillis, new org.joda.time.DateTime(_))
 
-  val refPacker = apply[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
+  val refPacker = map[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
 
   implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
-    apply[KeyCollection[T], Array[Byte]](_.asInstanceOf[KeyCollectionImpl[T]].key, new KeyCollectionImpl[T](_))
+    map[KeyCollection[T], Array[Byte]](_.asInstanceOf[KeyCollectionImpl[T]].key, new KeyCollectionImpl[T](_))
 }
-
-@tuplePackers
-trait TuplePackers
-
-@caseClassPackers
-trait CaseClassPackers
