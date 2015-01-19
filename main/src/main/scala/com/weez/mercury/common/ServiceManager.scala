@@ -46,7 +46,7 @@ object ServiceManager {
         }
       }
     }
-    builder.result
+    builder.result()
   }
 
   case class Handler(f: InternalContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
@@ -63,6 +63,10 @@ class ServiceManager(system: ActorSystem) {
     RocksDBBackend.open(Util.resolvePath(path))
   }
 
+  val idAllocSession = database.createSession()
+
+  val dbFactory = new DBSessionFactory(idAllocSession)
+
   val workerPools = {
     val builder = Seq.newBuilder[WorkerPool]
     val workers = system.settings.config.getConfig("weez.workers")
@@ -75,7 +79,7 @@ class ServiceManager(system: ActorSystem) {
           builder += new WorkerPool(name, config)
       }
     }
-    builder.result
+    builder.result()
   }
 
   val sessionManager = new SessionManager(system.settings.config)
@@ -116,6 +120,7 @@ class ServiceManager(system: ActorSystem) {
   }
 
   def close(): Unit = {
+    idAllocSession.close()
     database.close()
   }
 
@@ -192,20 +197,22 @@ class ServiceManager(system: ActorSystem) {
 
     @inline def sessionsByPeer(peer: String) = sessionState.sessionsByPeer(peer)
 
-    var dbTransQuery: DBTransaction = _
-    var dbTransUpdate: DBTransaction = _
+    var dbSessionQuery: DBSessionQueryable = _
+    var dbSessionUpdate: DBSessionUpdatable = _
 
-    @inline def get[K: Packer, V: Packer](key: K): Option[V] = dbTransQuery.get[K, V](key)
+    @inline def get[K: Packer, V: Packer](key: K) = dbSessionQuery.get[K, V](key)
 
-    @inline def newCursor(): DBCursor = dbTransQuery.newCursor
+    @inline def exists[K: Packer](key: K) = dbSessionQuery.exists(key)
 
-    @inline def put[K: Packer, V: Packer](key: K, value: V): Unit = dbTransUpdate.put(key, value)
+    @inline def newCursor() = dbSessionQuery.newCursor
 
-    override def del[K: Packer](key: K): Unit = dbTransUpdate.del(key)
+    @inline def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = dbSessionQuery.getRootCollectionMeta(name)
 
-    override def exists[K: Packer](key: K): Boolean = dbTransQuery.exists(key)
+    @inline def newEntityId() = dbSessionUpdate.newEntityId()
 
-    override private[common] def schema: DBSchema = ???
+    @inline def put[K: Packer, V: Packer](key: K, value: V) = dbSessionUpdate.put(key, value)
+
+    @inline def del[K: Packer](key: K) = dbSessionUpdate.del(key)
   }
 
   final class SessionStateImpl(val session: Session) extends SessionState {
@@ -229,14 +236,18 @@ class ServiceManager(system: ActorSystem) {
 
     def receive = {
       case task: Task =>
-        dbSession.withTransaction(log) { trans =>
-          try {
-            if (permitDBQuery) taskContext.dbTransQuery = trans
-            if (permitDBUpdate) taskContext.dbTransUpdate = trans
-            task.f(taskContext)
-          } finally {
-            taskContext.dbTransQuery = null
-            taskContext.dbTransUpdate = null
+        if (dbSession == null) {
+          task.f(taskContext)
+        } else {
+          dbFactory.withTransaction(dbSession, log) { db =>
+            try {
+              if (permitDBQuery) taskContext.dbSessionQuery = db
+              if (permitDBUpdate) taskContext.dbSessionUpdate = db
+              task.f(taskContext)
+            } finally {
+              taskContext.dbSessionQuery = null
+              taskContext.dbSessionUpdate = null
+            }
           }
         }
     }
