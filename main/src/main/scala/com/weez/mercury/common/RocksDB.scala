@@ -36,15 +36,8 @@ private class RocksDBBackend(path: String) extends Database {
     new DBSession {
       def close() = ()
 
-      def withTransaction[T](log: LoggingAdapter)(f: DBTransaction => T): T = {
-        val trans = if (Util.devmode) new DevTransaction(log) else new Transaction(log)
-        try {
-          val ret = f(trans)
-          trans.commit()
-          ret
-        } finally {
-          trans.close()
-        }
+      def newTransaction(log: LoggingAdapter): DBTransaction = {
+        if (com.weez.mercury.App.devmode) new DevTransaction(log) else new Transaction(log)
       }
     }
 

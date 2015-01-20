@@ -17,7 +17,7 @@ trait DatabaseFactory {
 }
 
 trait DBSession {
-  def withTransaction[T](log: LoggingAdapter)(f: DBTransaction => T): T
+  def newTransaction(log: LoggingAdapter): DBTransaction
 
   def close(): Unit
 }
@@ -32,6 +32,10 @@ trait DBTransaction {
   def exists(key: Array[Byte]): Boolean
 
   def del(key: Array[Byte]): Unit
+
+  def commit(): Unit
+
+  def close()
 }
 
 trait DBCursor {

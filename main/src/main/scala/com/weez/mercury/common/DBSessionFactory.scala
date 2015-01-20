@@ -25,15 +25,16 @@ class DBSessionFactory(dbSession: DBSession) {
 
   def allocId(log: LoggingAdapter) = {
     KEY_OBJECT_ID_COUNTER.synchronized {
-      if (allocIdLimit == 0) {
-        dbSession.withTransaction(log) { trans =>
-          allocIdLimit = Packer.unpack[Long](trans.get(Packer.pack(KEY_OBJECT_ID_COUNTER)))
-        }
-      }
       if (currentId == allocIdLimit) {
-        allocIdLimit += allocIdBatch
-        dbSession.withTransaction(log) { trans =>
+        val trans = dbSession.newTransaction(log)
+        try {
+          if (allocIdLimit == 0)
+            allocIdLimit = Packer.unpack[Long](trans.get(Packer.pack(KEY_OBJECT_ID_COUNTER)))
+          allocIdLimit += allocIdBatch
           trans.put(Packer.pack(KEY_OBJECT_ID_COUNTER), Packer.pack(allocIdLimit))
+          trans.commit()
+        } finally {
+          trans.close()
         }
       }
       currentId += 1
@@ -44,8 +45,13 @@ class DBSessionFactory(dbSession: DBSession) {
   def create(trans: DBTransaction, log: LoggingAdapter): DBSessionUpdatable = new DBSessionImpl(trans, log)
 
   def withTransaction[T](dbSession: DBSession, log: LoggingAdapter)(f: DBSessionUpdatable => T): T = {
-    dbSession.withTransaction(log) { trans =>
-      f(create(trans, log))
+    val trans = dbSession.newTransaction(log)
+    try {
+      val ret = f(create(trans, log))
+      trans.commit()
+      ret
+    } finally {
+      trans.close()
     }
   }
 
@@ -57,7 +63,7 @@ class DBSessionFactory(dbSession: DBSession) {
 
     @inline def exists[K](key: K)(implicit pk: Packer[K]) = trans.exists(pk(key))
 
-    @inline def newCursor() = trans.newCursor
+    @inline def newCursor() = trans.newCursor()
 
     def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = {
       metaCache.get(name) match {
