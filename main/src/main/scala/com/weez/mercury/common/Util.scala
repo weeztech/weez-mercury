@@ -1,7 +1,6 @@
 package com.weez.mercury.common
 
 object Util {
-  val devmode = com.typesafe.config.ConfigFactory.load().getBoolean("weez-mercury.devmode")
 
   class RandomIdGenerator(len: Int) {
 

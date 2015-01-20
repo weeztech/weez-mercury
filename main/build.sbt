@@ -6,7 +6,7 @@ resolvers += "spray repo" at "http://repo.spray.io"
 
 libraryDependencies ++= Seq(
   "org.scala-lang" % "scala-reflect" % scalaVersion.value withSources() withJavadoc(),
-  "com.typesafe.akka" %% "akka-actor" % "2.3.7" withSources() withJavadoc(),
+  "com.typesafe.akka" %% "akka-actor" % "2.3.8" withSources() withJavadoc(),
   "io.spray" %% "spray-can" % "1.3.2" withSources() withJavadoc(),
   "io.spray" %% "spray-routing" % "1.3.2" withSources() withJavadoc(),
   "io.spray" %% "spray-json" % "1.3.1" withSources() withJavadoc(),

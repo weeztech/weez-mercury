@@ -17,7 +17,7 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 resolvers += Resolver.sonatypeRepo("releases")
 
-crossScalaVersions := Seq("2.11.1", "2.11.2", "2.11.3", "2.11.4")
+crossScalaVersions := Seq("2.11.4", "2.11.5")
 
 addCompilerPlugin("org.scalamacros" % "paradise" % "2.0.1" cross CrossVersion.full)
 

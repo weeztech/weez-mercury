@@ -1,16 +1,8 @@
 package com.weez.mercury.common
 
-import akka.event.LoggingAdapter
-
-import scala.language.implicitConversions
-import scala.language.existentials
-import scala.concurrent._
-import scala.util._
-import spray.json._
 import akka.actor._
 import com.typesafe.config.Config
 
-import scala.util.control.NonFatal
 
 object ServiceManager {
   val remoteServices = {
@@ -52,14 +44,16 @@ object ServiceManager {
   case class Handler(f: InternalContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
   type InternalContext = Context with SessionState with DBSessionUpdatable
+
 }
 
-class ServiceManager(system: ActorSystem) {
+class ServiceManager(system: ActorSystem, config: Config) {
 
+  import scala.concurrent._
   import ServiceManager._
 
   val database: Database = {
-    val path = system.settings.config.getString("weez.database")
+    val path = config.getString("database")
     RocksDBBackend.open(Util.resolvePath(path))
   }
 
@@ -69,7 +63,7 @@ class ServiceManager(system: ActorSystem) {
 
   val workerPools = {
     val builder = Seq.newBuilder[WorkerPool]
-    val workers = system.settings.config.getConfig("weez.workers")
+    val workers = config.getConfig("workers")
     val itor = workers.entrySet().iterator()
     while (itor.hasNext) {
       val e = itor.next()
@@ -82,23 +76,25 @@ class ServiceManager(system: ActorSystem) {
     builder.result()
   }
 
-  val sessionManager = new SessionManager(system.settings.config)
+  val sessionManager = new SessionManager(config)
 
-  def postRequest(peer: String, api: String, request: JsObject, p: Promise[JsValue])(implicit executor: ExecutionContext): Unit = {
+  def postRequest(peer: String, sid: String, api: String, req: ModelObject): Future[ModelObject] = {
+    import scala.util.control.NonFatal
+    import scala.util.Try
+
+    val p = Promise[ModelObject]()
     try {
-      val mo: ModelObject = ModelObject.parse(request)
-      val req: ModelObject = if (mo.hasProperty("request")) mo.request else null
       val h = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      workerPools.find(p =>
-        p.permitSessionState == h.sessionState &&
-          p.permitDBQuery == h.dbQuery &&
-          p.permitDBUpdate == h.dbUpdate) match {
+      workerPools.find(wp =>
+        wp.permitSessionState == h.sessionState &&
+          wp.permitDBQuery == h.dbQuery &&
+          wp.permitDBUpdate == h.dbUpdate) match {
         case Some(x) =>
           // get session before worker start to avoid session timeout.
           val sessionState =
             if (x.permitSessionState) {
               new SessionStateImpl(
-                sessionManager.getAndLockSession(mo.sid).getOrElse(ErrorCode.InvalidSessionID.raise))
+                sessionManager.getAndLockSession(sid).getOrElse(ErrorCode.InvalidSessionID.raise))
             } else null
           x.post { c =>
             p.complete(Try {
@@ -107,7 +103,7 @@ class ServiceManager(system: ActorSystem) {
               h.f(c)
               if (c.response == null)
                 throw new IllegalStateException("no response")
-              ModelObject.toJson(c.response)
+              c.response
             })
             if (sessionState != null)
               sessionManager.returnAndUnlockSession(sessionState.session)
@@ -117,6 +113,7 @@ class ServiceManager(system: ActorSystem) {
     } catch {
       case NonFatal(ex) => p.failure(ex)
     }
+    p.future
   }
 
   def close(): Unit = {
@@ -144,7 +141,7 @@ class ServiceManager(system: ActorSystem) {
         } else if (workerCount < maxWorkerCount) {
           val worker = system.actorOf(
             Props(new WorkerActor(permitDBQuery, permitDBUpdate)),
-            s"$name-worker-${counter.next}")
+            s"$name-worker-${counter.next()}")
           worker ! newTask(worker, func)
           workerCount += 1
         } else if (queue.size + workerCount < requestCountLimit) {
@@ -180,6 +177,9 @@ class ServiceManager(system: ActorSystem) {
   }
 
   final class ContextImpl extends Context with SessionState with DBSessionUpdatable {
+
+    import akka.event.LoggingAdapter
+
     var request: ModelObject = _
 
     var response: ModelObject = _
@@ -204,7 +204,7 @@ class ServiceManager(system: ActorSystem) {
 
     @inline def exists[K: Packer](key: K) = dbSessionQuery.exists(key)
 
-    @inline def newCursor() = dbSessionQuery.newCursor
+    @inline def newCursor() = dbSessionQuery.newCursor()
 
     @inline def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = dbSessionQuery.getRootCollectionMeta(name)
 

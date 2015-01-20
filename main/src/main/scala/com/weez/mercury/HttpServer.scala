@@ -1,59 +1,43 @@
 package com.weez.mercury
 
-import akka.event.Logging.LogLevel
-
-import scala.concurrent.Promise
-import scala.util._
-import shapeless._
-import akka.actor.{ActorRef, ActorSystem, Props}
-import akka.io.{IO, Tcp}
-import spray.can.Http
-import spray.routing._
-import spray.http._
-import spray.json._
-import spray.util.LoggingContext
-
-import com.weez.mercury.common._
-
 object HttpServer {
-  def create(serviceManager: ServiceManager)(implicit system: ActorSystem) = {
-    system.actorOf(Props(classOf[ServerActor], serviceManager), "http")
-  }
 
-  implicit def exceptionHandler = {
+  import scala.concurrent.Promise
+  import scala.util._
+  import shapeless._
+  import akka.actor._
+  import akka.io._
+  import spray.can.Http
+  import spray.routing._
+  import spray.http._
+  import spray.json._
+  import spray.util.LoggingContext
+  import com.typesafe.config._
+  import com.weez.mercury.common._
+
+  implicit def exceptionHandler: ExceptionHandler = {
     import Directives._
     ExceptionHandler {
       case ex: ProcessException =>
         complete(JsObject(
           "error" -> JsString(ex.getMessage),
-          "code" -> JsNumber(ex.err.code)).toString)
+          "code" -> JsNumber(ex.err.code)).toString())
       case ex: ModelException =>
-        ex.printStackTrace
+        ex.printStackTrace()
         complete(JsObject(
           "error" -> JsString(ErrorCode.InvalidRequest.message),
-          "code" -> JsNumber(ErrorCode.InvalidRequest.code)).toString)
+          "code" -> JsNumber(ErrorCode.InvalidRequest.code)).toString())
       case ex: Throwable =>
-        ex.printStackTrace
+        ex.printStackTrace()
         complete(StatusCodes.InternalServerError)
     }
   }
 
-  case class WebRoot(tpe: String, path: String)
-
-  class ServerActor(serviceManager: ServiceManager) extends HttpServiceActor {
-    val config = context.system.settings.config.getConfig("weez-mercury.http")
+  class ServerActor(serviceManager: ServiceManager, config: Config) extends HttpServiceActor {
     val host = config.getString("host")
     val port = config.getInt("port")
 
-    val webRoot = {
-      var s = config.getString("root")
-      s = if (s.endsWith("/")) s.substring(0, s.length - 1) else s
-      val i = s.indexOf(':')
-      if (i < 0) throw new Exception("invalid config: weez-mercury.http.root")
-      WebRoot(s.substring(0, i), s.substring(i + 1))
-    }
-
-    override def preStart = {
+    override def preStart() = {
       implicit val system = context.system
       IO(Http) ! Http.Bind(self, host, port)
     }
@@ -70,7 +54,7 @@ object HttpServer {
         cookie(PEER_NAME) { peer =>
           path("init") {
             withSession(peer.content) { sid =>
-              complete(JsObject("result" -> JsString(sid)).toString)
+              complete(JsObject("result" -> JsString(sid)).toString())
             }
           } ~
             path("service" / Rest) { api =>
@@ -84,15 +68,33 @@ object HttpServer {
         get {
           path("hello") {
             complete("hello")
-          } ~
+          } ~ {
+            val staticRoot = config.getString("root")
+            val Resource = "^resource:(.+[^/])/?$".r
+            val File = "^file:(.+[^/])/?$".r
+            def normalize(p: String) = {
+              import java.io.File.separator
+              if (separator != "/") p.replace("/", separator) else p
+            }
+
             pathSingleSlash {
               withPeer { peer =>
                 setCookie(HttpCookie(PEER_NAME, peer)) {
-                  staticServe(Some("/index.html"))
+                  staticRoot match {
+                    case Resource(x) => getFromResource(x + "/index.html")
+                    case File(x) => getFromFile(normalize(x + "/index.html"))
+                    case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
+                  }
                 }
               }
-            } ~
-            staticServe()
+            } ~ {
+              staticRoot match {
+                case Resource(x) => getFromResourceDirectory(x)
+                case File(x) => getFromDirectory(normalize(x))
+                case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
+              }
+            }
+          }
         }
     }
 
@@ -118,38 +120,23 @@ object HttpServer {
     def postRequest(peer: String, api: String)(implicit log: LoggingContext): Route = ctx => {
       import context.dispatcher
       val startTime = System.nanoTime
-      val p = Promise[JsValue]
-      serviceManager.postRequest(peer, api, ctx.request.entity.asString.parseJson.asJsObject(), p)
-      p.future.onComplete {
+      val p = Promise[JsValue]()
+      val json = ctx.request.entity.asString.parseJson.asJsObject()
+      val sid = json.fields.get("sid") match {
+        case Some(JsString(x)) => x
+        case _ => ErrorCode.InvalidRequest.raise
+      }
+      val req = json.fields.get("request") match {
+        case Some(x: JsObject) => ModelObject.parse(x)
+        case _ => ErrorCode.InvalidRequest.raise
+      }
+      serviceManager.postRequest(peer, sid, api, req).onComplete {
         case Success(out) =>
           import akka.event.Logging._
           val costTime = (System.nanoTime - startTime) / 1000000 // ms
           log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
           complete(out.toString)(ctx)
         case Failure(ex) => exceptionHandler(ex)(ctx)
-      }
-    }
-
-    def staticServe(file: Option[String] = None): Route = {
-      val path = file.map { s =>
-        if (!s.startsWith("/")) "/" + s else s
-      }
-      webRoot.tpe match {
-        case "resource" =>
-          path match {
-            case Some(x) => getFromResource(webRoot.path + file)
-            case None => getFromResourceDirectory(webRoot.path)
-          }
-        case "file" =>
-          def normalize(p: String) = {
-            import java.io.File.separator
-            if (separator != "/") p.replace("/", separator) else p
-          }
-          path match {
-            case Some(x) => getFromFile(normalize(webRoot.path + file))
-            case None => getFromDirectory(normalize(webRoot.path))
-          }
-        case _ => throw new Exception("invalid config: weez-mercury.http.root")
       }
     }
   }

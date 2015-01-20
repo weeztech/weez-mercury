@@ -1,13 +1,26 @@
 package com.weez.mercury
 
 import akka.actor._
+import com.typesafe.config.ConfigFactory
 import com.weez.mercury.common._
 
 object App {
+  private var _devmode = false
+
+  def devmode = _devmode
+
   def main(args: Array[String]): Unit = {
     val system = ActorSystem("mercury")
-    val serviceManager = new ServiceManager(system)
-    HttpServer.create(serviceManager)(system)
+    val config = system.settings.config.getConfig("weez-mercury")
+    _devmode = config.getBoolean("devmode")
+
+    val serviceManager = new ServiceManager(system, config)
+    if (config.getBoolean("http.enable")) {
+      system.actorOf(Props(classOf[HttpServer.ServerActor], serviceManager, config.getConfig("http")), "http")
+    }
+    if (config.getBoolean("akka.enable")) {
+      system.actorOf(Props(classOf[AkkaServer.ServerActor], serviceManager), "akka")
+    }
     system.registerOnTermination {
       serviceManager.close()
     }

@@ -1,8 +1,6 @@
 package com.weez.mercury.common
 
 import scala.language.dynamics
-import scala.language.implicitConversions
-import spray.json._
 
 class ModelObject(private var map: Map[String, Any]) extends Dynamic {
   def selectDynamic[T](field: String): T = {
@@ -25,12 +23,17 @@ class ModelObject(private var map: Map[String, Any]) extends Dynamic {
     map.contains(name)
   }
 
+  def underlaying = map
+
   def update(fields: (String, Any)*) = {
     map ++= fields
   }
 }
 
 object ModelObject {
+  import scala.language.implicitConversions
+  import spray.json._
+
   def apply(fields: (String, Any)*): ModelObject = new ModelObject(fields.toMap)
 
   def parse[A <: JsValue, B](jsValue: A)(implicit c: Converter[A, B]): B = c(jsValue)
@@ -116,7 +119,7 @@ object ModelObject {
     v foreach {
       builder += model2js(_)
     }
-    JsArray(builder.result)
+    JsArray(builder.result())
   }
 }
 

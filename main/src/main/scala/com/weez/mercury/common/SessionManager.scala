@@ -1,17 +1,17 @@
 package com.weez.mercury.common
 
-import java.util.concurrent.TimeUnit
-
 import com.typesafe.config.Config
 
-import scala.collection.mutable
-import scala.concurrent.duration._
-
 class SessionManager(config: Config) {
+
+  import java.util.concurrent.TimeUnit
+  import scala.collection.mutable
+  import scala.concurrent.duration._
+
   val sessions = mutable.Map[String, Session]()
   val peers = mutable.Map[String, Seq[Session]]()
   val sidGen = new Util.RandomIdGenerator(12)
-  val sessionTimeout = config.getDuration("weez-mercury.http.session-timeout", TimeUnit.NANOSECONDS)
+  val sessionTimeout = config.getDuration("session-timeout", TimeUnit.NANOSECONDS)
   val checkFreq = 5.seconds
 
   def clean(): Unit = {
@@ -24,7 +24,7 @@ class SessionManager(config: Config) {
         if (session.inUse == 0 && now - session.activeTimestamp > sessionTimeout) {
           removes.append(session.id)
           peers(session.peer) match {
-            case Seq(session) => peers.remove(session.peer)
+            case Seq(x) => peers.remove(x.peer)
             case arr => peers.put(session.peer, arr.filterNot(_ eq session))
           }
         }
@@ -49,7 +49,7 @@ class SessionManager(config: Config) {
         case None =>
           val peer = sidGen.newId
           val session = new Session(peer, peer)
-          if (Util.devmode) {
+          if (com.weez.mercury.App.devmode) {
             session.login(0L, "dev", "dev")
           }
           sessions.put(peer, session)
@@ -98,6 +98,9 @@ class SessionManager(config: Config) {
 }
 
 class Session(val id: String, val peer: String) {
+
+  import scala.collection.mutable
+
   val createTimestamp = System.nanoTime()
   private[common] var inUse = 0
   private[common] var activeTimestamp = createTimestamp
