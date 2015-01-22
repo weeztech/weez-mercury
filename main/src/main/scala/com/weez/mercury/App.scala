@@ -5,15 +5,15 @@ import com.typesafe.config.ConfigFactory
 import com.weez.mercury.common._
 
 object App {
-  private var _devmode = false
 
-  def devmode = _devmode
+  import scala.reflect.runtime.{universe => ru}
+
+  val system = ActorSystem("mercury")
+  val config = system.settings.config.getConfig("weez-mercury")
+  val devmode = config.getBoolean("devmode")
+  val types: Map[String, Seq[ru.Symbol]] = ClassFinder.collectTypes(system.log).map(tp => tp._1 -> tp._2.toSeq).toMap
 
   def main(args: Array[String]): Unit = {
-    val system = ActorSystem("mercury")
-    val config = system.settings.config.getConfig("weez-mercury")
-    _devmode = config.getBoolean("devmode")
-
     val serviceManager = new ServiceManager(system, config)
     if (config.getBoolean("http.enable")) {
       system.actorOf(Props(classOf[HttpServer.ServerActor], serviceManager, config.getConfig("http")), "http")

@@ -105,9 +105,9 @@ case class SaleOrder(id: Long,
 
 object SaleOrder {
 
+  @packable
   case class RoomItem(id: Long, saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
-  implicit val packer2 = Packer.caseClass(RoomItem)
   implicit val packer = Packer.caseClass(SaleOrder.apply _)
 }
 

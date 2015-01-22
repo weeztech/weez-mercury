@@ -7,14 +7,14 @@ class DBSessionFactory(dbSession: DBSession) {
   private val metaCache = scala.collection.mutable.Map(
     EntityMetaCollection.name -> DBType.CollectionMeta(0,
       EntityMetaCollection.name,
-      DBType.Ref("entity-meta"),
-      DBType.IndexMeta("by-name", DBType.String, true, 0) :: Nil,
-      true, 0),
+      DBType.EntityRef("entity-meta"),
+      DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
+      isRoot = true, 0),
     CollectionMetaCollection.name -> DBType.CollectionMeta(0,
       CollectionMetaCollection.name,
-      DBType.Ref("collection-meta"),
-      DBType.IndexMeta("by-name", DBType.String, true, 0) :: Nil,
-      true, 0))
+      DBType.EntityRef("collection-meta"),
+      DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
+      isRoot = true, 0))
 
   val KEY_OBJECT_ID_COUNTER = "object-id-counter"
   val KEY_PREFIX_ID_COUNTER = "prefix-id-counter"

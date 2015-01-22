@@ -6,7 +6,7 @@ import com.weez.mercury.common._
 
 object Setup {
   def main(args: Array[String]): Unit = {
-    val system = ActorSystem("mercury")
+    import App.system
     val setup = system.actorOf(Props(classOf[SetupActor]), "setup")
     setup ! DeleteDB :: NewDB :: SetupDBTypes :: CloseDB :: Shutdown :: Nil
   }
@@ -48,14 +48,15 @@ object Setup {
 
           import DBType._
 
-          dbtypes.resolvedTypes.values foreach {
-            case EntityMeta(_, name, cols) =>
-              EntityMetaCollection.update(EntityMeta(dbc.newEntityId(), name, cols))
-            case CollectionMeta(_, name, vtype, indexes, root, _) =>
+          dbtypes.resolvedDBTypes.values foreach {
+            case x: EntityMeta =>
+              EntityMetaCollection.update(EntityMeta(dbc.newEntityId(), x.name, x.columns, x.parents, x.isTopLevel, x.isAbstract))
+            case x: CollectionMeta =>
               CollectionMetaCollection.update(
-                CollectionMeta(dbc.newEntityId(), name, vtype,
-                  indexes map { i => IndexMeta(i.name, i.key, i.unique, newPrefix)},
-                  root, newPrefix))
+                CollectionMeta(dbc.newEntityId(),
+                  x.name, x.valueType,
+                  x.indexes map { i => IndexMeta(i.name, i.key, i.unique, newPrefix)},
+                  x.isRoot, newPrefix))
             case _ => throw new IllegalStateException()
           }
           dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, prefixCounter)

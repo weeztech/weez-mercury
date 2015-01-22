@@ -1,6 +1,7 @@
 package com.weez.mercury.common
 
 import akka.event.LoggingAdapter
+import com.weez.mercury.collect
 import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
 
 trait Context {
@@ -93,12 +94,14 @@ trait Ref[+T <: Entity] {
   def apply()(implicit db: DBSessionQueryable): T
 }
 
+@collect
 trait Entity {
   def id: Long
 
   def newRef() = RefSome[this.type](this.id)
 }
 
+@collect
 trait EntityCollection[V <: Entity] {
   def name: String
 

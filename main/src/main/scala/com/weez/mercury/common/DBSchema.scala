@@ -6,7 +6,9 @@ sealed trait DBType
 
 object DBType {
 
-  case class SimpleType private[DBType](typeCode: Int) extends DBType
+  sealed trait DBTypeRef
+
+  case class SimpleType private[DBType](typeCode: Int) extends DBType with DBTypeRef
 
   private object SimpleType
 
@@ -30,63 +32,49 @@ object DBType {
     }
   }
 
-  case class Tuple(parts: Seq[DBType]) extends DBType
-
-  case class Ref(name: String) extends DBType
-
-  implicit object DBTypePacker extends Packer[DBType] {
-    val seqPacker = Packer.of[Seq[DBType]]
-
-    def pack(value: DBType, buf: Array[Byte], offset: Int) = {
-      value match {
-        case SimpleType(x) => Packer.IntPacker.pack(x, buf, offset)
-        case Ref(x) => Packer.StringPacker.pack(x, buf, offset)
-        case Tuple(x) => seqPacker.pack(x, buf, offset)
-        case _ => throw new IllegalArgumentException()
-      }
+  implicit val typeRefPacker: Packer[DBTypeRef] = Packer.map[DBTypeRef, (Int, Array[Byte])]({
+    case x: SimpleType => 1 -> Packer.pack(x.typeCode)
+    case x: Tuple => 2 -> Packer.pack(x.parts)
+    case x: Coll => 3 -> Packer.pack(x.element)
+    case x: Ref => 4 -> typeRefPacker(x.tpe)
+    case x: EntityRef => 10 -> Packer.pack(x.name)
+    case x: EntityCollRef => 11 -> Packer.pack(x.name)
+  }, x => {
+    x._1 match {
+      case 1 => fromTypeCode(Packer.unpack[Int](x._2))
+      case 2 => Tuple(Packer.unpack[Seq[DBTypeRef]](x._2))
+      case 3 => Coll(Packer.unpack[DBTypeRef](x._2))
+      case 4 => Ref(typeRefPacker.unapply(x._2))
+      case 10 => EntityRef(Packer.unpack[String](x._2))
+      case 11 => EntityCollRef(Packer.unpack[String](x._2))
     }
+  })
 
-    def packLength(value: DBType) = {
-      value match {
-        case SimpleType(x) => Packer.IntPacker.packLength(x)
-        case Ref(x) => Packer.StringPacker.packLength(x)
-        case Tuple(x) => seqPacker.packLength(x)
-        case _ => throw new IllegalArgumentException()
-      }
-    }
+  case class Coll(element: DBTypeRef) extends DBType with DBTypeRef
 
-    def unpack(buf: Array[Byte], offset: Int, length: Int): DBType = {
-      buf(offset) match {
-        case Packer.TYPE_UINT32 => fromTypeCode(Packer.IntPacker.unpack(buf, offset, length))
-        case Packer.TYPE_STRING => Ref(Packer.StringPacker.unpack(buf, offset, length))
-        case Packer.TYPE_TUPLE => Tuple(seqPacker.unpack(buf, offset, length))
-      }
-    }
+  case class Tuple(parts: Seq[DBTypeRef]) extends DBType with DBTypeRef
 
-    def unpackLength(buf: Array[Byte], offset: Int) = {
-      buf(offset) match {
-        case Packer.TYPE_UINT32 => Packer.IntPacker.unpackLength(buf, offset)
-        case Packer.TYPE_STRING => Packer.StringPacker.unpackLength(buf, offset)
-        case Packer.TYPE_TUPLE => seqPacker.unpackLength(buf, offset)
-      }
-    }
-  }
+  case class Ref(tpe: DBTypeRef) extends DBType with DBTypeRef
+
+  case class EntityRef(name: String) extends DBTypeRef
+
+  case class EntityCollRef(name: String) extends DBTypeRef
 
   trait Named {
     def name: String
   }
 
   @packable
-  case class ColumnMeta(name: String, tpe: DBType) extends Named
+  case class ColumnMeta(name: String, tpe: DBTypeRef) extends Named
 
   @packable
-  case class EntityMeta(id: Long, name: String, columns: Seq[ColumnMeta]) extends DBType with Named with Entity
+  case class EntityMeta(id: Long, name: String, columns: Seq[ColumnMeta], parents: Seq[String], isTopLevel: Boolean, isAbstract: Boolean) extends DBType with Named with Entity
 
   @packable
-  case class IndexMeta(name: String, key: DBType, unique: Boolean, prefix: Int) extends Named
+  case class IndexMeta(name: String, key: DBTypeRef, unique: Boolean, prefix: Int) extends Named
 
   @packable
-  case class CollectionMeta(id: Long, name: String, valueType: DBType, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends DBType with Named with Entity {
+  case class CollectionMeta(id: Long, name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends DBType with Named with Entity {
     def indexPrefixOf(idx: String) = indexes.find(_.name == name).get.prefix
   }
 
@@ -110,18 +98,16 @@ class DBTypeCollector {
   import scala.collection.mutable
   import org.joda.time.DateTime
 
-  val resolvedTypes = mutable.Map[String, DBType]()
-  val resolvedScalaTypes = mutable.Map[String, String]()
-  val unresolvedScalaTypes = mutable.Map[String, mutable.Set[String]]()
+  val resolvedDBTypes = mutable.Map[String, DBType]()
+  val resolvedEntityTypes = mutable.Map[String, String]()
+  val unresolvedEntityTypes = mutable.Map[String, mutable.Set[String]]()
+  val delayResolvedEntityTypes = mutable.Map[String, Type]()
 
   val stringType = typeOf[String]
-  val intType = typeOf[Int]
-  val longType = typeOf[Long]
-  val doubleType = typeOf[Double]
-  val booleanType = typeOf[Boolean]
   val datetimeType = typeOf[DateTime]
   val rawType = typeOf[Array[Byte]]
   val refType = typeOf[Ref[_]]
+  val traversableType = typeOf[Traversable[_]]
 
   val entityType = typeOf[Entity]
   val collType = typeOf[EntityCollection[_]]
@@ -130,22 +116,69 @@ class DBTypeCollector {
   val uniqueIndexType = typeOf[UniqueIndex[_, _]]
 
   def collectDBTypes(log: LoggingAdapter): Unit = {
-    import com.weez.mercury.ClassFinder._
-    log.info("resolving dbtypes ...")
-    val start = System.nanoTime()
-    val mirror = runtimeMirror(this.getClass.getClassLoader)
-    scalaNamesIn(classpath.filter { f =>
-      f.isDirectory || f.getName.contains("weez")
-    }) foreach {
-      case ScalaName(name, true, true, false) =>
-        reflectDBType(mirror.staticModule(name))
-      case _ =>
+    import scala.reflect.runtime.{universe => ru}
+    resolvedDBTypes.clear()
+    resolvedEntityTypes.clear()
+    unresolvedEntityTypes.clear()
+    delayResolvedEntityTypes.clear()
+    val nameMapping = mutable.Map[String, String]()
+    def resolve(dbtype: DBType with DBType.Named, symbolName: String) = {
+      nameMapping.put(dbtype.name, symbolName) match {
+        case Some(x) => throw new Error(s"db-name conflict: $symbolName and $x")
+        case None =>
+          resolvedEntityTypes.put(symbolName, dbtype.name)
+          unresolvedEntityTypes.remove(symbolName)
+      }
+      log.debug("found dbtype: {} -> {}", dbtype.name, symbolName)
     }
-    log.info(s"dbtypes resolved in ${(System.nanoTime() - start) / 1000000} ms")
-    if (unresolvedScalaTypes.nonEmpty) {
+    def resolveEntity(symbol: Symbol, tpe: Type, topLevel: Boolean) = {
+      val dbtype =
+        if (symbol.isAbstract) {
+          DBType.EntityMeta(0, fullName(symbol), Nil, Nil, isTopLevel = topLevel, isAbstract = true)
+        } else {
+          val ctor = tpe.decl(termNames.CONSTRUCTOR).asMethod
+          DBType.EntityMeta(0, fullName(symbol),
+            ctor.paramLists(0) map { p =>
+              DBType.ColumnMeta(localName(p), getTypeRef(p.typeSignature, p.fullName))
+            }, Nil, isTopLevel = topLevel, isAbstract = false)
+        }
+      resolve(dbtype, symbol.fullName)
+    }
+    val types = com.weez.mercury.App.types
+    types(ru.typeOf[Entity].typeSymbol.fullName) withFilter {
+      !_.isAbstract
+    } foreach { symbol =>
+      resolveEntity(symbol, symbol.asType.toType, true)
+    }
+    types(ru.typeOf[EntityCollection[_]].typeSymbol.fullName) withFilter {
+      !_.isAbstract
+    } foreach { symbol =>
+      val tpe = if (symbol.isType) symbol.asType.toType else symbol.typeSignature
+      val valueType = getTypeRef(tpe.baseType(collType.typeSymbol).typeArgs(0), symbol.fullName)
+      val builder = Seq.newBuilder[DBType.IndexMeta]
+      tpe.members foreach { member =>
+        if (member.owner == symbol && member.isMethod) {
+          val returnType = member.asMethod.returnType
+          if (returnType <:< indexBaseType) {
+            val indexType = returnType.baseType(indexBaseType.typeSymbol)
+            builder += DBType.IndexMeta(fullName(member),
+              getTypeRef(indexType.typeArgs(0), member.fullName),
+              returnType <:< uniqueIndexType, 0)
+          }
+        }
+      }
+      val dbtype = DBType.CollectionMeta(0, fullName(symbol), valueType,
+        builder.result(), tpe <:< rootCollType, 0)
+      resolve(dbtype, symbol.fullName)
+    }
+    delayResolvedEntityTypes.values foreach { tpe =>
+      resolveEntity(tpe.typeSymbol, tpe, false)
+    }
+    delayResolvedEntityTypes.clear()
+    if (unresolvedEntityTypes.nonEmpty) {
       val sb = new StringBuilder
       sb.append("following types unresolved and used as dbtypes:\r\n")
-      unresolvedScalaTypes foreach {
+      unresolvedEntityTypes foreach {
         case (symbolName, refs) =>
           sb.append(s"\t'$symbolName' used by\r\n")
           refs foreach { ref =>
@@ -157,65 +190,37 @@ class DBTypeCollector {
     }
   }
 
-  def reflectDBType(symbol: ModuleSymbol): DBType = {
-    val dbtype: DBType with DBType.Named =
-      if (symbol.typeSignature <:< entityType) {
-        val ctor = symbol.typeSignature.decl(termNames.CONSTRUCTOR).asMethod
-        DBType.EntityMeta(0, dbName(symbol.name),
-          ctor.paramLists(0) map { p =>
-            DBType.ColumnMeta(dbName(p.name), getType(p.typeSignature, p.fullName))
-          })
-      } else if (symbol.typeSignature <:< collType) {
-        val baseType = symbol.typeSignature.baseType(collType.typeSymbol)
-        val valueType = getType(baseType.typeArgs(0), symbol.fullName)
-        val builder = Seq.newBuilder[DBType.IndexMeta]
-        symbol.typeSignature.members foreach { member =>
-          if (member.isMethod) {
-            val tpe = member.asMethod.returnType
-            if (tpe <:< indexBaseType) {
-              val indexType = tpe.baseType(indexBaseType.typeSymbol)
-              builder += DBType.IndexMeta(dbName(member.name),
-                getType(indexType.typeArgs(0), member.fullName),
-                tpe <:< uniqueIndexType, 0)
-            }
-          }
-        }
-        DBType.CollectionMeta(0, dbName(symbol.name), valueType, builder.result(), symbol.typeSignature <:< rootCollType, 0)
-      } else null
-    if (dbtype != null) {
-      resolvedScalaTypes.put(dbtype.name, symbol.fullName) match {
-        case Some(x) => throw new Error(s"db-name conflict: ${symbol.fullName} and $x")
-        case None =>
-          resolvedTypes.put(dbtype.name, dbtype)
-          unresolvedScalaTypes.remove(symbol.fullName)
-      }
-    }
-    dbtype
-  }
+  def localName(s: Symbol) = Util.camelCase2seqStyle(s.name.toString)
 
-  def dbName(name: Name) = Util.camelCase2seqStyle(name.toString)
+  def fullName(s: Symbol) = Util.camelCase2seqStyle(s.name.toString)
 
-  def getType(tpe: Type, ref: String): DBType = {
+  def getTypeRef(tpe: Type, ref: String): DBType.DBTypeRef = {
     if (tpe =:= stringType) DBType.String
-    else if (tpe =:= intType) DBType.Int
-    else if (tpe =:= longType) DBType.Long
-    else if (tpe =:= doubleType) DBType.Double
-    else if (tpe =:= booleanType) DBType.Boolean
+    else if (tpe =:= definitions.IntTpe) DBType.Int
+    else if (tpe =:= definitions.LongTpe) DBType.Long
+    else if (tpe =:= definitions.DoubleTpe) DBType.Double
+    else if (tpe =:= definitions.BooleanTpe) DBType.Boolean
     else if (tpe =:= datetimeType) DBType.DateTime
     else if (tpe =:= rawType) DBType.Raw
     else if (tpe.typeSymbol.fullName startsWith "scala.Tuple") {
-      DBType.Tuple(tpe.typeArgs.map(getType(_, ref)))
-    } else {
-      val name = dbName {
-        if (tpe =:= refType) {
-          val entity = tpe.typeArgs(0)
-          entity.typeSymbol.name
-        } else
-          tpe.typeSymbol.name
+      DBType.Tuple(tpe.typeArgs.map(getTypeRef(_, ref)))
+    } else if (tpe <:< traversableType) {
+      val tType = tpe.baseType(traversableType.typeSymbol)
+      DBType.Coll(getTypeRef(tType.typeArgs(0), tpe.typeSymbol.fullName))
+    } else if (tpe <:< entityType) {
+      resolvedEntityTypes.get(tpe.typeSymbol.fullName) match {
+        case Some(x) => DBType.EntityRef(x)
+        case None =>
+          unresolvedEntityTypes.getOrElseUpdate(tpe.typeSymbol.fullName, mutable.Set()).add(ref)
+          DBType.EntityRef(fullName(tpe.typeSymbol))
       }
-      if (!resolvedTypes.contains(name))
-        unresolvedScalaTypes.getOrElseUpdate(tpe.typeSymbol.fullName, mutable.Set()).add(ref)
-      DBType.Ref(name)
+    } else if (tpe <:< refType) {
+      DBType.Ref(getTypeRef(tpe.typeArgs.head, ref))
+    } else if (tpe <:< collType) {
+      DBType.EntityCollRef(fullName(tpe.typeSymbol))
+    } else {
+      delayResolvedEntityTypes.put(tpe.typeSymbol.fullName, tpe)
+      DBType.EntityRef(fullName(tpe.typeSymbol))
     }
   }
 }

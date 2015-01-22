@@ -2,11 +2,71 @@ package com.weez.mercury
 
 import java.io.File
 import java.util.jar.JarFile
+import akka.event.LoggingAdapter
+
+import scala.annotation.StaticAnnotation
+import scala.reflect.runtime.universe._
+
+class collect extends StaticAnnotation
 
 object ClassFinder {
+  private val collectType = typeOf[collect]
 
-  case class ScalaName(name: String, isModule: Boolean, isStatic: Boolean, isInternal: Boolean)
+  def collectTypes(log: LoggingAdapter) = {
+    import scala.collection.mutable
+    val watchedTypes = mutable.ArrayBuffer[Type]()
+    val collected = mutable.Map[String, mutable.ArrayBuffer[Symbol]]()
+    val start = System.nanoTime()
+    val mirror = runtimeMirror(this.getClass.getClassLoader)
+    val names = scalaNamesIn(classpath.filter { f =>
+      f.isDirectory || f.getName.contains("weez")
+    }).filter(_.isStatic)
+    names.withFilter(!_.isModule) foreach { scalaName =>
+      def check(c: Tree): Unit = {
+        var t = c
+        var stop = false
+        while (!stop) {
+          t match {
+            case Select(x, _) => t = x
+            case Ident(_) => stop = true
+            case _ =>
+              throw new IllegalArgumentException(s"expect stable object: file ${t.pos.source.file.path}, line ${t.pos.line}, col ${t.pos.column}")
+          }
+        }
+      }
+      val symbol = mirror.staticClass(scalaName.name)
+      if (symbol.isTrait || symbol.isAbstract) {
+        symbol.annotations.find(_.tree.tpe =:= collectType) match {
+          case Some(_) =>
+            watchedTypes.append(symbol.toType.erasure)
+            collected.put(symbol.fullName, mutable.ArrayBuffer())
+            log.debug("found collecting type: {}", symbol.fullName)
+          case _ =>
+        }
+      }
+    }
+    names foreach { scalaName =>
+      var symbol: Symbol = null
+      var tpe: Type = null
+      if (scalaName.isModule) {
+        symbol = mirror.staticModule(scalaName.name)
+        tpe = symbol.typeSignature
+      } else {
+        val c = mirror.staticClass(scalaName.name)
+        symbol = c
+        tpe = c.toType
+      }
+      watchedTypes foreach { t =>
+        if (tpe <:< t && !(tpe =:= t)) {
+          collected(t.typeSymbol.fullName).append(symbol)
+          log.debug("collect type: {} -> {}", symbol.fullName, t.typeSymbol.fullName)
+        }
+      }
+    }
+    collected
+  }
 
+  case class ScalaName(name: String, isModule: Boolean, isStatic: Boolean)
 
   def classpath = System.getProperty("java.class.path").
     split(File.pathSeparator).
@@ -23,38 +83,49 @@ object ClassFinder {
   }
 
   def scalaNamesIn(file: File): Seq[ScalaName] = {
-    val builder = Seq.newBuilder[String]
-    ClassFinder.findClassesIn(file) { name =>
-      builder += name
-    }
-    val classes = builder.result().sorted
+    val classes = classesIn(file).sorted
     var parents: List[(String, String)] = Nil
     def findParent(originName: String) = {
       while (parents.nonEmpty && !originName.startsWith(parents.head._1 + "$"))
         parents = parents.tail
       parents.headOption
     }
-    classes map { javaName =>
+    val builder = Seq.newBuilder[ScalaName]
+    classes foreach { javaName =>
       import java.lang.reflect.Modifier
-
-      val module = javaName.endsWith("$")
-      val originName = if (module) javaName.substring(0, javaName.length - 1) else javaName
-      val static = Modifier.isStatic(Class.forName(javaName).getModifiers)
-      val scalaName =
+      if (!javaName.endsWith("$class")) {
+        val module = javaName.endsWith("$")
+        val originName = if (module) javaName.substring(0, javaName.length - 1) else javaName
+        var static = true
+        var scalaName: String = null
         findParent(javaName) match {
           case Some((parentOriginName, parentScalaName)) =>
-            if (originName == parentOriginName) {
-              parentScalaName
-            } else {
-              parentScalaName + (if (static) "." else "#") +
-                originName.substring(parentScalaName.length + 1)
-            }
-          case None => originName
+            static = Modifier.isStatic(Class.forName(javaName).getModifiers)
+            scalaName =
+              if (originName == parentOriginName) {
+                parentScalaName
+              } else {
+                parentScalaName + (if (static) "." else "#") +
+                  originName.substring(parentScalaName.length + 1)
+              }
+          case None =>
+            scalaName = originName
         }
-      val internal = scalaName.endsWith(".class")
-      parents = (originName, scalaName) :: parents
-      ScalaName(scalaName, module, static, internal)
+        parents = (originName, scalaName) :: parents
+        if (!scalaName.contains("$")) {
+          builder += ScalaName(scalaName, module, static)
+        }
+      }
     }
+    builder.result()
+  }
+
+  def classesIn(file: File) = {
+    val builder = Seq.newBuilder[String]
+    findClassesIn(file) { name =>
+      builder += name
+    }
+    builder.result()
   }
 
   def findClassesIn(file: File)(f: String => Unit): Unit = {
@@ -72,7 +143,7 @@ object ClassFinder {
   }
 
   def findClassesInDir(dir: File)(f: String => Unit) = {
-    val base = dir.getAbsolutePath() + "/"
+    val base = dir.getAbsolutePath + "/"
     val dirs = scala.collection.mutable.Stack[File]()
     dirs.push(dir)
     while (dirs.nonEmpty) {
@@ -80,7 +151,7 @@ object ClassFinder {
         if (file.isDirectory)
           dirs.push(file)
         else if (file.getName.toLowerCase.endsWith(".class")) {
-          val name = file.getAbsolutePath().substring(base.length)
+          val name = file.getAbsolutePath.substring(base.length)
           f(name.substring(0, name.length - ".class".length).replace('/', '.'))
         }
       }
