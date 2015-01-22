@@ -3,9 +3,7 @@ package com.weez.mercury.common
 import akka.event.LoggingAdapter
 import org.rocksdb._
 
-object RocksDBBackend extends DatabaseFactory {
-  RocksDB.loadLibrary()
-
+class RocksDBDatabaseFactory(g: GlobalSettings) extends DatabaseFactory {
   def createNew(path: String): Database = {
     import java.nio.file._
     val actualPath = Util.resolvePath(path)
@@ -13,7 +11,7 @@ object RocksDBBackend extends DatabaseFactory {
     if (Files.exists(p, LinkOption.NOFOLLOW_LINKS))
       throw new Exception("already exists")
     Files.createDirectories(p)
-    new RocksDBBackend(actualPath)
+    new RocksDBDatabase(g, actualPath)
   }
 
   def open(path: String): Database = {
@@ -21,14 +19,15 @@ object RocksDBBackend extends DatabaseFactory {
     val p = Util.resolvePath(path)
     if (!Files.isDirectory(Paths.get(p)))
       throw new Exception("not a database directory")
-    new RocksDBBackend(p)
+    new RocksDBDatabase(g, p)
   }
 
   def delete(path: String) =
     Util.deleteDirectory(Util.resolvePath(path))
 }
 
-private class RocksDBBackend(path: String) extends Database {
+private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database {
+  RocksDB.loadLibrary()
 
   private val db = RocksDB.open(path)
 
@@ -37,7 +36,7 @@ private class RocksDBBackend(path: String) extends Database {
       def close() = ()
 
       def newTransaction(log: LoggingAdapter): DBTransaction = {
-        if (com.weez.mercury.App.devmode) new DevTransaction(log) else new Transaction(log)
+        if (g.devmode) new DevTransaction(log) else new Transaction(log)
       }
     }
 

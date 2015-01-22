@@ -1,5 +1,8 @@
 package com.weez.mercury.common
 
+import com.weez.mercury.collect
+
+@collect
 trait RemoteService {
   type SimpleCall = Context with SessionState => Unit
   type QueryCall = Context with SessionState with DBSessionQueryable => Unit

@@ -1,60 +1,25 @@
 package com.weez.mercury.common
 
-import akka.actor._
-import com.typesafe.config.Config
 
-
-object ServiceManager {
-  val remoteServices = {
-    import com.weez.mercury.product._
-    Seq(
-      LoginService,
-      DataService
-    )
-  }
-
-  val remoteCallHandlers = {
-    import scala.reflect.runtime.{universe => ru}
-    val builder = Map.newBuilder[String, Handler]
-    val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
-    remoteServices foreach { s =>
-      val r = mirror.reflect(s)
-      r.symbol.typeSignature.members foreach { member =>
-        if (member.isPublic && member.isMethod) {
-          val method = member.asMethod
-          if (method.paramLists.isEmpty) {
-            val tpe = method.returnType.baseType(ru.typeOf[Function1[_, _]].typeSymbol)
-            if (!(tpe =:= ru.NoType)) {
-              val paramType = tpe.typeArgs(0)
-              if (ru.typeOf[InternalContext] <:< paramType) {
-                builder += method.fullName -> Handler(
-                  r.reflectMethod(method)().asInstanceOf[InternalContext => Unit],
-                  paramType <:< ru.typeOf[SessionState],
-                  paramType <:< ru.typeOf[DBSessionQueryable],
-                  paramType <:< ru.typeOf[DBSessionUpdatable])
-              }
-            }
-          }
-        }
-      }
-    }
-    builder.result()
-  }
-
-  case class Handler(f: InternalContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
-
-  type InternalContext = Context with SessionState with DBSessionUpdatable
-
-}
-
-class ServiceManager(system: ActorSystem, config: Config) {
+trait ServiceManager {
 
   import scala.concurrent._
-  import ServiceManager._
+  import akka.actor._
+  import com.typesafe.config.Config
+
+  def actorFactory: ActorRefFactory
+
+  def config: Config
+
+  def app: Application
+
+  def remoteCalls: Map[String, RemoteCall]
+
+  case class RemoteCall(f: ContextImpl => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
   val database: Database = {
     val path = config.getString("database")
-    RocksDBBackend.open(Util.resolvePath(path))
+    new RocksDBDatabaseFactory(app).open(Util.resolvePath(path))
   }
 
   val idAllocSession = database.createSession()
@@ -76,7 +41,7 @@ class ServiceManager(system: ActorSystem, config: Config) {
     builder.result()
   }
 
-  val sessionManager = new SessionManager(config)
+  val sessionManager = new SessionManager(app, config)
 
   def postRequest(peer: String, sid: String, api: String, req: ModelObject): Future[ModelObject] = {
     import scala.util.control.NonFatal
@@ -84,11 +49,11 @@ class ServiceManager(system: ActorSystem, config: Config) {
 
     val p = Promise[ModelObject]()
     try {
-      val h = remoteCallHandlers.getOrElse(api, ErrorCode.NotAcceptable.raise)
+      val rc = remoteCalls.getOrElse(api, ErrorCode.NotAcceptable.raise)
       workerPools.find(wp =>
-        wp.permitSessionState == h.sessionState &&
-          wp.permitDBQuery == h.dbQuery &&
-          wp.permitDBUpdate == h.dbUpdate) match {
+        wp.permitSessionState == rc.sessionState &&
+          wp.permitDBQuery == rc.dbQuery &&
+          wp.permitDBUpdate == rc.dbUpdate) match {
         case Some(x) =>
           // get session before worker start to avoid session timeout.
           val sessionState =
@@ -100,7 +65,7 @@ class ServiceManager(system: ActorSystem, config: Config) {
             p.complete(Try {
               c.sessionState = sessionState
               c.request = req
-              h.f(c)
+              rc.f(c)
               if (c.response == null)
                 throw new IllegalStateException("no response")
               c.response
@@ -139,7 +104,7 @@ class ServiceManager(system: ActorSystem, config: Config) {
           val worker = idle.dequeue()
           worker ! newTask(worker, func)
         } else if (workerCount < maxWorkerCount) {
-          val worker = system.actorOf(
+          val worker = actorFactory.actorOf(
             Props(new WorkerActor(permitDBQuery, permitDBUpdate)),
             s"$name-worker-${counter.next()}")
           worker ! newTask(worker, func)
@@ -167,7 +132,7 @@ class ServiceManager(system: ActorSystem, config: Config) {
         if (queue.nonEmpty) {
           worker ! queue.dequeue()
         } else if (workerCount > minWorkerCount) {
-          system.stop(worker)
+          actorFactory.stop(worker)
           workerCount -= 1
         } else {
           idle.enqueue(worker)

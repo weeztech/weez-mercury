@@ -92,7 +92,7 @@ object CollectionMetaCollection extends RootCollection[DBType.CollectionMeta] {
   val byName = defUniqueIndex("by-name", _.name)
 }
 
-class DBTypeCollector {
+class DBTypeCollector(g: GlobalSettings) {
 
   import scala.reflect.runtime.universe._
   import scala.collection.mutable
@@ -144,7 +144,7 @@ class DBTypeCollector {
         }
       resolve(dbtype, symbol.fullName)
     }
-    val types = com.weez.mercury.App.types
+    val types = g.types
     types(ru.typeOf[Entity].typeSymbol.fullName) withFilter {
       !_.isAbstract
     } foreach { symbol =>

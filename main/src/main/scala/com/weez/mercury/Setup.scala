@@ -1,18 +1,22 @@
 package com.weez.mercury
 
 import akka.actor._
-import com.typesafe.config.ConfigFactory
 import com.weez.mercury.common._
 
 object Setup {
   def main(args: Array[String]): Unit = {
-    import App.system
-    val setup = system.actorOf(Props(classOf[SetupActor]), "setup")
+    val system = ActorSystem("mercury")
+    val g = new GlobalSettings {
+      val types = ClassFinder.collectTypes(system.log).map(tp => tp._1 -> tp._2.toSeq).toMap
+      val config = system.settings.config.getConfig("weez-mercury")
+      val devmode = config.getBoolean("devmode")
+    }
+    val setup = system.actorOf(Props(classOf[SetupActor], g), "setup")
     setup ! DeleteDB :: NewDB :: SetupDBTypes :: CloseDB :: Shutdown :: Nil
   }
 
-  class SetupActor extends Actor with ActorLogging {
-    val backend = RocksDBBackend
+  class SetupActor(g: GlobalSettings) extends Actor with ActorLogging {
+    val backend = new RocksDBDatabaseFactory(g)
     val dbPath = context.system.settings.config.getString("weez-mercury.database")
     var db: Database = _
 
@@ -34,7 +38,7 @@ object Setup {
         context.system.shutdown()
       case SetupDBTypes =>
         if (db == null) throw new IllegalStateException()
-        val dbtypes = new DBTypeCollector
+        val dbtypes = new DBTypeCollector(g)
         dbtypes.collectDBTypes(log)
         val dbSession = db.createSession()
         val dbFactory = new DBSessionFactory(dbSession)

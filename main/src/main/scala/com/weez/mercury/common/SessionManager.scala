@@ -2,7 +2,7 @@ package com.weez.mercury.common
 
 import com.typesafe.config.Config
 
-class SessionManager(config: Config) {
+class SessionManager(app: Application, config: Config) {
 
   import java.util.concurrent.TimeUnit
   import scala.collection.mutable
@@ -49,7 +49,7 @@ class SessionManager(config: Config) {
         case None =>
           val peer = sidGen.newId
           val session = new Session(peer, peer)
-          if (com.weez.mercury.App.devmode) {
+          if (app.devmode) {
             session.login(0L, "dev", "dev")
           }
           sessions.put(peer, session)
