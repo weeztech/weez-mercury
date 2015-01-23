@@ -4,7 +4,7 @@ import akka.event.LoggingAdapter
 import com.weez.mercury.collect
 import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
 
-trait Context {
+trait Context extends RangeImplicits {
   implicit val context: this.type = this
 
   def log: LoggingAdapter
@@ -117,7 +117,7 @@ trait EntityCollection[V <: Entity] {
   def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V]
 }
 
-abstract class SubCollection[V <: Entity : Packer: TypeTag](owner: Entity) extends EntityCollection[V] {
+abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
   val ownerID = owner.id
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -140,7 +140,7 @@ abstract class SubCollection[V <: Entity : Packer: TypeTag](owner: Entity) exten
   private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
-abstract class RootCollection[V <: Entity : Packer:TypeTag] extends EntityCollection[V] with UniqueIndex[Long, V] {
+abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] with UniqueIndex[Long, V] {
   private val impl = EntityCollections.newHost[V](name)
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
