@@ -1,6 +1,6 @@
 package com.weez.mercury.common
 
-sealed trait RangeBound[T]
+sealed trait RangeBound[+T]
 
 sealed trait Range[T]
 
@@ -11,6 +11,8 @@ object Range {
 
   case class BoundaryRange[T](start: RangeBound[T], end: RangeBound[T]) extends Range[T]
 
+  case class PrefixRange[T](prefix: T) extends Range[T]
+
   case object Min extends RangeBound[Nothing]
 
   case object Max extends RangeBound[Nothing]
@@ -19,19 +21,20 @@ object Range {
 
   case class Exclude[T](value: T) extends RangeBound[T]
 
-
   class ValueHepler[T](val value: T) extends AnyVal {
-    def +-+(end: T) = Range.BoundaryRange(Range.Include(value), Range.Include(end))
+    def +-+(end: T) = BoundaryRange(Include(value), Include(end))
 
-    def +--(end: T) = Range.BoundaryRange(Range.Include(value), Range.Exclude(end))
+    def +--(end: T) = BoundaryRange(Include(value), Exclude(end))
 
-    def --+(end: T) = Range.BoundaryRange(Range.Exclude(value), Range.Include(end))
+    def --+(end: T) = BoundaryRange(Exclude(value), Include(end))
 
-    def ---(end: T) = Range.BoundaryRange(Range.Exclude(value), Range.Exclude(end))
+    def ---(end: T) = BoundaryRange(Exclude(value), Exclude(end))
 
-    def asMax = Range.BoundaryRange(Min, Range.Include(value))
+    def asMax = BoundaryRange[T](Min, Include(value))
 
-    def asMin = Range.BoundaryRange(Range.Include(value), Max)
+    def asMin = BoundaryRange[T](Include(value), Max)
+
+    def asPrefix = PrefixRange(value)
   }
 
 }
