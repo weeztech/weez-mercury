@@ -1,7 +1,6 @@
 package com.weez.mercury.common
 
-import java.util
-
+import scala.reflect.runtime.universe.TypeTag
 
 private object EntityCollections {
 
@@ -29,13 +28,15 @@ private object EntityCollections {
     }
   }
 
-  def forPartitionHost[V <: Entity : Packer](pc: SubCollection[V]): SubHostCollectionImpl[V] = {
+  def forPartitionHost[V <: Entity : Packer : TypeTag](pc: SubCollection[V]): SubHostCollectionImpl[V] = {
     this.hosts.synchronized {
       this.hosts.get(pc.name) match {
         case Some(host: SubHostCollectionImpl[V]) => host
         case None =>
+          val typeTag = implicitly[TypeTag[V]]
           val host = new SubHostCollectionImpl[V](pc.name)
           this.hosts.put(pc.name, host)
+          this.hostsByType.put(typeTag, host)
           host
         case _ =>
           throw new IllegalArgumentException( s"""PartitionCollection name conflict :${pc.name}""")
@@ -43,21 +44,27 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer : TypeTag](name: String): HostCollectionImpl[V] = {
     this.hosts.synchronized {
-      if (this.hosts.get(name).isDefined) {
+      if (this.hosts.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name) {}
+      val typeTag = implicitly[TypeTag[V]]
+      if (this.hostsByType.contains(typeTag)) {
+        throw new IllegalArgumentException( s"""HostCollection typed "$typeTag" exist!""")
+      }
+      val host = new HostCollectionImpl[V](name, typeTag) {}
       this.hosts.put(name, host)
+      this.hostsByType.put(typeTag, host)
       host
     }
   }
 
   val hosts = collection.mutable.HashMap[String, HostCollectionImpl[_]]()
   val hostsByID = collection.mutable.HashMap[Int, HostCollectionImpl[_]]()
+  val hostsByType = collection.mutable.HashMap[TypeTag[_], HostCollectionImpl[_]]()
 
-  abstract class HostCollectionImpl[V <: Entity : Packer](val name: String) {
+  abstract class HostCollectionImpl[V <: Entity : Packer](val name: String, val typeTag: TypeTag[V]) {
     host =>
     @volatile var _meta: DBType.CollectionMeta = null
 
@@ -294,7 +301,7 @@ private object EntityCollections {
       }
     }
 
-    def defUniqueIndex[K: Packer](indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
+    def defUniqueIndex[K: Packer : TypeTag](indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
       this.indexes.synchronized[UniqueIndex[K, V]] {
         if (this.indexes.get(indexName).isDefined) {
           throw new IllegalArgumentException( s"""index naming "$indexName" exist!""")
@@ -311,6 +318,10 @@ private object EntityCollections {
         this.indexes.put(name, idx)
         idx
       }
+    }
+
+    final def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = {
+      ???
     }
   }
 
@@ -466,12 +477,14 @@ private object EntityCollections {
     def id = v.id
   }
 
-  class SubHostCollectionImpl[V <: Entity : Packer](name: String) extends HostCollectionImpl[SCE[V]](name) {
+  import scala.reflect.runtime.universe._
+
+  class SubHostCollectionImpl[V <: Entity : Packer : TypeTag](name: String) extends HostCollectionImpl[SCE[V]](name, typeTag[SCE[V]]) {
     final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
       super.update(SCE(ownerID, value))
     }
 
-    def defUniqueIndex[K: Packer](ownerID: Long, indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
+    def defUniqueIndex[K: Packer : TypeTag](ownerID: Long, indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
       indexes.synchronized[UniqueIndex[K, V]] {
         val rawIndex = this.indexes.getOrElseUpdate(indexName,
           new IndexBaseImpl[(Long, K), SCE[V], V](v => (ownerID, keyGetter(v.v))) {
@@ -496,6 +509,42 @@ private object EntityCollections {
       }
     }
 
+    final def defIndex[K: Packer : TypeTag](ownerID: Long, name: String, getKey: V => K): Index[K, V] = {
+      ???
+    }
   }
 
+}
+
+abstract class DataView[K, V] {
+
+  def apply(key: K): Option[V] = {
+    ???
+  }
+
+  def name: String
+
+  protected trait Tracer[BUF, E <: Entity] {
+    def subRefs: Seq[Tracer[BUF, E]]
+
+    def extract(entity: E, buf: BUF)
+
+    def isChanged(oldB: BUF, newB: BUF): Boolean
+  }
+
+  protected abstract class DataViewMeta[BUF, ROOT <: Entity : TypeTag]() extends Tracer[BUF, ROOT] {
+
+    protected abstract class SubRef[FROM <: Entity, R <: Entity](refIndex: Index[Ref[R], FROM]) extends Tracer[BUF, R] {
+    }
+
+    def extractKey(buf: BUF): Option[K]
+
+    def extractValue(buf: BUF): V
+  }
+
+  protected def meta(): DataViewMeta[_, _]
+
+  private lazy val preparedMeta = {
+    val meta = this.meta()
+  }
 }

@@ -22,7 +22,7 @@ object Test {
     val classes = ClassFinder.scalaNamesIn(classpath)
     import ClassFinder._
     classes foreach {
-      case ScalaName(name, _, true, false) =>
+      case ScalaName(name,  true, false) =>
         println(name)
         mirror.staticClass(name)
       case _ =>

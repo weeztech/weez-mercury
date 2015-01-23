@@ -101,6 +101,8 @@ trait Entity {
   def newRef() = RefSome[this.type](this.id)
 }
 
+import scala.reflect.runtime.universe.TypeTag
+
 @collect
 trait EntityCollection[V <: Entity] {
   def name: String
@@ -110,10 +112,12 @@ trait EntityCollection[V <: Entity] {
 
   def delete(value: V)(implicit db: DBSessionUpdatable): Unit
 
-  def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V]
+  def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V]
+
+  def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V]
 }
 
-abstract class SubCollection[V <: Entity : Packer](owner: Entity) extends EntityCollection[V] {
+abstract class SubCollection[V <: Entity : Packer: TypeTag](owner: Entity) extends EntityCollection[V] {
   val ownerID = owner.id
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -124,14 +128,19 @@ abstract class SubCollection[V <: Entity : Packer](owner: Entity) extends Entity
     this.host.delete(value.id)
   }
 
-  @inline final override def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = {
+  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V] = {
     this.host.defUniqueIndex[K](ownerID, name, getKey)
+  }
+
+
+  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = {
+    this.host.defIndex[K](ownerID, name, getKey)
   }
 
   private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
-abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] with UniqueIndex[Long, V] {
+abstract class RootCollection[V <: Entity : Packer:TypeTag] extends EntityCollection[V] with UniqueIndex[Long, V] {
   private val impl = EntityCollections.newHost[V](name)
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
@@ -142,7 +151,9 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final override def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl(id)
 
-  @inline final override def defUniqueIndex[K: Packer](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
+  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
+
+  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
   @inline final override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
     impl(start, end, excludeStart, excludeEnd, forward)
