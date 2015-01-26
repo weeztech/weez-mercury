@@ -111,7 +111,7 @@
       },
       afterQuery: function (result) {
         if (result instanceof Error) {
-          this.error = err.message;
+          this.error = result.message;
           this.loading = false;
           return;
         }

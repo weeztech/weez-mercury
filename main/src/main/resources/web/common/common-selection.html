@@ -177,6 +177,9 @@
           var self = this;
           detail.filter = function (p) {
             return p.then(function (result) {
+              if (result instanceof Error) {
+                return result;
+              }
               var keyprop = result.keyprop,
                 keyGetter;
               switch (typeof keyprop) {

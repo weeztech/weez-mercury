@@ -1,0 +1,52 @@
+<link rel="import" href="../common/common-search-input.html">
+<link rel="import" href="../common/common-pager.html">
+<link rel="import" href="../common/common-selection.html">
+<link rel="import" href="../common/common-search-selector.html">
+<link rel="import" href="../common/common-link.html">
+<link rel="import" href="../common/common-remote.html">
+
+<polymer-element name="app-entity-selector">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      .spinner {
+        background-color: rgba(255, 255, 255, 0.3);
+      }
+    </style>
+    <common-pager id="pager" on-common-query="{{queryAction}}" flex>
+      <template>
+        <common-link>{{name}}</common-link>
+      </template>
+    </common-pager>
+    <common-selection selected="{{selected}}">
+      <common-selector target="{{$.pager}}"></common-selector>
+    </common-selection>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        collection: null
+      },
+      collectionChanged: function () {
+        this.$.pager.reload();
+      },
+      queryAction: function (e, detail) {
+        if (!this.collection) {
+          detail.result = {
+            items: [],
+            keyprop: 'id',
+            hasMore: false
+          };
+          return;
+        }
+        detail.result = Weez.remoteCall('debug.DBDebugService.listRootCollection', {
+          name: this.collection.name,
+          start: detail.start,
+          count: 24
+        });
+      }
+    });
+  </script>
+</polymer-element>

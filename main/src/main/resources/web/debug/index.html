@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Weez-Mercury Debug Console</title>
+  <link rel="stylesheet" href="../index.css">
+  <script src="../bower_components/webcomponentsjs/webcomponents.min.js"></script>
+  <link rel="import" href="../bower_components/polymer/polymer.html">
+</head>
+
+<body unresolved fullbleed>
+  <link rel="import" href="../common/common-remote.html">
+
+  <link rel="import" href="app-collection-selector.html">
+  <link rel="import" href="app-entity-selector.html">
+
+  <polymer-element name="app-loader">
+    <template>
+      <style>
+        :host {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .spinner {
+          background-color: rgba(255, 255, 255, 0.3);
+        }
+      </style>
+      <content></content>
+      <div class="spinner" fade hidden?="{{initialized}}" fit vertical layout center-center>
+        <paper-spinner active></paper-spinner>
+      </div>
+    </template>
+    <script>
+      Polymer({
+        initialized: false,
+        domReady: function () {
+          Weez.init().then(this.readyAction.bind(this));
+        },
+        readyAction: function () {
+          this.initialized = true;
+          this.appendChild(document.createElement('app-main'));
+        }
+      });
+    </script>
+  </polymer-element>
+
+  <polymer-element name="app-main" horizontal layout>
+    <template>
+      <style>
+        :host {
+          display: block;
+          height: 100%;
+        }
+        app-collection-selector {
+          width: 30%;
+        }
+        :host > * {
+          height: 100%;
+        }
+      </style>
+      <app-collection-selector selected="{{selected}}"></app-collection-selector>
+      <app-entity-selector collection="{{selected}}" flex></app-entity-selector>
+    </template>
+    <script>
+      Polymer({});
+    </script>
+  </polymer-element>
+
+  <app-loader></app-loader>
+</body>
+
+</html>
