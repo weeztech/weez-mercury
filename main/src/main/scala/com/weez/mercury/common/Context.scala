@@ -96,15 +96,15 @@ import scala.reflect.runtime.universe.TypeTag
 trait EntityCollectionListener[V <: Entity]
 
 trait EntityCollectionDeleteListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onDelete(oldEntity: V)
+  def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable)
 }
 
 trait EntityCollectionUpdateListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onUpdate(oldEntity: V, newEntity: V)
+  def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable)
 }
 
 trait EntityCollectionInsertListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onInsert(newEntity: V)
+  def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable)
 }
 
 
@@ -121,9 +121,9 @@ trait EntityCollection[V <: Entity] {
 
   def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V]
 
-  def addListener(listener: EntityCollectionListener[V]) = ???
+  def addListener(listener: EntityCollectionListener[V]): Unit
 
-  def removeListener(listener: EntityCollectionListener[V]) = ???
+  def removeListener(listener: EntityCollectionListener[V]): Unit
 }
 
 abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
@@ -144,6 +144,14 @@ abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) exte
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = {
     this.host.defIndex[K](ownerID, name, getKey)
+  }
+
+  @inline final override def addListener(listener: EntityCollectionListener[V]) = {
+    this.host.addSubListener(listener)
+  }
+
+  @inline final override def removeListener(listener: EntityCollectionListener[V]) = {
+    this.host.removeSubListener(listener)
   }
 
   private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
@@ -169,6 +177,14 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def apply(range: Range[Long], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] =
     impl(range, forward)
+
+  @inline final override def addListener(listener: EntityCollectionListener[V]) = {
+    impl.addListener(listener)
+  }
+
+  @inline final override def removeListener(listener: EntityCollectionListener[V]) = {
+    impl.removeListener(listener)
+  }
 }
 
 trait KeyCollection[T <: Entity] {
