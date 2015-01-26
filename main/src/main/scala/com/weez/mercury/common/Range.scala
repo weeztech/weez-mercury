@@ -16,19 +16,21 @@ trait DBRange {
 
 object Range {
 
-  case object Min extends RangeBound[Nothing] {
+  sealed trait InfinitBound extends RangeBound[Nothing] {
     def map[B](f: this.type => B) = Include(f(this))
   }
 
-  case object Max extends RangeBound[Nothing] {
+  sealed trait FinitBound[A] extends RangeBound[A]
+
+  case object Min extends InfinitBound
+
+  case object Max extends InfinitBound
+
+  case class Include[A](value: A) extends FinitBound[A] {
     def map[B](f: this.type => B) = Include(f(this))
   }
 
-  case class Include[A](value: A) extends RangeBound[A] {
-    def map[B](f: this.type => B) = Include(f(this))
-  }
-
-  case class Exclude[A](value: A) extends RangeBound[A] {
+  case class Exclude[A](value: A) extends FinitBound[A] {
     def map[B](f: this.type => B) = Exclude(f(this))
   }
 

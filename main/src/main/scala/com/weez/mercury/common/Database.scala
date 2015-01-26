@@ -53,26 +53,7 @@ trait DBCursor {
   def close(): Unit
 }
 
-class KeyCollectionImpl[T <: Entity](val key: Array[Byte]) extends KeyCollection[T] {
-
-  def update(value: T)(implicit db: DBSessionUpdatable): Unit = ???
-
-  def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean)(implicit db: DBSessionQueryable): Cursor[T] = ???
-
-  def delete(key: Long)(implicit db: DBSessionUpdatable): Unit = ???
-
-  def update(id: Long, value: T)(implicit db: DBSessionUpdatable) = {
-    import Packer._
-    ???
-  }
-
-  def apply(id: Long)(implicit db: DBSessionQueryable): Option[T] = ???
-
-  def defUniqueIndex[K: Packer](name: String, keyGetter: T => K): UniqueIndex[K, T] = ???
-}
-
 case class RefSome[T <: Entity](id: Long) extends Ref[T] {
-
   def apply()(implicit db: DBSessionQueryable): T = EntityCollections.getEntity(id)
 }
 

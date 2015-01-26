@@ -15,7 +15,7 @@ class ModelObject(private var map: Map[String, Any]) extends Dynamic {
     }
   }
 
-  def updateDynamic(field: String, value: Any): Unit = {
+  def updateDynamic[T](field: String, value: T): Unit = {
     map += field -> value
   }
 

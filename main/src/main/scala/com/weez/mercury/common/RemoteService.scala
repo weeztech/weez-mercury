@@ -18,5 +18,20 @@ trait RemoteService {
   def failWith(message: String) = {
     throw new ProcessException(ErrorCode.Fail, message)
   }
+
+  def pager[T](cur: Cursor[T])(implicit c: Context): Seq[T] = {
+    import c._
+    val seq =
+      if (request.hasProperty("pager")) {
+        val pager: ModelObject = request.pager
+        val start: Int = pager.start
+        val count: Int = pager.count
+        cur.drop(start).take(count).toSeq
+      } else {
+        cur.toSeq
+      }
+    cur.close()
+    seq
+  }
 }
 

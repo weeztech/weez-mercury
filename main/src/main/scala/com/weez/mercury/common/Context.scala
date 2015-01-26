@@ -47,6 +47,18 @@ trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
 
   @inline final override def drop(n: Int): Cursor[T] = slice(n, Int.MaxValue)
 
+  @inline final override def toSeq = to[Seq]
+
+  @inline final override def toTraversable: Traversable[T] = toSeq
+
+  @inline final override def toIterable: Iterable[T] = toSeq
+
+  /**
+   * DO NOT CALL THIS METHOD.
+   * delayed db operation may cause unexpected errors.
+   */
+  @inline final override def toStream = ???
+
   override def close(): Unit
 }
 
@@ -169,7 +181,4 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def apply(range: Range[Long], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] =
     impl(range, forward)
-}
-
-trait KeyCollection[T <: Entity] {
 }

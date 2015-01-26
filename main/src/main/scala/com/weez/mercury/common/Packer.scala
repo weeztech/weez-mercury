@@ -210,7 +210,4 @@ object Packer extends CollectionPackers {
   val refPacker = map[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
-
-  implicit def collection[T <: Entity]: Packer[KeyCollection[T]] =
-    map[KeyCollection[T], Array[Byte]](_.asInstanceOf[KeyCollectionImpl[T]].key, new KeyCollectionImpl[T](_))
 }
