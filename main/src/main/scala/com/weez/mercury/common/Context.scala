@@ -67,7 +67,7 @@ trait IndexBase[K, V <: Entity] {
 
   def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 
-  def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]): IndexBase[SK, V]
+  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 trait Index[K, V <: Entity] extends IndexBase[K, V]
@@ -80,8 +80,6 @@ trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
 
   def update(value: V)(implicit db: DBSessionUpdatable): Unit
 
-  override def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]): UniqueIndex[SK, V] =
-    throw new UnsupportedOperationException()
 }
 
 trait Ref[+T <: Entity] {
@@ -155,8 +153,8 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final override def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
-    impl(start, end, excludeStart, excludeEnd, forward)
+  @inline final override def apply(range: Range[Long], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+    impl(range, forward)
 }
 
 trait KeyCollection[T <: Entity] {

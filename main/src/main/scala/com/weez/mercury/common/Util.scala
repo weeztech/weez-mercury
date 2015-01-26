@@ -89,13 +89,31 @@ object Util {
   }
 
   def compareUInt8s(a: Array[Byte], b: Array[Byte]): Int = {
-    val l = a.length max b.length
-    var i, c = 0
-    while (c == 0 && i < l) {
-      c = (a(i) & 0xFF) - (b(i) & 0xFF)
+    compareUInt8s(a, 0, a.length, b, 0, b.length)
+  }
+
+  def compareUInt8s(a: Array[Byte], aStart: Int, aEnd: Int, b: Array[Byte], bStart: Int, bEnd: Int): Int = {
+    val aLen = aEnd - aStart
+    val bLen = bEnd - bStart
+    val len = aLen.min(bLen)
+    var c = 0
+    var i = 0
+    while (c == 0 && i < len) {
+      c = (a(aStart + i) & 0xff) - (b(bStart + i) & 0xff)
       i += 1
     }
-    if (c != 0) c else a.length - b.length
+    if (c == 0) aLen - bLen else c
+  }
+
+  def concatUInt8s(parts: Array[Byte]*) = {
+    val len = parts.foldLeft(0)((c, x) => c + x.length)
+    val arr = new Array[Byte](len)
+    var offset = 0
+    parts foreach { x =>
+      System.arraycopy(x, 0, arr, offset, x.length)
+      offset += x.length
+    }
+    arr
   }
 
   def camelCase2seqStyle(name: String) = {

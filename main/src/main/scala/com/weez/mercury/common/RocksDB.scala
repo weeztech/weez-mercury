@@ -147,7 +147,10 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
   }
 
   class DevTransaction(log: LoggingAdapter) extends Transaction(log) {
-    val keyWrites = scala.collection.mutable.SortedSet[Array[Byte]]()(ByteArrayOrdering)
+    val keyWrites = scala.collection.mutable.SortedSet[Array[Byte]]()(
+      new Ordering[Array[Byte]] {
+        def compare(x: Array[Byte], y: Array[Byte]) = Util.compareUInt8s(x, y)
+      })
 
     override def get(key: Array[Byte]) = {
       if (keyWrites.contains(key)) {
@@ -179,22 +182,6 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
 
         override def close() = c.close()
       }
-    }
-  }
-
-  object ByteArrayOrdering extends Ordering[Array[Byte]] {
-    def compare(x: Array[Byte], y: Array[Byte]) = {
-      var i = 0
-      val len = x.length.min(y.length)
-      var c = 0
-      while (c == 0 && i < len) {
-        c = x(i) - y(i)
-        i += 1
-      }
-      if (c == 0)
-        x.length - y.length
-      else
-        c
     }
   }
 
