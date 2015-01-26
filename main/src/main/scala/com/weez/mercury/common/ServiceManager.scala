@@ -29,14 +29,10 @@ trait ServiceManager {
   val workerPools = {
     val builder = Seq.newBuilder[WorkerPool]
     val workers = config.getConfig("workers")
-    val itor = workers.entrySet().iterator()
+    val itor = workers.root().keySet().iterator()
     while (itor.hasNext) {
-      val e = itor.next()
-      val name = e.getKey
-      e.getValue match {
-        case config: Config =>
-          builder += new WorkerPool(name, config)
-      }
+      val name = itor.next()
+      builder += new WorkerPool(name, workers.getConfig(name))
     }
     builder.result()
   }

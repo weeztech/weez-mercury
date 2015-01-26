@@ -116,6 +116,17 @@ object Util {
     arr
   }
 
+  def showHex(arr: Array[Byte]) = {
+    val sb = new StringBuilder
+    for (b <- arr)
+      sb.append(byte2hex(b)).append(' ')
+    sb.toString()
+  }
+
+  def byte2hex(b: Byte) = {
+    f"${b & 0xff}%02x"
+  }
+
   def camelCase2seqStyle(name: String) = {
     import scala.util.matching.Regex
     new Regex("[A-Z]+").replaceAllIn(name, { m =>

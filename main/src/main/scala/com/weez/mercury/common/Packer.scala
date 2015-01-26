@@ -207,7 +207,56 @@ object Packer extends CollectionPackers {
 
   implicit val DateTimePacker = map[org.joda.time.DateTime, Long](_.getMillis, new org.joda.time.DateTime(_))
 
+  implicit def optionPacker[T](implicit p: Packer[T]) =
+    new Packer[Option[T]] {
+      def pack(value: Option[T], buf: Array[Byte], offset: Int) = {
+        buf(offset) = TYPE_TUPLE
+        val end =
+          value match {
+            case Some(x) => p.pack(x, buf, offset + 1)
+            case None => offset + 1
+          }
+        buf(end) = TYPE_END
+        end + 1
+      }
+
+      def packLength(value: Option[T]) = {
+        value match {
+          case Some(x) => 2 + p.packLength(x)
+          case None => 2
+        }
+      }
+
+      def unpack(buf: Array[Byte], offset: Int, length: Int) = {
+        require(buf(offset) == TYPE_TUPLE, "not a option")
+        if (buf(offset + 1) == TYPE_END)
+          None
+        else {
+          val len = p.unpackLength(buf, offset + 1)
+          require(buf(offset + 1 + len) == TYPE_END, "invalid length")
+          Some(p.unpack(buf, offset + 1, len))
+        }
+      }
+
+      def unpackLength(buf: Array[Byte], offset: Int) = {
+        if (buf(offset + 1) == TYPE_END) 2 else 2 + p.unpackLength(buf, offset + 1)
+      }
+    }
+
   val refPacker = map[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
+
+  implicit object NothingPacker extends Packer[Nothing] {
+    var nothing: Nothing = _
+
+    def pack(value: Nothing, buf: Array[Byte], offset: Int) = offset
+
+    def packLength(value: Nothing) = 0
+
+    def unpack(buf: Array[Byte], offset: Int, length: Int) = nothing
+
+    def unpackLength(buf: Array[Byte], offset: Int) = 0
+  }
+
 }

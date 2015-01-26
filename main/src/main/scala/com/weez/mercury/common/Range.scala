@@ -137,13 +137,15 @@ object Range {
         Util.compareUInt8s(x, y)
     }
   }
+
 }
 
-object RangeBound{
-  val TYPE_MIN: Byte = 0
-  val TYPE_MAX: Byte = -1
+object RangeBound {
 
   import Range._
+
+  val TYPE_MIN: Byte = 0
+  val TYPE_MAX: Byte = -1
 
   class RangeBoundPacker[T](implicit packer: Packer[T]) extends Packer[RangeBound[T]] {
     def pack(value: RangeBound[T], buf: Array[Byte], offset: Int) = {
@@ -184,6 +186,8 @@ object RangeBound{
   }
 
   implicit def rangeBoundPacker[T: Packer]: Packer[RangeBound[T]] = new RangeBoundPacker[T]
+
+  implicit val nothingPacker = rangeBoundPacker[Nothing]
 }
 
 trait RangeImplicits {

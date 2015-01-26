@@ -100,14 +100,15 @@ object ClassFinder {
         var scalaName: String = null
         findParent(javaName) match {
           case Some((parentOriginName, parentScalaName)) =>
-            static = Modifier.isStatic(Class.forName(javaName).getModifiers)
-            scalaName =
-              if (originName == parentOriginName) {
-                parentScalaName
-              } else {
-                parentScalaName + (if (static) "." else "#") +
-                  originName.substring(parentScalaName.length + 1)
-              }
+            if (originName == parentOriginName) {
+              if (parents.length > 1)
+                static = Modifier.isStatic(Class.forName(javaName).getModifiers)
+              scalaName = parentScalaName
+            } else {
+              static = Modifier.isStatic(Class.forName(javaName).getModifiers)
+              scalaName = parentScalaName + (if (static) "." else "#") +
+                originName.substring(parentScalaName.length + 1)
+            }
           case None =>
             scalaName = originName
         }

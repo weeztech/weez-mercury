@@ -8,17 +8,19 @@ object DBType {
 
   sealed trait DBTypeRef
 
-  case class SimpleType private[DBType](typeCode: Int) extends DBType with DBTypeRef
+  case class SimpleType private[DBType](typeCode: Int, name: String) extends DBType with DBTypeRef {
+    override def toString = name
+  }
 
   private object SimpleType
 
-  val String = SimpleType(1)
-  val Int = SimpleType(2)
-  val Long = SimpleType(3)
-  val Double = SimpleType(4)
-  val Boolean = SimpleType(5)
-  val DateTime = SimpleType(6)
-  val Raw = SimpleType(7)
+  val String = SimpleType(1, "String")
+  val Int = SimpleType(2, "Int")
+  val Long = SimpleType(3, "Long")
+  val Double = SimpleType(4, "Double")
+  val Boolean = SimpleType(5, "Boolean")
+  val DateTime = SimpleType(6, "DateTime")
+  val Raw = SimpleType(7, "Raw")
 
   def fromTypeCode(typeCode: Int): SimpleType = {
     typeCode match {
