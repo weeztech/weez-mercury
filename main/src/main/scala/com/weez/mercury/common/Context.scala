@@ -50,22 +50,14 @@ trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
   override def close(): Unit
 }
 
-trait SubKeyMapper[K, PK, SK] {
-  def prefixKey: PK
-
-  def fullKey(subKey: SK): K
-
-  def subKey(fullKey: K): SK
-}
-
 trait IndexBase[K, V <: Entity] {
+  type KeyType = K
+  type ValueType = V
+
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
-    this.apply(None, None)
+    this.apply(Range.All)
 
-  @inline final def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V] =
-    this.apply(Some(start), Some(end))
-
-  def apply(start: Option[K], end: Option[K], excludeStart: Boolean = false, excludeEnd: Boolean = false, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V]
 
   def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 }
@@ -101,6 +93,21 @@ trait Entity {
 
 import scala.reflect.runtime.universe.TypeTag
 
+trait EntityCollectionListener[V <: Entity]
+
+trait EntityCollectionDeleteListener[V <: Entity] extends EntityCollectionListener[V] {
+  def onDelete(oldEntity: V)
+}
+
+trait EntityCollectionUpdateListener[V <: Entity] extends EntityCollectionListener[V] {
+  def onUpdate(oldEntity: V, newEntity: V)
+}
+
+trait EntityCollectionInsertListener[V <: Entity] extends EntityCollectionListener[V] {
+  def onInsert(newEntity: V)
+}
+
+
 @collect
 trait EntityCollection[V <: Entity] {
   def name: String
@@ -113,6 +120,10 @@ trait EntityCollection[V <: Entity] {
   def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V]
 
   def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V]
+
+  def addListener(listener: EntityCollectionListener[V]) = ???
+
+  def removeListener(listener: EntityCollectionListener[V]) = ???
 }
 
 abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
@@ -153,7 +164,10 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final override def apply(range: Range[Long], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+  @inline final override def apply(start: Long, end: Long)(implicit db: DBSessionQueryable): Cursor[V] =
+    impl(Range.BoundaryRange(Range.Include(start), Range.Include(end)), true)
+
+  @inline final override def apply(range: Range[Long], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] =
     impl(range, forward)
 }
 

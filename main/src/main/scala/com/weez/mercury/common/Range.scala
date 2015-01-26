@@ -1,7 +1,7 @@
 package com.weez.mercury.common
 
 sealed trait RangeBound[+A] {
-  private[Range] def map[B](f: this.type => B): RangeBound[B]
+  private[common] def map[B](f: this.type => B): RangeBound[B]
 }
 
 sealed trait Range[+A] extends DBRange {
@@ -135,9 +135,13 @@ object Range {
         Util.compareUInt8s(x, y)
     }
   }
+}
 
+object RangeBound{
   val TYPE_MIN: Byte = 0
   val TYPE_MAX: Byte = -1
+
+  import Range._
 
   class RangeBoundPacker[T](implicit packer: Packer[T]) extends Packer[RangeBound[T]] {
     def pack(value: RangeBound[T], buf: Array[Byte], offset: Int) = {

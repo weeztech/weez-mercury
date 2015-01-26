@@ -143,41 +143,16 @@ private object EntityCollections {
         this.getRefID(key).foreach(host.delete)
       }
 
-      @inline final override def apply(start: Option[K], end: Option[K], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[R] = {
-        val range = new ScanRange[K](start, end, excludeStart, excludeEnd) {
-          val prefixPacker = implicitly[Packer[Tuple1[Int]]]
+      @inline final override def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[R] =
+        this.apply(Range.BoundaryRange(Range.Include(start), Range.Include(end)))
 
-          override def buildPrefixMin = prefixPacker(Tuple1(index.getIndexID))
-
-          override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
-
-        }
-        new CursorImpl[K, Long, R](range, forward) {
-          override def v2r(id: Long) = index.v2r(db.get[Long, V](id).get)
-        }
+      @inline final override def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[R] = {
+        this.newCursor(range.map(r => (this.getIndexID, r)), forward)
       }
 
-
-      override def subIndex[PK: Packer, SK](keyMapper: SubKeyMapper[K, PK, SK]) = new UniqueIndex[SK, R] {
-        val partKeyPacker = implicitly[Packer[(Int, PK)]]
-
-        override def update(value: R)(implicit db: DBSessionUpdatable): Unit = index.update(value)
-
-        override def delete(key: SK)(implicit db: DBSessionUpdatable): Unit = index.delete(keyMapper.fullKey(key))
-
-        override def apply(key: SK)(implicit db: DBSessionQueryable): Option[R] = index(keyMapper.fullKey(key))
-
-        override def apply(start: Option[SK], end: Option[SK], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[R] = {
-          val range = new ScanRange[K](start.map(keyMapper.fullKey), end.map(keyMapper.fullKey), excludeStart, excludeEnd) {
-
-            override def buildPrefixMin = partKeyPacker((index.getIndexID, keyMapper.prefixKey))
-
-            override def buildFullKey(key: K) = fullKeyPacker((index.getIndexID, key))
-
-          }
-          new CursorImpl[K, Long, R](range, forward) {
-            override def v2r(id: Long): R = db.get[Long, R](id).get
-          }
+      @inline final def newCursor(range: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[R] = {
+        new CursorImpl[K, Long, R](range, forward) {
+          override def v2r(id: Long) = index.v2r(db.get[Long, V](id).get)
         }
       }
 
@@ -248,14 +223,7 @@ private object EntityCollections {
       }
     }
 
-    final def apply(start: Option[Long], end: Option[Long], excludeStart: Boolean, excludeEnd: Boolean, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-      val range = new ScanRange(start, end, excludeStart, excludeEnd) {
-        override def buildPrefixMin = Packer.LongPacker(fixID(0l))
-
-        override def buildPrefixMax = Packer.LongPacker(fixID(-1l))
-
-        override def buildFullKey(id: Long) = Packer.LongPacker(fixID(id))
-      }
+    final def apply(range: Range[Long], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
       new CursorImpl[Long, V, V](range, forward) {
         override def v2r(v: V): V = v
       }
@@ -377,25 +345,25 @@ private object EntityCollections {
   }
 
 
-  abstract class CursorImpl[K: Packer, V: Packer, R <: Entity](range: ScanRange[K], forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
+  abstract class CursorImpl[K: Packer, V: Packer, R <: Entity](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
     self =>
     def v2r(v: V): R
 
     val step = if (forward) 1 else -1
-    val rangeMin = range.rangeMin()
-    val rangeMax = range.rangeMax()
+    val rangeStart = range.keyStart
+    val rangeEnd = range.keyEnd
     var dbCursor: DBCursor = null
     var remaining = 0
-    if (Util.compareUInt8s(rangeMin, rangeMax) > 0) {
+    if (Range.ByteArrayOrdering.compare(rangeStart, rangeEnd) < 0) {
       dbCursor = db.newCursor()
       remaining = Int.MaxValue
-      checkRemain(dbCursor.seek(if (forward) rangeMin else rangeMax), 0)
+      checkRemain(dbCursor.seek(if (forward) rangeStart else rangeEnd), 0)
     }
 
     def checkRemain(valid: Boolean, count: Int = 1): Unit = {
       if (valid) {
         if (forward) {
-          if (Util.compareUInt8s(dbCursor.key(), rangeMax) > 0) {
+          if (Range.ByteArrayOrdering.compare(dbCursor.key(), rangeEnd) >= 0) {
             close()
           } else {
             remaining -= count
@@ -404,12 +372,13 @@ private object EntityCollections {
             }
           }
         } else {
+          //backward
           val key = dbCursor.key()
-          if (Util.compareUInt8s(key, rangeMin) < 0) {
+          if (Range.ByteArrayOrdering.compare(key, rangeStart) < 0) {
             close()
           } else if (count == 0) {
             //seek
-            if (Util.compareUInt8s(key, rangeMax) > 0) {
+            if (Range.ByteArrayOrdering.compare(key, rangeEnd) >= 0) {
               checkRemain(dbCursor.next(step))
             }
           } else {
@@ -498,14 +467,19 @@ private object EntityCollections {
 
           }
         ).asInstanceOf[IndexBaseImpl[(Long, K), SCE[V], V]]
-        rawIndex.subIndex[Long, K](new SubKeyMapper[(Long, K), Long, K] {
+        new UniqueIndex[K, V] {
+          override def update(value: V)(implicit db: DBSessionUpdatable): Unit = rawIndex.update(value)
 
-          override def prefixKey: Long = ownerID
+          override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = rawIndex.delete((ownerID, key))
 
-          override def fullKey(subKey: K) = (ownerID, subKey)
+          override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = rawIndex.apply((ownerID, key))
 
-          override def subKey(fullKey: (Long, K)): K = fullKey._2
-        })
+          def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V] =
+            this.apply(Range.BoundaryRange(Range.Include(start), Range.Include(end)))
+
+          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] =
+            rawIndex.newCursor(range.map(r => (rawIndex.getIndexID, ownerID, r)), forward)
+        }
       }
     }
 
@@ -516,6 +490,7 @@ private object EntityCollections {
 
 }
 
+
 abstract class DataView[K, V] {
 
   def apply(key: K): Option[V] = {
@@ -525,21 +500,35 @@ abstract class DataView[K, V] {
   def name: String
 
   protected trait Tracer[BUF, E <: Entity] {
-    def subRefs: Seq[Tracer[BUF, E]]
+    def subRefs = Seq.empty[SubRef[_]]
 
     def extract(entity: E, buf: BUF)
 
     def isChanged(oldB: BUF, newB: BUF): Boolean
-  }
 
-  protected abstract class DataViewMeta[BUF, ROOT <: Entity : TypeTag]() extends Tracer[BUF, ROOT] {
+    protected abstract class SubRef[R <: Entity](refIndex: IndexBase[_ >: Ref[R]
+      with Product1[Ref[R]]
+      with Product2[Ref[R], Nothing]
+      with Product3[Ref[R], Nothing, Nothing]
+      with Product4[Ref[R], Nothing, Nothing, Nothing]
+      with Product5[Ref[R], Nothing, Nothing, Nothing, Nothing]
+      with Product6[Ref[R], Nothing, Nothing, Nothing, Nothing, Nothing]
+      with Product7[Ref[R], Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
+      , E]) extends Tracer[BUF, R] with EntityCollectionListener[R] {
 
-    protected abstract class SubRef[FROM <: Entity, R <: Entity](refIndex: Index[Ref[R], FROM]) extends Tracer[BUF, R] {
     }
 
-    def extractKey(buf: BUF): Option[K]
+  }
 
-    def extractValue(buf: BUF): V
+
+  protected abstract class DataViewMeta[BUF, ROOT <: Entity : TypeTag] extends Tracer[BUF, ROOT] {
+
+    def extractKey(buf: BUF): Map[K, V]
+  }
+
+  class MyBuffer {
+    var i1: Int = _
+    var i2: Int = _
   }
 
   protected def meta(): DataViewMeta[_, _]

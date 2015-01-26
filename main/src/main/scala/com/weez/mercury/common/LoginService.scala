@@ -67,11 +67,15 @@ object LoginService extends RemoteService {
 }
 
 @packable
-case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff]) extends Entity
+case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff],self: Ref[User]) extends Entity
+
+@packable
+case class Key2(staff: Ref[Staff],id: Long)
 
 object UserCollection extends RootCollection[User] {
   def name="user"
   val byCode = defUniqueIndex("by-name", _.name)
+  val byStaff = defUniqueIndex("by-staff",_.staff)
 }
 
 @packable
