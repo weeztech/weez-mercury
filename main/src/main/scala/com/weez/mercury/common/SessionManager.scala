@@ -9,7 +9,7 @@ class SessionManager(app: Application, config: Config) {
   import scala.concurrent.duration._
 
   val sessions = mutable.Map[String, Session]()
-  val peers = mutable.Map[String, Seq[Session]]()
+  val peers = mutable.Map[String, List[Session]]()
   val sidGen = new Util.RandomIdGenerator(12)
   val sessionTimeout = config.getDuration("session-timeout", TimeUnit.NANOSECONDS)
   val checkFreq = 5.seconds
@@ -33,29 +33,23 @@ class SessionManager(app: Application, config: Config) {
     }
   }
 
-  def createPeer(peer: String) = {
+  def createPeer(peerHint: Option[String] = None) = {
     sessions.synchronized {
-      // add a fake session to avoid 'clean'
-      peers.get(peer) match {
-        case Some(x) =>
-          x.find(_.id == peer) match {
-            case Some(s) =>
-              s.activeTimestamp = System.nanoTime()
-            case None =>
-              val s = new Session(peer, peer)
-              peers.put(peer, x :+ s)
-          }
-          peer
+      val peer = peerHint.getOrElse(sidGen.newId)
+      val peerSessions = peers.getOrElse(peer, Nil)
+      peerSessions.find(_.id == peer) match {
+        case Some(s) =>
+          s.activeTimestamp = System.nanoTime()
         case None =>
-          val peer = sidGen.newId
+          // add a fake session to avoid 'clean'
           val session = new Session(peer, peer)
           if (app.devmode) {
             session.login(0L, "dev", "dev")
           }
           sessions.put(peer, session)
-          peers.put(peer, Seq(session))
-          peer
+          peers.put(peer, session :: peerSessions)
       }
+      peer
     }
   }
 

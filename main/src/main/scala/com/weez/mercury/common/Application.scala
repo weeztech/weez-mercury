@@ -21,4 +21,6 @@ trait Application extends GlobalSettings {
   def serviceManager: ServiceManager
 
   def sessionManager: SessionManager
+
+  def close(): Unit
 }

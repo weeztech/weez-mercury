@@ -37,9 +37,7 @@ trait ServiceManager {
     builder.result()
   }
 
-  val sessionManager = new SessionManager(app, config)
-
-  def postRequest(peer: String, sid: String, api: String, req: ModelObject): Future[ModelObject] = {
+  def postRequest(session: Session, api: String, req: ModelObject): Future[ModelObject] = {
     import scala.util.control.NonFatal
     import scala.util.Try
 
@@ -54,8 +52,7 @@ trait ServiceManager {
           // get session before worker start to avoid session timeout.
           val sessionState =
             if (x.permitSessionState) {
-              new SessionStateImpl(
-                sessionManager.getAndLockSession(sid).getOrElse(ErrorCode.InvalidSessionID.raise))
+              new SessionStateImpl(session)
             } else null
           x.post { c =>
             p.complete(Try {
@@ -66,8 +63,6 @@ trait ServiceManager {
                 throw new IllegalStateException("no response")
               c.response
             })
-            if (sessionState != null)
-              sessionManager.returnAndUnlockSession(sessionState.session)
           }
         case None => ErrorCode.NotAcceptable.raise
       }
@@ -177,7 +172,7 @@ trait ServiceManager {
   }
 
   final class SessionStateImpl(val session: Session) extends SessionState {
-    @inline def sessionsByPeer(peer: String = session.peer) = sessionManager.getSessionsByPeer(peer)
+    @inline def sessionsByPeer(peer: String = session.peer) = app.sessionManager.getSessionsByPeer(peer)
   }
 
   class WorkerActor(permitDBQuery: Boolean, permitDBUpdate: Boolean) extends Actor with ActorLogging {

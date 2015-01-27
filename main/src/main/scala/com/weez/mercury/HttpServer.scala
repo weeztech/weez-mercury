@@ -33,7 +33,7 @@ object HttpServer {
     }
   }
 
-  class ServerActor(serviceManager: ServiceManager, config: Config) extends HttpServiceActor {
+  class ServerActor(app: Application, config: Config) extends HttpServiceActor {
     val host = config.getString("host")
     val port = config.getInt("port")
 
@@ -100,18 +100,16 @@ object HttpServer {
 
     def withPeer = new Directive[String :: HNil] {
       def happly(f: String :: HNil => Route) = ctx => {
-        val sessionManager = serviceManager.sessionManager
-        val peer = ctx.request.cookies.find(_.name == PEER_NAME) match {
-          case Some(x) => sessionManager.createPeer(x.content)
-          case None => sessionManager.createPeer("")
-        }
+        val sessionManager = app.sessionManager
+        val peer = sessionManager.createPeer(
+          ctx.request.cookies.find(_.name == PEER_NAME).map(_.content))
         f(peer :: HNil)(ctx)
       }
     }
 
     def withSession(peer: String) = new Directive[String :: HNil] {
       def happly(f: String :: HNil => Route) = ctx => {
-        val sessionManager = serviceManager.sessionManager
+        val sessionManager = app.sessionManager
         val session = sessionManager.createSession(peer)
         f(session.id :: HNil)(ctx)
       }
@@ -130,13 +128,17 @@ object HttpServer {
         case Some(x: JsObject) => ModelObject.parse(x)
         case _ => ErrorCode.InvalidRequest.raise
       }
-      serviceManager.postRequest(peer, sid, api, req).onComplete {
-        case Success(out) =>
-          import akka.event.Logging._
-          val costTime = (System.nanoTime - startTime) / 1000000 // ms
-          log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
-          complete(out.toString)(ctx)
-        case Failure(ex) => exceptionHandler(ex)(ctx)
+      val session = app.sessionManager.getAndLockSession(sid).getOrElse(ErrorCode.InvalidSessionID.raise)
+      app.serviceManager.postRequest(session, api, req).onComplete { result =>
+        app.sessionManager.returnAndUnlockSession(session)
+        result match {
+          case Success(out) =>
+            import akka.event.Logging._
+            val costTime = (System.nanoTime - startTime) / 1000000 // ms
+            log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
+            complete(ModelObject.toJson(out).toString())(ctx)
+          case Failure(ex) => exceptionHandler(ex)(ctx)
+        }
       }
     }
   }

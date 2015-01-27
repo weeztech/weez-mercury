@@ -6,6 +6,10 @@ import com.typesafe.config.Config
 
 object App {
   def main(args: Array[String]): Unit = {
+    start(args)
+  }
+
+  def start(args: Array[String]) = {
     val system = ActorSystem("mercury")
     // use 'kill -15' (SIGTERM) or 'kill -2' (SIGINT) to terminate this application.
     // do NOT use 'kill -9' (SIGKILL), otherwise the shutdown hook will not work.
@@ -17,15 +21,13 @@ object App {
     })
     val config = system.settings.config.getConfig("weez-mercury")
     val app = new ApplicationImpl(system, config)
-    system.registerOnTermination {
-      app.close()
-    }
     if (app.config.getBoolean("http.enable")) {
       system.actorOf(Props(classOf[HttpServer.ServerActor], app, config.getConfig("http")), "http")
     }
     if (config.getBoolean("akka.enable")) {
       system.actorOf(Props(classOf[AkkaServer.ServerActor], app), "akka")
     }
+    app
   }
 
   import common._
@@ -39,6 +41,8 @@ object App {
     def app = this
 
     def serviceManager = this
+
+    val sessionManager = new SessionManager(this, config)
 
     val remoteCalls = {
       val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
@@ -81,6 +85,11 @@ object App {
         }
       }
       builder.result()
+    }
+
+    override def close() = {
+      system.shutdown()
+      super.close()
     }
   }
 
