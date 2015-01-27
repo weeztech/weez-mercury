@@ -40,28 +40,6 @@ trait DBSessionUpdatable extends DBSessionQueryable {
   def del[K: Packer](key: K): Unit
 }
 
-trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
-  override def slice(from: Int, until: Int): Cursor[T] = throw new UnsupportedOperationException
-
-  @inline final override def take(n: Int): Cursor[T] = slice(0, n)
-
-  @inline final override def drop(n: Int): Cursor[T] = slice(n, Int.MaxValue)
-
-  @inline final override def toSeq = to[Seq]
-
-  @inline final override def toTraversable: Traversable[T] = toSeq
-
-  @inline final override def toIterable: Iterable[T] = toSeq
-
-  /**
-   * DO NOT CALL THIS METHOD.
-   * delayed db operation may cause unexpected errors.
-   */
-  @inline final override def toStream = ???
-
-  override def close(): Unit
-}
-
 trait IndexBase[K, V <: Entity] {
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
@@ -172,23 +150,22 @@ abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) exte
   private[common] lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
-abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] with UniqueIndex[Long, V] {
+abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] {
   private[common] val impl = EntityCollections.newHost[V](name)
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = impl.update(value)
 
-  @inline final override def delete(id: Long)(implicit db: DBSessionUpdatable): Unit = impl.delete(id)
+  @inline final def delete(id: Long)(implicit db: DBSessionUpdatable): Unit = impl.delete(id)
 
-  @inline final override def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl(id)
+  @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl(id)
 
   @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final override def apply(range: Range[Long], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] =
-    impl(range, forward)
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl()
 
   @inline final override def addListener(listener: EntityCollectionListener[V]) = {
     impl.addListener(listener)

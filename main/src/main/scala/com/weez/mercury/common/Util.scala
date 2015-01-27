@@ -136,4 +136,18 @@ object Util {
         "-" + m.matched.toLowerCase
     })
   }
+
+  def escapeString(v: String) = {
+    val re = "\t|\n|\r|\"".r
+    re.replaceAllIn(v, m => {
+      m.toString() match {
+        case "\t" => "\\t"
+        case "\n" => "\\n"
+        case "\r" => "\\r"
+        case "\"" => "\\\""
+      }
+    })
+  }
+
+  def showString(v: String) = "\"" + escapeString(v) + "\""
 }

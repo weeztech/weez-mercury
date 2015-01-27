@@ -7,22 +7,21 @@ object DBDebugService extends RemoteService {
     import c._
     val prefix: String = request.prefix
     val cur =
-      if (prefix.length > 0) {
+      (if (prefix.length > 0) {
         EntityMetaCollection.byName(prefix.asPrefix)
       } else {
         EntityMetaCollection()
+      }) map { m =>
+        ModelObject("id" -> m.id,
+          "name" -> m.name,
+          "abstract" -> m.isAbstract,
+          "toplevel" -> m.isTopLevel,
+          "columns" -> m.columns.map { c =>
+            ModelObject("name" -> c.name, "type" -> c.tpe.toString)
+          },
+          "parents" -> m.parents)
       }
-    val itor = cur map { m =>
-      ModelObject("id" -> m.id,
-        "name" -> m.name,
-        "abstract" -> m.isAbstract,
-        "toplevel" -> m.isTopLevel,
-        "columns" -> m.columns.map { c =>
-          ModelObject("name" -> c.name, "type" -> c.tpe.toString)
-        },
-        "parents" -> m.parents)
-    }
-    completeWithPager(itor, "id")
+    completeWithPager(cur, "id")
     cur.close()
   }
 
@@ -30,25 +29,24 @@ object DBDebugService extends RemoteService {
     import c._
     val prefix: String = request.prefix
     val cur =
-      if (prefix.length > 0) {
+      (if (prefix.length > 0) {
         CollectionMetaCollection.byName(prefix.asPrefix)
       } else {
         CollectionMetaCollection()
+      }) map { m =>
+        ModelObject("id" -> m.id,
+          "name" -> m.name,
+          "root" -> m.isRoot,
+          "valuetype" -> m.valueType.toString,
+          "prefix" -> m.prefix,
+          "indexes" -> m.indexes.map { i =>
+            ModelObject("name" -> i.name,
+              "keytype" -> i.key.toString,
+              "unique" -> i.unique,
+              "prefix" -> i.prefix)
+          })
       }
-    val itor = cur map { m =>
-      ModelObject("id" -> m.id,
-        "name" -> m.name,
-        "root" -> m.isRoot,
-        "valuetype" -> m.valueType.toString,
-        "prefix" -> m.prefix,
-        "indexes" -> m.indexes.map { i =>
-          ModelObject("name" -> i.name,
-            "keytype" -> i.key.toString,
-            "unique" -> i.unique,
-            "prefix" -> i.prefix)
-        })
-    }
-    completeWithPager(itor, "id")
+    completeWithPager(cur, "id")
     cur.close()
   }
 

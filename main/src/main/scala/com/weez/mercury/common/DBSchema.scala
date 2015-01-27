@@ -77,7 +77,7 @@ object DBType {
 
   @packable
   case class CollectionMeta(id: Long, name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends DBType with Named with Entity {
-    def indexPrefixOf(idx: String) = indexes.find(_.name == name).get.prefix
+    def indexPrefixOf(name: String) = indexes.find(_.name == name).get.prefix
   }
 
 }

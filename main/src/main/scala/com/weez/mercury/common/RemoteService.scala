@@ -19,12 +19,12 @@ trait RemoteService {
     throw new ProcessException(ErrorCode.Fail, message)
   }
 
-  def completeWithPager[T](cur: Iterator[T], keyprop: String)(implicit c: Context): Unit = {
+  def completeWithPager[T](cur: Cursor[T], keyprop: String)(implicit c: Context): Unit = {
     import c._
     if (request.hasProperty("start")) {
       val start: Int = request.start
       val count: Int = request.count
-      var arr = cur.drop(start).take(count + 1).toSeq
+      var arr = cur.slice(start, start + count + 1).toSeq
       val hasMore = arr.length == count + 1
       if (hasMore) arr = arr.slice(0, count)
       completeWith("items" -> arr, "keyprop" -> keyprop, "hasMore" -> hasMore)

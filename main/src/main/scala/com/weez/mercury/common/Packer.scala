@@ -23,13 +23,13 @@ trait Packer[T] {
 @tuplePackers
 @caseClassPackers
 object Packer extends CollectionPackers {
-  val TYPE_STRING: Byte = 1
-  val TYPE_UINT32: Byte = 2
-  val TYPE_UINT64: Byte = 3
-  val TYPE_FALSE: Byte = 4
-  val TYPE_TRUE: Byte = 5
-  val TYPE_RAW: Byte = 6
-  val TYPE_TUPLE: Byte = 10
+  val TYPE_STRING: Byte = 11
+  val TYPE_UINT32: Byte = 12
+  val TYPE_UINT64: Byte = 13
+  val TYPE_FALSE: Byte = 14
+  val TYPE_TRUE: Byte = 15
+  val TYPE_RAW: Byte = 16
+  val TYPE_TUPLE: Byte = 17
   val TYPE_END: Byte = 0
 
   @inline def of[T](implicit p: Packer[T]) = p
@@ -207,7 +207,7 @@ object Packer extends CollectionPackers {
 
   implicit val DateTimePacker = map[org.joda.time.DateTime, Long](_.getMillis, new org.joda.time.DateTime(_))
 
-  implicit def optionPacker[T](implicit p: Packer[T]) =
+  implicit def optionPacker[T](implicit p: Packer[T]): Packer[Option[T]] =
     new Packer[Option[T]] {
       def pack(value: Option[T], buf: Array[Byte], offset: Int) = {
         buf(offset) = TYPE_TUPLE
