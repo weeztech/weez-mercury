@@ -2,7 +2,7 @@ package com.weez.mercury.common
 
 import akka.event.LoggingAdapter
 import com.weez.mercury.collect
-import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
+import com.weez.mercury.common.EntityCollections.{DataViewImpl, SubHostCollectionImpl}
 
 trait Context extends RangeImplicits {
   implicit val context: this.type = this
@@ -42,10 +42,10 @@ trait DBSessionUpdatable extends DBSessionQueryable {
 
 trait IndexBase[K, V <: Entity] {
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[K, V] =
     this.apply(Range.All)
 
-  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[K, V]
 }
 
 /**
@@ -93,15 +93,20 @@ trait Entity {
 
 import scala.reflect.runtime.universe.TypeTag
 
-trait EntityCollectionListener[V <: Entity] {
+trait EntityCollectionListener[-V <: Entity] {
+  val canListenEntityInsert: Boolean = true
 
   def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit
 
+  val canListenEntityUpdate: Boolean = true
+
   def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit
 
-  def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit
+  val canListenEntityDelete: Boolean = true
 
+  def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit
 }
+
 
 @collect
 trait EntityCollection[V <: Entity] {
@@ -117,44 +122,43 @@ trait EntityCollection[V <: Entity] {
 
   def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V]
 
-  def addListener(listener: EntityCollectionListener[V]): Unit
-
-  def removeListener(listener: EntityCollectionListener[V]): Unit
-
   def newEntityID()(implicit db: DBSessionUpdatable): Long
 }
 
-abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
+trait SubEntityPair[O <: Entity, V <: Entity] extends Entity {
+  val owner: Ref[O]
+  val entity: V
+}
 
-  @inline final override def insert(value: V)(implicit db: DBSessionUpdatable): Long = host.insert(ownerID, value)
+abstract class SubCollection[O <: Entity, V <: Entity : Packer : TypeTag](ownerRef: Ref[O]) extends EntityCollection[V] {
+  def this(owner: O) = this(owner.newRef())
 
-  @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerID, value)
+  @inline final override def insert(value: V)(implicit db: DBSessionUpdatable): Long = host.insert(ownerRef, value)
+
+  @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerRef, value)
 
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = host.delete(value.id)
 
 
-  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerID, name, getKey)
+  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerRef, name, getKey)
 
 
-  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerID, name, getKey)
+  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerRef, name, getKey)
 
 
-  @inline final override def addListener(listener: EntityCollectionListener[V]) = host.addSubListener(listener)
+  @inline final def addListener(listener: EntityCollectionListener[SubEntityPair[O, V]]) = host.addListener(listener)
 
 
-  @inline final override def removeListener(listener: EntityCollectionListener[V]) = host.removeSubListener(listener)
+  @inline final def removeListener(listener: EntityCollectionListener[SubEntityPair[O, V]]) = host.removeListener(listener)
 
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = host.newEntityID()
 
-  val ownerID = owner.id
-
-  private[common] lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
+  private[common] lazy val host: SubHostCollectionImpl[O, V] = EntityCollections.forPartitionHost[O, V](this)
 }
 
 abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] {
-  private[common] val impl = EntityCollections.newHost[V](name)
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = impl.newEntityID()
 
@@ -172,10 +176,65 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl()
+  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long, V] = impl(forward)
 
-  @inline final override def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[Long, V] = impl(forward = true)
 
-  @inline final override def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
+  @inline final def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
+  @inline final def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
+
+  private[common] val impl = EntityCollections.newHost[V](name)
+}
+
+abstract class DataView[K: Packer, V: Packer] {
+  dataView =>
+
+  def name: String
+
+  @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = impl(key)
+
+  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[K, V] = impl(range, forward)
+
+  sealed abstract class Tracer[ES <: AnyRef, E <: Entity] {
+    tracer =>
+    def createEntities(): ES
+
+    def put(entity: E, entities: ES)
+
+    def isChanged(oldEntity: E, newEntity: E): Boolean
+
+    abstract class SubTracer[S <: Entity] extends Tracer[ES, S] {
+
+      def getSubRef(source: E): Ref[S]
+
+      def target: RootCollection[S]
+
+      def refIndex: IndexBase[_ >: Ref[S]
+        with Product1[Ref[S]]
+        with Product2[Ref[S], Nothing]
+        with Product3[Ref[S], Nothing, Nothing]
+        with Product4[Ref[S], Nothing, Nothing, Nothing]
+        with Product5[Ref[S], Nothing, Nothing, Nothing, Nothing]
+        with Product6[Ref[S], Nothing, Nothing, Nothing, Nothing, Nothing]
+        with Product7[Ref[S], Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
+        , E]
+
+      final def createEntities() = tracer.createEntities()
+
+      private[common] val impl = tracer.impl.newSub[S](this)
+    }
+
+    private[common] val impl: EntityCollections.DataViewImpl[K, V]#Tracer[ES, E]
+  }
+
+  abstract class Meta[ES <: AnyRef, ROOT <: Entity] extends Tracer[ES, ROOT] {
+    def root: RootCollection[ROOT]
+
+    def extract(entities: ES): Map[K, V]
+
+    private[common] val impl = dataView.impl.newMeta(this)
+  }
+
+  private[common] val impl: DataViewImpl[K, V] = EntityCollections.newDataView[K, V](name)
 }

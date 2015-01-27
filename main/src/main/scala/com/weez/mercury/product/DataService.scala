@@ -43,8 +43,8 @@ object DataService extends RemoteService {
 
 @packable
 case class ProductModel(code: String,
-                         title: String,
-                         description: String) extends Entity
+                        title: String,
+                        description: String) extends Entity
 
 object ProductModelCollection extends RootCollection[ProductModel] {
   def name = "product-model"
@@ -107,7 +107,7 @@ object SaleOrder {
   implicit val packer = Packer.caseClass(SaleOrder.apply _)
 }
 
-class SaleOrderRoomItems(owner: Entity) extends SubCollection[RoomItem](owner) {
+class SaleOrderRoomItems(owner: SaleOrder) extends SubCollection[SaleOrder, RoomItem](owner) {
   def name = "sale-order-room-items"
 
   lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)

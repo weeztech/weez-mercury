@@ -19,7 +19,7 @@ trait RemoteService {
     throw new ProcessException(ErrorCode.Fail, message)
   }
 
-  def completeWithPager[T](cur: Cursor[T], keyprop: String)(implicit c: Context): Unit = {
+  def completeWithPager[T](cur: Cursor[_,T], keyprop: String)(implicit c: Context): Unit = {
     import c._
     if (request.hasProperty("start")) {
       val start: Int = request.start
