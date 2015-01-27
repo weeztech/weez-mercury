@@ -9,12 +9,12 @@ class DBSessionFactory(dbSession: DBSession) {
       EntityMetaCollection.name,
       DBType.EntityRef("entity-meta"),
       DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
-      isRoot = true, 0),
+      isRoot = true, 1),
     CollectionMetaCollection.name -> DBType.CollectionMeta(0,
       CollectionMetaCollection.name,
       DBType.EntityRef("collection-meta"),
       DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
-      isRoot = true, 0))
+      isRoot = true, 2))
 
   val KEY_OBJECT_ID_COUNTER = "object-id-counter"
   val KEY_PREFIX_ID_COUNTER = "prefix-id-counter"

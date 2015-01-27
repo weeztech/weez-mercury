@@ -398,8 +398,7 @@ private object EntityCollections {
         pv.unapply(dbCursor.value())
       } catch {
         case ex: IllegalArgumentException =>
-          println("start : " + PackerDebug.show(rangeStart))
-          println("end   : " + PackerDebug.show(rangeEnd))
+          println("range : " + range)
           println("key   : " + PackerDebug.show(dbCursor.key()))
           println("value : " + PackerDebug.show(dbCursor.value()))
           throw ex

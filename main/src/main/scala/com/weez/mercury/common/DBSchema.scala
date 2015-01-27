@@ -100,7 +100,7 @@ class DBTypeCollector(g: GlobalSettings) {
   import scala.collection.mutable
   import org.joda.time.DateTime
 
-  val resolvedDBTypes = mutable.Map[String, DBType]()
+  val resolvedDBTypes = mutable.ArrayBuffer[DBType]()
   val resolvedEntityTypes = mutable.Map[String, String]()
   val unresolvedEntityTypes = mutable.Map[String, mutable.Set[String]]()
   val delayResolvedEntityTypes = mutable.Map[String, Type]()
@@ -128,6 +128,7 @@ class DBTypeCollector(g: GlobalSettings) {
       nameMapping.put(dbtype.name, symbolName) match {
         case Some(x) => throw new Error(s"db-name conflict: $symbolName and $x")
         case None =>
+          resolvedDBTypes.append(dbtype)
           resolvedEntityTypes.put(symbolName, dbtype.name)
           unresolvedEntityTypes.remove(symbolName)
       }
