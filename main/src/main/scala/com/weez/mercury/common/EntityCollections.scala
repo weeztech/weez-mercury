@@ -65,9 +65,9 @@ private object EntityCollections {
   val hostsByType = collection.mutable.HashMap[TypeTag[_], HostCollectionImpl[_]]()
 
 
-//  trait IndexImplBase[V] {
-//    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
-//  }
+  //  trait IndexImplBase[V] {
+  //    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
+  //  }
 
   trait MayBeReverseIndex[V <: Entity] {
     def canBeReverseIndex: Boolean
@@ -240,21 +240,34 @@ private object EntityCollections {
     }
 
     @inline final def checkID(id: Long)(implicit db: DBSessionUpdatable): Long = {
-      if (collectionIDOf(id) != this.meta.id) {
-        throw new IllegalArgumentException("id is not belong this collection")
+      if (collectionIDOf(id) != this.meta.prefix) {
+        throw new IllegalArgumentException( s"""id of $id doesn't belong to this collection""")
       }
       id
     }
 
-    final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-      val id = checkID(value.id)
-      lazy val old: Option[V] = db.get[Long, V](id)
+    final def insert(value: V)(implicit db: DBSessionUpdatable): Long = {
+      val id = this.newEntityID()
+      value._id = id
       for (l <- this.listeners2) {
-        if (old.isDefined) {
-          l.onEntityUpdate(old.get, value)
-        } else {
-          l.onEntityInsert(value)
-        }
+        l.onEntityInsert(value)
+      }
+      db.put(id, value)
+      id
+    }
+
+    final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
+      if (value._id == 0l) {
+        insert(value)
+        return
+      }
+      val id = checkID(value._id)
+      val old: Option[V] = db.get[Long, V](id)
+      if (old.isEmpty) {
+        throw new IllegalArgumentException( s"""entity who's id is $id doesn't exist""")
+      }
+      for (l <- this.listeners2) {
+        l.onEntityUpdate(old.get, value)
       }
       db.put(id, value)
     }
@@ -420,15 +433,25 @@ private object EntityCollections {
 
   @packable
   case class SCE[V <: Entity](ownerID: Long, v: V) extends Entity {
-    @inline override final def id = v.id
+    this._id = v.id
   }
 
   import scala.reflect.runtime.universe._
 
   class SubHostCollectionImpl[V <: Entity : Packer : TypeTag](name: String) extends HostCollectionImpl[SCE[V]](name) {
     subHost =>
-    final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
-      super.update(SCE(ownerID, value))
+    @inline final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
+      if (value.id == 0) {
+        insert(ownerID, value)
+      } else {
+        super.update(SCE(ownerID, value))
+      }
+    }
+
+    @inline final def insert(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Long = {
+      val id = super.insert(SCE(ownerID, value))
+      value._id = id
+      id
     }
 
 
@@ -504,7 +527,8 @@ private object EntityCollections {
 }
 
 
-abstract class DataView[K: Packer, V: Packer] {
+abstract class DataView[K, V](implicit kPacker: Packer[K], vPacker: Packer[V]) {
+  private val fullKeyPacker = implicitly[Packer[(Int, K)]]
   private var viewID = 0
 
   private def getViewID(implicit db: DBSessionQueryable) = {
@@ -515,12 +539,11 @@ abstract class DataView[K: Packer, V: Packer] {
   }
 
   private type FullKey = (Int, K)
-  private implicit val fullKeyPacker = implicitly[Packer[(Int, K)]]
 
   def name: String
 
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
-  
+
   protected sealed trait Tracer[BUF <: AnyRef, E <: Entity] extends EntityCollectionListener[E] {
     tracer =>
 
@@ -659,10 +682,7 @@ abstract class DataView[K: Packer, V: Packer] {
 
     private[common] val bufCreator = createBuf _
 
-    def extractKV(buf: BUF): Seq[(K, V)]
-
-    def extractK(buf: BUF): Seq[V] = extractKV(buf).map(_._2)
-
+    def extract(buf: BUF): Map[K, V]
 
     override final def onEntityInsert(newEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
       val newBuf = createBuf()
@@ -684,18 +704,32 @@ abstract class DataView[K: Packer, V: Packer] {
       this.traceUp(oldEntity, oldBuf, newEntity, newBuf, null)
     }
 
+    @inline private final def putKV(k: K, v: V)(implicit db: DBSessionUpdatable) = {
+      db.put((getViewID, k), v)(fullKeyPacker, vPacker)
+    }
+
+    @inline private final def del(k: K)(implicit db: DBSessionUpdatable) = {
+      db.del((getViewID, k))(fullKeyPacker)
+    }
+
     private[common] def traceUp(oldEntity: ROOT, oldBuf: BUF, newEntity: ROOT, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
       traceDownSub(oldEntity, oldBuf, newEntity, newBuf, excludeSubTracer)
       if ((oldBuf ne null) && (newBuf ne null)) {
-        val oldKV = this.extractKV(oldBuf)
-        val newKV = this.extractKV(newBuf)
-
+        val newKV = this.extract(newBuf)
+        for ((k, v) <- newKV) {
+          putKV(k, v)
+        }
+        for ((k, _) <- this.extract(oldBuf)) {
+          if (newKV.get(k).isEmpty) {
+            del(k)
+          }
+        }
       } else if (newBuf ne null) {
-        this.extractKV(newBuf).foreach { kv =>
-          db.put(kv._1, kv._2)
+        for ((k, v) <- this.extract(newBuf)) {
+          db.put(k, v)
         }
       } else {
-        this.extractK(oldBuf).foreach { k =>
+        for ((k, _) <- this.extract(oldBuf)) {
           db.del(k)
         }
       }
@@ -710,8 +744,4 @@ abstract class DataView[K: Packer, V: Packer] {
   }
 
   protected def meta(): DataViewMeta[_, _]
-
-  private lazy val preparedMeta = {
-    val meta = this.meta()
-  }
 }

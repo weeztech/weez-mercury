@@ -42,10 +42,9 @@ object DataService extends RemoteService {
 }
 
 @packable
-case class ProductModel(id: Long,
-                        code: String,
-                        title: String,
-                        description: String) extends Entity
+case class ProductModel(code: String,
+                         title: String,
+                         description: String) extends Entity
 
 object ProductModelCollection extends RootCollection[ProductModel] {
   def name = "product-model"
@@ -55,8 +54,7 @@ object ProductModelCollection extends RootCollection[ProductModel] {
 }
 
 @packable
-case class Product(id: Long,
-                   code: String,
+case class Product(code: String,
                    title: String,
                    description: String,
                    price: Double) extends Entity
@@ -69,8 +67,7 @@ object ProductCollection extends RootCollection[Product] {
 }
 
 @packable
-case class Assistant(id: Long,
-                     price: Double,
+case class Assistant(price: Double,
                      staff: Ref[Staff],
                      description: String) extends Entity
 
@@ -86,7 +83,7 @@ object AssistantCollection extends RootCollection[Assistant] {
 }
 
 @packable
-case class Customer(id: Long, code: String,
+case class Customer(code: String,
                     title: String) extends Entity
 
 object CustomerCollection extends RootCollection[Customer] {
@@ -95,8 +92,7 @@ object CustomerCollection extends RootCollection[Customer] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class SaleOrder(id: Long,
-                     code: String,
+case class SaleOrder(code: String,
                      time: DateTime,
                      customer: Ref[Customer],
                      ctime: DateTime) extends Entity {
@@ -106,7 +102,7 @@ case class SaleOrder(id: Long,
 object SaleOrder {
 
   @packable
-  case class RoomItem(id: Long, saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
+  case class RoomItem(saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
 
   implicit val packer = Packer.caseClass(SaleOrder.apply _)
 }
@@ -132,7 +128,7 @@ object RoomItemCollection extends RootCollection[RoomItem] {
 }
 
 @packable
-case class Room(id: Long, title: String, price: Double, description: String) extends Entity
+case class Room(title: String, price: Double, description: String) extends Entity
 
 object RoomCollection extends RootCollection[Room] {
   def name = "room"

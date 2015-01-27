@@ -84,7 +84,9 @@ trait Ref[+T <: Entity] {
 
 @collect
 trait Entity {
-  def id: Long
+  private[common] var _id: Long = 0
+
+  def id: Long = _id
 
   def newRef() = RefSome[this.type](this.id)
 }
@@ -105,7 +107,8 @@ trait EntityCollectionListener[V <: Entity] {
 trait EntityCollection[V <: Entity] {
   def name: String
 
-  //add or modify
+  def insert(value: V)(implicit db: DBSessionUpdatable): Long
+
   def update(value: V)(implicit db: DBSessionUpdatable): Unit
 
   def delete(value: V)(implicit db: DBSessionUpdatable): Unit
@@ -122,6 +125,8 @@ trait EntityCollection[V <: Entity] {
 }
 
 abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
+
+  @inline final override def insert(value: V)(implicit db: DBSessionUpdatable): Long = host.insert(ownerID, value)
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerID, value)
 
@@ -152,6 +157,8 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
   private[common] val impl = EntityCollections.newHost[V](name)
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = impl.newEntityID()
+
+  @inline final override def insert(value: V)(implicit db: DBSessionUpdatable): Long = impl.insert(value)
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
 

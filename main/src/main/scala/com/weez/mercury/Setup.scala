@@ -52,12 +52,12 @@ object Setup {
 
           import DBType._
 
-          dbtypes.resolvedDBTypes.values foreach {
+          dbtypes.resolvedDBTypes foreach {
             case x: EntityMeta =>
-              EntityMetaCollection.update(EntityMeta(dbc.newEntityId(), x.name, x.columns, x.parents, x.isTopLevel, x.isAbstract))
+              EntityMetaCollection.update(EntityMeta(x.name, x.columns, x.parents, x.isTopLevel, x.isAbstract))
             case x: CollectionMeta =>
               CollectionMetaCollection.update(
-                CollectionMeta(dbc.newEntityId(),
+                CollectionMeta(
                   x.name, x.valueType,
                   x.indexes map { i => IndexMeta(i.name, i.key, i.unique, newPrefix)},
                   x.isRoot, newPrefix))

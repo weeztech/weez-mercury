@@ -70,13 +70,13 @@ object DBType {
   case class ColumnMeta(name: String, tpe: DBTypeRef) extends Named
 
   @packable
-  case class EntityMeta(id: Long, name: String, columns: Seq[ColumnMeta], parents: Seq[String], isTopLevel: Boolean, isAbstract: Boolean) extends DBType with Named with Entity
+  case class EntityMeta(name: String, columns: Seq[ColumnMeta], parents: Seq[String], isTopLevel: Boolean, isAbstract: Boolean) extends DBType with Named with Entity
 
   @packable
   case class IndexMeta(name: String, key: DBTypeRef, unique: Boolean, prefix: Int) extends Named
 
   @packable
-  case class CollectionMeta(id: Long, name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends DBType with Named with Entity {
+  case class CollectionMeta(name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends DBType with Named with Entity {
     def indexPrefixOf(name: String) = indexes.find(_.name == name).get.prefix
   }
 
@@ -137,10 +137,10 @@ class DBTypeCollector(g: GlobalSettings) {
     def resolveEntity(symbol: Symbol, tpe: Type, topLevel: Boolean) = {
       val dbtype =
         if (symbol.isAbstract) {
-          DBType.EntityMeta(0, fullName(symbol), Nil, Nil, isTopLevel = topLevel, isAbstract = true)
+          DBType.EntityMeta(fullName(symbol), Nil, Nil, isTopLevel = topLevel, isAbstract = true)
         } else {
           val ctor = tpe.decl(termNames.CONSTRUCTOR).asMethod
-          DBType.EntityMeta(0, fullName(symbol),
+          DBType.EntityMeta(fullName(symbol),
             ctor.paramLists(0) map { p =>
               DBType.ColumnMeta(localName(p), getTypeRef(p.typeSignature, p.fullName))
             }, Nil, isTopLevel = topLevel, isAbstract = false)
@@ -170,7 +170,7 @@ class DBTypeCollector(g: GlobalSettings) {
           }
         }
       }
-      val dbtype = DBType.CollectionMeta(0, fullName(symbol), valueType,
+      val dbtype = DBType.CollectionMeta(fullName(symbol), valueType,
         builder.result(), tpe <:< rootCollType, 0)
       resolve(dbtype, symbol.fullName)
     }

@@ -67,7 +67,7 @@ object LoginService extends RemoteService {
 }
 
 @packable
-case class User(id: Long, code: String, name: String, password: Array[Byte], staff: Ref[Staff],self: Ref[User]) extends Entity
+case class User(code: String, name: String, password: Array[Byte], staff: Ref[Staff],self: Ref[User]) extends Entity
 
 @packable
 case class Key2(staff: Ref[Staff],id: Long)
@@ -79,7 +79,7 @@ object UserCollection extends RootCollection[User] {
 }
 
 @packable
-case class Staff(id: Long, code: String, name: String) extends Entity
+case class Staff(code: String, name: String) extends Entity
 
 object StaffCollection extends RootCollection[Staff] {
   def name = "staff"

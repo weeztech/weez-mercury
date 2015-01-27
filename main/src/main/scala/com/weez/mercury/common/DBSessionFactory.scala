@@ -5,12 +5,12 @@ class DBSessionFactory(dbSession: DBSession) {
   import akka.event.LoggingAdapter
 
   private val metaCache = scala.collection.mutable.Map(
-    EntityMetaCollection.name -> DBType.CollectionMeta(0,
+    EntityMetaCollection.name -> DBType.CollectionMeta(
       EntityMetaCollection.name,
       DBType.EntityRef("entity-meta"),
       DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
       isRoot = true, 1),
-    CollectionMetaCollection.name -> DBType.CollectionMeta(0,
+    CollectionMetaCollection.name -> DBType.CollectionMeta(
       CollectionMetaCollection.name,
       DBType.EntityRef("collection-meta"),
       DBType.IndexMeta("by-name", DBType.String, unique = true, 0) :: Nil,
