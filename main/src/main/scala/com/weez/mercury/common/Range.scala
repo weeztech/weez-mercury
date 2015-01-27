@@ -60,7 +60,7 @@ object Range {
 
   case class BoundaryRange[A](start: RangeBound[A], end: RangeBound[A])(implicit p: Packer[A]) extends Range[A] {
 
-    import java.util.Arrays
+    import java.util.{Arrays => JArrays}
 
     def keyStart = start match {
       case Min => ByteArrayMin
@@ -68,7 +68,7 @@ object Range {
       case Include(x) => p(x)
       case Exclude(x) =>
         val arr = p(x)
-        Arrays.copyOf(arr, arr.length + 1)
+        JArrays.copyOf(arr, arr.length + 1)
     }
 
     def keyEnd = end match {
@@ -76,7 +76,7 @@ object Range {
       case Max => ByteArrayMax
       case Include(x) =>
         val arr = p(x)
-        Arrays.copyOf(arr, arr.length + 1)
+        JArrays.copyOf(arr, arr.length + 1)
       case Exclude(x) => p(x)
     }
 
@@ -118,33 +118,7 @@ object Range {
     def asPrefix(implicit p: Packer[T]) = PrefixRange(value)
   }
 
-  val ByteArrayMin = new Array[Byte](0)
-  val ByteArrayMax = new Array[Byte](0)
-
-  @inline final def isMin(arr: Array[Byte]) = arr eq ByteArrayMin
-
-  @inline final def isMax(arr: Array[Byte]) = arr eq ByteArrayMax
-
-  object ByteArrayOrdering extends Ordering[Array[Byte]] {
-    def compare(x: Array[Byte], y: Array[Byte]) = {
-      if (x eq y)
-        0
-      else if ((x eq ByteArrayMin) || (y eq ByteArrayMax))
-        -1
-      else if ((x eq ByteArrayMax) || (y eq ByteArrayMin))
-        1
-      else
-        Util.compareUInt8s(x, y)
-    }
-  }
-
-}
-
-object RangeBound {
-
-  import Range._
-
-  val TYPE_MIN: Byte = 0
+  val TYPE_MIN: Byte = 1
   val TYPE_MAX: Byte = -1
 
   class RangeBoundPacker[T](implicit packer: Packer[T]) extends Packer[RangeBound[T]] {
@@ -185,7 +159,35 @@ object RangeBound {
     }
   }
 
-  implicit def rangeBoundPacker[T: Packer]: Packer[RangeBound[T]] = new RangeBoundPacker[T]
+  val ByteArrayMin = Array(TYPE_MIN)
+  val ByteArrayMax = Array(TYPE_MAX)
+
+  @inline final def isMin(arr: Array[Byte]) = arr eq ByteArrayMin
+
+  @inline final def isMax(arr: Array[Byte]) = arr eq ByteArrayMax
+
+  object ByteArrayOrdering extends Ordering[Array[Byte]] {
+    def compare(x: Array[Byte], y: Array[Byte]) = {
+      if (x eq y)
+        0
+      else if ((x eq ByteArrayMin) || (y eq ByteArrayMax))
+        -1
+      else if ((x eq ByteArrayMax) || (y eq ByteArrayMin))
+        1
+      else
+        Util.compareUInt8s(x, y)
+    }
+  }
+
+  import scala.language.implicitConversions
+
+  implicit def value2range[T: Packer](value: T): Range[T] = SingleValueRange(value)
+
+  implicit def value2helper[T](value: T): ValueHelper[T] = new ValueHelper(value)
+}
+
+object RangeBound {
+  implicit def rangeBoundPacker[T: Packer]: Packer[RangeBound[T]] = new Range.RangeBoundPacker[T]
 
   implicit val nothingPacker = rangeBoundPacker[Nothing]
 }
@@ -196,8 +198,8 @@ trait RangeImplicits {
 
   val Min = Range.Min
   val Max = Range.Max
-
-  implicit def value2range[T: Packer](value: T): Range[T] = Range.SingleValueRange(value)
+  val Empty = Range.Empty
+  val All = Range.All
 
   implicit def value2helper[T](value: T): Range.ValueHelper[T] = new Range.ValueHelper(value)
 }

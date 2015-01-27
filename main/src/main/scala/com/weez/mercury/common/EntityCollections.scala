@@ -28,12 +28,11 @@ private object EntityCollections {
     }
   }
 
-  def forPartitionHost[V <: Entity : Packer : TypeTag](pc: SubCollection[V]): SubHostCollectionImpl[V] = {
+  def forPartitionHost[V <: Entity : Packer](pc: SubCollection[V])(implicit typeTag: TypeTag[V]): SubHostCollectionImpl[V] = {
     this.hosts.synchronized {
       this.hosts.get(pc.name) match {
         case Some(host: SubHostCollectionImpl[V]) => host
         case None =>
-          val typeTag = implicitly[TypeTag[V]]
           val host = new SubHostCollectionImpl[V](pc.name)
           this.hosts.put(pc.name, host)
           this.hostsByType.put(typeTag, host)
@@ -44,12 +43,11 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer : TypeTag](name: String): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer](name: String)(implicit typeTag: TypeTag[V]): HostCollectionImpl[V] = {
     this.hosts.synchronized {
       if (this.hosts.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
       }
-      val typeTag = implicitly[TypeTag[V]]
       if (this.hostsByType.contains(typeTag)) {
         throw new IllegalArgumentException( s"""HostCollection typed "$typeTag" exist!""")
       }
@@ -65,9 +63,9 @@ private object EntityCollections {
   val hostsByType = collection.mutable.HashMap[TypeTag[_], HostCollectionImpl[_]]()
 
 
-//  trait IndexImplBase[V] {
-//    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
-//  }
+  //  trait IndexImplBase[V] {
+  //    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
+  //  }
 
   abstract class HostCollectionImpl[V <: Entity : Packer](val name: String, val typeTag: TypeTag[V]) {
     host =>
@@ -224,10 +222,10 @@ private object EntityCollections {
       }
     }
 
-    final def apply(range: Range[Long], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-      new CursorImpl[V, V](range, forward) {
-        override def v2r(v: V): V = v
-      }
+    final def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
+      import Range._
+      val prefix = this.meta.prefix
+      new CursorImpl[V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), true)
     }
 
     @inline final def checkID(id: Long)(implicit db: DBSessionUpdatable): Long = {
@@ -263,12 +261,13 @@ private object EntityCollections {
 
     val indexes = collection.mutable.Map[String, IndexBaseImpl[_]]()
 
-    abstract class HostIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K]) extends IndexBaseImpl[FK](name) {
-      val cursorKeyRangePacker = implicitly[Packer[(Int, RangeBound[K])]]
+    abstract class HostIndexBaseImpl[FK: Packer, K: Packer](name: String) extends IndexBaseImpl[FK](name) {
+      val cursorKeyRangePacker = Packer.of[(Int, RangeBound[K])]
 
       def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-        new CursorImpl[Long, V](range.map(r => (this.getIndexID, r))(cursorKeyRangePacker), forward) {
-          override def v2r(id: Long): V = host(id).get
+        val r = range.map(r => (this.getIndexID, r))(cursorKeyRangePacker)
+        new CursorImpl[Long](r, forward) map { id =>
+          host(id).get
         }
       }
     }
@@ -315,99 +314,63 @@ private object EntityCollections {
     }
   }
 
-  abstract class CursorImpl[V: Packer, R <: Entity](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
-    self =>
-    def v2r(v: V): R
+  class CursorImpl[V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pv: Packer[V]) extends Cursor[V] {
+
+    import com.weez.mercury.debug._
+    import Range.{ByteArrayOrdering => O}
 
     val step = if (forward) 1 else -1
     val rangeStart = range.keyStart
     val rangeEnd = range.keyEnd
-    var dbCursor: DBCursor = null
-    var remaining = 0
-    if (Range.ByteArrayOrdering.compare(rangeStart, rangeEnd) < 0) {
-      dbCursor = db.newCursor()
-      remaining = Int.MaxValue
-      checkRemain(dbCursor.seek(if (forward) rangeStart else rangeEnd), 0)
-    }
-
-    def checkRemain(valid: Boolean, count: Int = 1): Unit = {
-      if (valid) {
-        if (forward) {
-          if (Range.ByteArrayOrdering.compare(dbCursor.key(), rangeEnd) >= 0) {
-            close()
-          } else {
-            remaining -= count
-            if (remaining <= 0) {
-              close()
-            }
-          }
-        } else {
-          //backward
-          val key = dbCursor.key()
-          if (Range.ByteArrayOrdering.compare(key, rangeStart) < 0) {
-            close()
-          } else if (count == 0) {
-            //seek
-            if (Range.ByteArrayOrdering.compare(key, rangeEnd) >= 0) {
-              checkRemain(dbCursor.next(step))
-            }
-          } else {
-            remaining -= count
-            if (remaining <= 0) {
-              close()
-            }
-          }
+    var dbCursor: DBCursor =
+      if (O.compare(rangeStart, rangeEnd) < 0) {
+        val c = db.newCursor()
+        if (forward)
+          c.seek(rangeStart)
+        else {
+          c.seek(rangeEnd)
+          if (c.isValid) c.next(-1)
         }
-      } else {
-        close()
+        c
+      } else null
+
+    def isValid = {
+      dbCursor != null && {
+        val valid =
+          dbCursor.isValid && {
+            if (forward)
+              O.compare(dbCursor.key(), rangeEnd) < 0
+            else
+              O.compare(dbCursor.key(), rangeStart) >= 0
+          }
+        if (!valid) close()
+        valid
       }
     }
 
-    override def size: Int = {
-      var s = 0
-      if (hasNext) {
-        val step = if (forward) 1 else -1
-        do {
-          s += 1
-          checkRemain(dbCursor.next(step))
-        } while (!hasNext)
+    def value = {
+      try {
+        pv.unapply(dbCursor.value())
+      } catch {
+        case ex: IllegalArgumentException =>
+          println("start : " + PackerDebug.show(rangeStart))
+          println("end   : " + PackerDebug.show(rangeEnd))
+          println("key   : " + PackerDebug.show(dbCursor.key()))
+          println("value : " + PackerDebug.show(dbCursor.value()))
+          throw ex
       }
-      s
     }
 
-    override def slice(from: Int, until: Int): Cursor[R] = {
-      if (hasNext) {
-        val r = until - from
-        if (r <= 0 || remaining < from) {
-          close()
-        } else if (from > 0) {
-          var toDrop = from
-          do {
-            val skip = toDrop max 100
-            checkRemain(dbCursor.next(step * skip), skip)
-            toDrop -= skip
-          } while (toDrop > 0 && hasNext)
-        }
-        remaining = remaining min r
-      }
-      this
+    def next() = {
+      if (dbCursor != null)
+        dbCursor.next(step)
     }
 
-    override def next(): R = {
-      if (!hasNext) {
-        throw new IllegalStateException("EOF")
+    def close() = {
+      if (dbCursor != null) {
+        dbCursor.close()
+        dbCursor = null
       }
-      val value = implicitly[Packer[V]].unapply(dbCursor.value())
-      checkRemain(dbCursor.next(step))
-      v2r(value)
-    }
-
-    @inline final def hasNext = remaining > 0
-
-    @inline override final def close() = if (dbCursor != null) {
-      dbCursor.close()
-      dbCursor = null
-      remaining = 0
     }
   }
 
@@ -433,12 +396,13 @@ private object EntityCollections {
       }
     }
 
-    abstract class SubRawIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K]) extends IndexBaseImpl[FK](name) {
-      val cursorKeyRangePacker = implicitly[Packer[(Int, Long, RangeBound[K])]]
+    abstract class SubRawIndexBaseImpl[FK: Packer, K: Packer](name: String) extends IndexBaseImpl[FK](name) {
+      val cursorKeyRangePacker = Packer.of[(Int, Long, RangeBound[K])]
 
       def apply(ownerID: Long, range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-        new CursorImpl[Long, V](range.map(r => (this.getIndexID, ownerID, r))(cursorKeyRangePacker), forward) {
-          override def v2r(id: Long): V = subHost(id).get.v
+        val r = range.map(r => (this.getIndexID, ownerID, r))(cursorKeyRangePacker)
+        new CursorImpl[Long](r, forward) map { id =>
+          subHost(id).get.v
         }
       }
     }
@@ -513,9 +477,9 @@ abstract class DataView[K: Packer, V: Packer] {
 
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
 
-//  def apply(range: Range[K], forward: Boolean): Cursor[(K, V)] = {
-//    ???
-//  }
+  //  def apply(range: Range[K], forward: Boolean): Cursor[(K, V)] = {
+  //    ???
+  //  }
 
   protected sealed trait Tracer[BUF <: AnyRef, E <: Entity] extends EntityCollectionListener[E] {
     tracer =>
