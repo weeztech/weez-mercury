@@ -63,19 +63,27 @@ trait Cursor[+T <: Entity] extends Iterator[T] with AutoCloseable {
 }
 
 trait IndexBase[K, V <: Entity] {
-  type KeyType = K
-  type ValueType = V
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
     this.apply(Range.All)
 
-  def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V]
-
   def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
+/**
+ * RootCollection.Index : (indexID:Int, userKey: K, entityID: Long) -> Long
+ * SubCollection.Index : (indexID:Int, ownerID: Long, userKey: K, entityID: Long) -> Long
+ * @tparam K Key
+ * @tparam V Entity
+ */
 trait Index[K, V <: Entity] extends IndexBase[K, V]
 
+/**
+ * RootCollection.UniqueIndex : (indexID:Int, userKey: K) ->Long
+ * SubCollection.UniqueIndex : (indexID:Int, ownerID: Long, userKey: K) -> Long
+ * @tparam K Key
+ * @tparam V Entity
+ */
 trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
   self =>
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V]
@@ -105,20 +113,15 @@ trait Entity {
 
 import scala.reflect.runtime.universe.TypeTag
 
-trait EntityCollectionListener[V <: Entity]
+trait EntityCollectionListener[V <: Entity] {
 
-trait EntityCollectionDeleteListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable)
+  def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit
+
+  def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit
+
+  def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit
+
 }
-
-trait EntityCollectionUpdateListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable)
-}
-
-trait EntityCollectionInsertListener[V <: Entity] extends EntityCollectionListener[V] {
-  def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable)
-}
-
 
 @collect
 trait EntityCollection[V <: Entity] {
@@ -166,11 +169,11 @@ abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) exte
     this.host.removeSubListener(listener)
   }
 
-  private lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
+  private[common] lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
 abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] with UniqueIndex[Long, V] {
-  private val impl = EntityCollections.newHost[V](name)
+  private[common] val impl = EntityCollections.newHost[V](name)
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
 
@@ -183,9 +186,6 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
   @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
-
-  @inline final override def apply(start: Long, end: Long)(implicit db: DBSessionQueryable): Cursor[V] =
-    impl(Range.BoundaryRange(Range.Include(start), Range.Include(end)), true)
 
   @inline final override def apply(range: Range[Long], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] =
     impl(range, forward)

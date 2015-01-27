@@ -102,7 +102,7 @@ object Range {
     def map[B: Packer](f: RangeBound[A] => B) = PrefixRange(f(Include(prefix)))
   }
 
-  class ValueHepler[T](val value: T) extends AnyVal {
+  class ValueHelper[T](val value: T) extends AnyVal {
     def +-+(end: T)(implicit p: Packer[T]) = BoundaryRange(Include(value), Include(end))
 
     def +--(end: T)(implicit p: Packer[T]) = BoundaryRange(Include(value), Exclude(end))
@@ -199,6 +199,6 @@ trait RangeImplicits {
 
   implicit def value2range[T: Packer](value: T): Range[T] = Range.SingleValueRange(value)
 
-  implicit def value2helper[T](value: T): Range.ValueHepler[T] = new Range.ValueHepler(value)
+  implicit def value2helper[T](value: T): Range.ValueHelper[T] = new Range.ValueHelper(value)
 }
 

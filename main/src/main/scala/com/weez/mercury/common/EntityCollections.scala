@@ -1,15 +1,15 @@
 package com.weez.mercury.common
 
+
 import scala.reflect.runtime.universe.TypeTag
 
 private object EntityCollections {
-
 
   @inline final def collectionIDOf(entityID: Long): Int = (entityID >>> 48).asInstanceOf[Int]
 
   @inline final def entityIDOf(collectionID: Int, rawID: Long): Long = (rawID & 0xFFFFFFFFFFFFL) | (collectionID.asInstanceOf[Long] << 48)
 
-  def getEntity[V <: Entity](id: Long)(implicit db: DBSessionQueryable): V = {
+  @inline final def getEntity[V <: Entity](id: Long)(implicit db: DBSessionQueryable): V = {
     this.getHost(collectionIDOf(id)).apply(id).get.asInstanceOf[V]
   }
 
@@ -64,8 +64,15 @@ private object EntityCollections {
   val hostsByID = collection.mutable.HashMap[Int, HostCollectionImpl[_]]()
   val hostsByType = collection.mutable.HashMap[TypeTag[_], HostCollectionImpl[_]]()
 
+
+//  trait IndexImplBase[V] {
+//    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
+//  }
+
   abstract class HostCollectionImpl[V <: Entity : Packer](val name: String, val typeTag: TypeTag[V]) {
     host =>
+    val valuePacker = implicitly[Packer[V]]
+
     @volatile var _meta: DBType.CollectionMeta = null
 
     def bindDB()(implicit db: DBSessionQueryable): Unit = {
@@ -102,16 +109,13 @@ private object EntityCollections {
       meta.indexPrefixOf(name)
     }
 
-    abstract class IndexBaseImpl[K: Packer](keyGetter: V => K)
-      extends UniqueIndex[K, V]
-      with EntityCollectionDeleteListener[V]
-      with EntityCollectionUpdateListener[V]
-      with EntityCollectionInsertListener[V] {
+    abstract class IndexBaseImpl[FK](val name: String)(implicit fullKeyPacker: Packer[FK])
+      extends EntityCollectionListener[V] {
       index =>
 
-      host.addListener(this)
+      def hostCollection = host
 
-      val name: String
+      host.addListener(this)
 
       var indexID = 0
 
@@ -122,95 +126,86 @@ private object EntityCollections {
         this.indexID
       }
 
-      implicit final val fullKeyPacker = implicitly[Packer[(Int, K)]]
+      def v2fk(value: V)(implicit db: DBSessionQueryable): FK
 
-      @inline final def getFullKey(key: K)(implicit db: DBSessionQueryable): (Int, K) = (this.getIndexID, key)
-
-      @inline final def getFullKeyOfValue(value: V)(implicit db: DBSessionQueryable): (Int, K) = getFullKey(keyGetter(value))
-
-      @inline final def getRefID(key: K)(implicit db: DBSessionQueryable): Option[Long] = db.get(getFullKey(key))(fullKeyPacker, implicitly[Packer[Long]])
-
-      @inline final override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
-        this.getRefID(key).flatMap(db.get[Long, V])
-      }
-
-      @inline final override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
-        this.getRefID(key).foreach(host.delete)
-      }
-
-      @inline final override def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V] =
-        this.apply(Range.BoundaryRange(Range.Include(start), Range.Include(end)))
-
-      @inline final override def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = {
-        this.newCursor(range.map(r => (this.getIndexID, r)), forward)
-      }
-
-      @inline final def newCursor(range: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = {
-        new CursorImpl[K, Long, V](range, forward) {
-          override def v2r(id: Long): V = db.get[Long, V](id).get
+      @inline final def deleteByFullKey(fullKey: FK)(implicit db: DBSessionUpdatable): Unit = {
+        val id = db.get[FK, Long](fullKey)
+        if (id.isDefined) {
+          host.delete(id.get)
         }
       }
 
-      @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-        host.update(value)
+      @inline final def getByFullKey(fullKey: FK)(implicit db: DBSessionQueryable): Option[V] = {
+        val id = db.get[FK, Long](fullKey)
+        if (id.isDefined) db.get[Long, V](id.get) else None
       }
 
       def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-        db.put(this.getFullKeyOfValue(newEntity), newEntity.id)(this.fullKeyPacker, implicitly[Packer[Long]])
+        db.put(v2fk(newEntity), newEntity.id)
       }
 
       def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-        db.del(this.getFullKeyOfValue(oldEntity))(this.fullKeyPacker)
+        db.del(v2fk(oldEntity))
       }
 
       def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-        val oldIndexEntryKey = keyGetter(oldEntity)
-        val newIndexEntryKey = keyGetter(newEntity)
+        val oldIndexEntryKey = v2fk(oldEntity)
+        val newIndexEntryKey = v2fk(newEntity)
         if (oldIndexEntryKey != newIndexEntryKey) {
-          db.del(this.getFullKey(oldIndexEntryKey))
-          db.put(this.getFullKey(newIndexEntryKey), newEntity.id)
+          db.del(oldIndexEntryKey)
+          db.put(newIndexEntryKey, newEntity.id)
         }
       }
 
     }
 
-    val indexes = collection.mutable.Map[String, IndexBaseImpl[_]]()
+    private case class ListenerInfo(l: EntityCollectionListener[V], var refCount: Int)
 
+    private val listeners = scala.collection.mutable.AnyRefMap[EntityCollectionListener[_], ListenerInfo]()
+    @volatile private var listeners2: Seq[EntityCollectionListener[V]] = Seq.empty
+
+    def regListener[VL <: Entity](listener: EntityCollectionListener[VL], v2vl: Option[V => VL], reg: Boolean): Unit = {
+      listeners synchronized {
+        if (reg) {
+          listeners.get(listener) match {
+            case Some(x: ListenerInfo) =>
+              x.refCount += 1
+              return
+            case None =>
+              listeners.update(listener, ListenerInfo(v2vl.fold(listener.asInstanceOf[EntityCollectionListener[V]])(
+                v2vl => new EntityCollectionListener[V] {
+                  override def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+                    listener.onEntityInsert(v2vl(newEntity))
+                  }
+
+                  override def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+                    listener.onEntityUpdate(v2vl(oldEntity), v2vl(newEntity))
+                  }
+
+                  override def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+                    listener.onEntityDelete(v2vl(oldEntity))
+                  }
+                }
+              ), 1))
+          }
+        } else {
+          val li = listeners.get(listener).get
+          if (li.refCount == 1) {
+            listeners.remove(listener)
+          } else {
+            li.refCount -= 1
+            return
+          }
+        }
+        listeners2 = listeners.values.map(l => l.l).toSeq
+      }
+    }
 
     @inline final def addListener(listener: EntityCollectionListener[V]) =
       this.regListener(listener, None, reg = true)
 
     @inline final def removeListener(listener: EntityCollectionListener[V]) =
       this.regListener(listener, None, reg = false)
-
-    def regListener[VL <: Entity](listenerKey: EntityCollectionListener[VL], v2vl: Option[V => VL], reg: Boolean): Unit = {
-
-    }
-
-    /**
-     * 内部索引和外部的Extend索引
-     */
-    private var idxUpdaters = Seq[IndexEntryUpdater[V]]()
-    private var idxInserters = Seq[IndexEntryInserter[V]]()
-    private var idxDeleters = Seq[IndexEntryDeleter[V]]()
-
-    def registerIndexEntryHelper(er: AnyRef): Unit = {
-      er match {
-        case er: IndexEntryUpdater[V] =>
-          this.idxUpdaters :+= er
-        case _ =>
-      }
-      er match {
-        case er: IndexEntryInserter[V] =>
-          this.idxInserters :+= er
-        case _ =>
-      }
-      er match {
-        case er: IndexEntryDeleter[V] =>
-          this.idxDeleters :+= er
-        case _ =>
-      }
-    }
 
     @inline final def fixID(id: Long)(implicit db: DBSessionQueryable) = entityIDOf(this.meta.prefix, id)
 
@@ -230,7 +225,7 @@ private object EntityCollections {
     }
 
     final def apply(range: Range[Long], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-      new CursorImpl[Long, V, V](range, forward) {
+      new CursorImpl[V, V](range, forward) {
         override def v2r(v: V): V = v
       }
     }
@@ -244,17 +239,12 @@ private object EntityCollections {
 
     final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
       val id = checkID(value.id)
-      if (!(this.idxUpdaters.isEmpty && this.idxInserters.isEmpty)) {
-        //有索引，需要更新索引
-        db.get(id) match {
-          case Some(old) =>
-            for (i <- this.idxUpdaters) {
-              i.onKeyEntityUpdate(old, value)
-            }
-          case _ =>
-            for (i <- this.idxInserters) {
-              i.onKeyEntityInsert(value)
-            }
+      lazy val old: Option[V] = db.get[Long, V](id)
+      for (l <- this.listeners2) {
+        if (old.isDefined) {
+          l.onEntityUpdate(old.get, value)
+        } else {
+          l.onEntityInsert(value)
         }
       }
       db.put(id, value)
@@ -262,90 +252,70 @@ private object EntityCollections {
 
     final def delete(id: Long)(implicit db: DBSessionUpdatable): Unit = {
       checkID(id)
-      if (this.idxDeleters.isEmpty) {
-        db.del(id)
-      } else {
-        //有索引，需要更新索引
-        db.get(id).foreach { old =>
-          for (i <- this.idxDeleters) {
-            i.onKeyEntityDelete(old)
-          }
-          db.del(id)
+      lazy val old: Option[V] = db.get[Long, V](id)
+      for (l <- this.listeners2) {
+        if (old.isDefined) {
+          l.onEntityDelete(old.get)
+        }
+      }
+      db.del(id)
+    }
+
+    val indexes = collection.mutable.Map[String, IndexBaseImpl[_]]()
+
+    abstract class HostIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K]) extends IndexBaseImpl[FK](name) {
+      val cursorKeyRangePacker = implicitly[Packer[(Int, RangeBound[K])]]
+
+      def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+        new CursorImpl[Long, V](range.map(r => (this.getIndexID, r))(cursorKeyRangePacker), forward) {
+          override def v2r(id: Long): V = host(id).get
         }
       }
     }
 
     def defUniqueIndex[K: Packer : TypeTag](indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
+      type FullKey = (Int, K)
       this.indexes.synchronized[UniqueIndex[K, V]] {
         if (this.indexes.get(indexName).isDefined) {
           throw new IllegalArgumentException( s"""index naming "$indexName" exist!""")
         }
-        val idx = new IndexBaseImpl[K](keyGetter) {
-          val name = indexName
+        val idx = new HostIndexBaseImpl[FullKey, K](indexName) with UniqueIndex[K, V] {
+
+          override def v2fk(value: V)(implicit db: DBSessionQueryable) = (this.getIndexID, keyGetter(value))
+
+          @inline final override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
+            db.get[FullKey, Long](this.getIndexID, key).flatMap(db.get[Long, V])
+          }
+
+          @inline final override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
+            db.get[FullKey, Long](this.getIndexID, key).foreach(host.delete)
+          }
+
+          @inline final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
+            host.update(value)
+          }
         }
         this.indexes.put(name, idx)
         idx
       }
     }
 
-    final def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = {
-      ???
-    }
-  }
-
-  trait IndexEntryHelper[KB]
-
-  trait IndexEntryInserter[KB] extends IndexEntryHelper[KB] {
-    def onKeyEntityInsert(newEntity: KB)(implicit db: DBSessionUpdatable)
-  }
-
-  trait IndexEntryUpdater[KB] extends IndexEntryHelper[KB] {
-    def onKeyEntityUpdate(oldEntity: KB, newEntity: KB)(implicit db: DBSessionUpdatable)
-  }
-
-  trait IndexEntryDeleter[KB] extends IndexEntryHelper[KB] {
-    def onKeyEntityDelete(oldEntity: KB)(implicit db: DBSessionUpdatable)
-  }
-
-  final val b_one = 1.asInstanceOf[Byte]
-  final val b_ff = 0xff.asInstanceOf[Byte]
-  final val b_zero = 0.asInstanceOf[Byte]
-
-  abstract class ScanRange[K](keyStart: Option[K], keyEnd: Option[K], excludeStart: Boolean, excludeEnd: Boolean) {
-    private final def keyAdd(key: Array[Byte], v: Int) = {
-      def add(i: Int, v: Int): Unit = {
-        if (i < 0 || v == 0) {
-          return
+    final def defIndex[K: Packer : TypeTag](indexName: String, keyGetter: V => K): Index[K, V] = {
+      type FullKey = (Int, K, Long)
+      this.indexes.synchronized[Index[K, V]] {
+        if (this.indexes.get(indexName).isDefined) {
+          throw new IllegalArgumentException( s"""index naming "$indexName" exist!""")
         }
-        val r = (key(i) & 0xFF) + v
-        key(i) = r.asInstanceOf[Byte]
-        add(i - 1, r >> 8)
+        val idx = new HostIndexBaseImpl[FullKey, K](name) with Index[K, V] {
+          override def v2fk(value: V)(implicit db: DBSessionQueryable) = (this.getIndexID, keyGetter(value), value.id)
+        }
+        this.indexes.put(name, idx)
+        idx
       }
-      add(key.length - 1, v)
-      key
-    }
-
-    def buildPrefixMin: Array[Byte]
-
-    def buildPrefixMax = {
-      val k = buildPrefixMin
-      k(k.length - 1) = -1
-      k
-    }
-
-    def buildFullKey(key: K): Array[Byte]
-
-    @inline final def rangeMin(): Array[Byte] = {
-      keyAdd(keyStart.fold(buildPrefixMin)(buildFullKey), if (excludeStart) 1 else 0)
-    }
-
-    @inline final def rangeMax(): Array[Byte] = {
-      keyAdd(keyEnd.fold(buildPrefixMin)(buildFullKey), if (excludeEnd) -1 else 0)
     }
   }
 
-
-  abstract class CursorImpl[K: Packer, V: Packer, R <: Entity](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
+  abstract class CursorImpl[V: Packer, R <: Entity](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[R] {
     self =>
     def v2r(v: V): R
 
@@ -443,7 +413,7 @@ private object EntityCollections {
 
   @packable
   case class SCE[V <: Entity](ownerID: Long, v: V) extends Entity {
-    def id = v.id
+    @inline override final def id = v.id
   }
 
   import scala.reflect.runtime.universe._
@@ -454,32 +424,61 @@ private object EntityCollections {
       super.update(SCE(ownerID, value))
     }
 
+
+    class SubIndexBaseImpl[FK, K](val rawIndex: SubRawIndexBaseImpl[FK, K], ownerID: Long) {
+      def subHostCollection = subHost
+
+      def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+        rawIndex.apply(ownerID, range, forward)
+      }
+    }
+
+    abstract class SubRawIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K]) extends IndexBaseImpl[FK](name) {
+      val cursorKeyRangePacker = implicitly[Packer[(Int, Long, RangeBound[K])]]
+
+      def apply(ownerID: Long, range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+        new CursorImpl[Long, V](range.map(r => (this.getIndexID, ownerID, r))(cursorKeyRangePacker), forward) {
+          override def v2r(id: Long): V = subHost(id).get.v
+        }
+      }
+    }
+
     def defUniqueIndex[K: Packer : TypeTag](ownerID: Long, indexName: String, keyGetter: V => K): UniqueIndex[K, V] = {
+      type FullKey = (Int, Long, K)
       indexes.synchronized[UniqueIndex[K, V]] {
         val rawIndex = this.indexes.getOrElseUpdate(indexName,
-          new IndexBaseImpl[(Long, K)](v => (ownerID, keyGetter(v.v))) {
+          new SubRawIndexBaseImpl[FullKey, K](indexName) {
 
-            override val name = indexName
+            override def v2fk(value: SCE[V])(implicit db: DBSessionQueryable) = (this.getIndexID, value.ownerID, keyGetter(value.v))
           }
-        ).asInstanceOf[IndexBaseImpl[(Long, K)]]
-        new UniqueIndex[K, V] {
+        ).asInstanceOf[SubRawIndexBaseImpl[FullKey, K]]
+        new SubIndexBaseImpl[FullKey, K](rawIndex, ownerID) with UniqueIndex[K, V] {
 
-          override def update(value: V)(implicit db: DBSessionUpdatable): Unit = rawIndex.update(SCE(value.id, value))
-
-          override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = rawIndex.delete((ownerID, key))
-
-          override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = rawIndex.apply((ownerID, key)).map(_.v)
-
-          def apply(start: K, end: K)(implicit db: DBSessionQueryable): Cursor[V] = {
-            this.apply(Range.BoundaryRange(Range.Include(start), Range.Include(end)))
+          override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
+            subHost.update(SCE(ownerID, value))
           }
 
-          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-            new CursorImpl[K, Long, V](range.map(r => (rawIndex.getIndexID, ownerID, r)), forward) {
-              override def v2r(id: Long): V = db.get[Long, SCE[V]](id).get.v
-            }
+          override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
+            rawIndex.deleteByFullKey((rawIndex.getIndexID, ownerID, key))
           }
+
+          override def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
+            rawIndex.getByFullKey(rawIndex.getIndexID, ownerID, key).map(_.v)
+          }
+
         }
+      }
+    }
+
+    final def defIndex[K: Packer : TypeTag](ownerID: Long, indexName: String, keyGetter: V => K): Index[K, V] = {
+      type FullKey = (Int, Long, K, Long)
+      indexes.synchronized[Index[K, V]] {
+        val rawIndex = this.indexes.getOrElseUpdate(indexName,
+          new SubRawIndexBaseImpl[FullKey, K](indexName) {
+            override def v2fk(value: SCE[V])(implicit db: DBSessionQueryable) = (this.getIndexID, value.ownerID, keyGetter(value.v), value.id)
+          }
+        ).asInstanceOf[SubRawIndexBaseImpl[FullKey, K]]
+        new SubIndexBaseImpl[FullKey, K](rawIndex, ownerID) with Index[K, V]
       }
     }
 
@@ -492,31 +491,44 @@ private object EntityCollections {
     @inline final def removeSubListener(listener: EntityCollectionListener[V]) = {
       this.regListener(listener, sce2v, reg = false)
     }
-
-    final def defIndex[K: Packer : TypeTag](ownerID: Long, name: String, getKey: V => K): Index[K, V] = {
-      ???
-    }
   }
 
 }
 
 
-abstract class DataView[K, V] {
+abstract class DataView[K: Packer, V: Packer] {
+  private var viewID = 0
 
-  def apply(key: K): Option[V] = {
-    ???
+  private def getViewID(implicit db: DBSessionQueryable) = {
+    if (this.viewID == 0) {
+      this.viewID = ???
+    }
+    this.viewID
   }
+
+  private type FullKey = (Int, K)
+  private implicit val fullKeyPacker = implicitly[Packer[(Int, K)]]
 
   def name: String
 
-  protected trait Tracer[BUF, E <: Entity] {
-    def subRefs = Seq.empty[SubRef[_]]
+  def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
+
+//  def apply(range: Range[K], forward: Boolean): Cursor[(K, V)] = {
+//    ???
+//  }
+
+  protected sealed trait Tracer[BUF <: AnyRef, E <: Entity] extends EntityCollectionListener[E] {
+    tracer =>
 
     def extract(entity: E, buf: BUF)
 
-    def isChanged(oldB: BUF, newB: BUF): Boolean
+    def isChange(oldBuf: BUF, newBuf: BUF): Boolean
 
-    protected abstract class SubRef[R <: Entity](refIndex: IndexBase[_ >: Ref[R]
+    private[common] val bufCreator: () => BUF
+
+    private[common] def traceUp(oldEntity: E, oldBuf: BUF, newEntity: E, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit
+
+    protected abstract class SubRef[R <: Entity](target: EntityCollection[R], refGetter: E => Ref[R], refIndex: IndexBase[_ >: Ref[R]
       with Product1[Ref[R]]
       with Product2[Ref[R], Nothing]
       with Product3[Ref[R], Nothing, Nothing]
@@ -524,16 +536,157 @@ abstract class DataView[K, V] {
       with Product5[Ref[R], Nothing, Nothing, Nothing, Nothing]
       with Product6[Ref[R], Nothing, Nothing, Nothing, Nothing, Nothing]
       with Product7[Ref[R], Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
-      , E]) extends Tracer[BUF, R] with EntityCollectionListener[R] {
+      , E]) extends Tracer[BUF, R] {
 
+      target.addListener(this)
+      tracer.addSub(this)
+
+
+      import com.weez.mercury.common.EntityCollections._
+
+      private val targetHost = target match {
+        case x: RootCollection[R] => x.impl
+        case _ => null.asInstanceOf[HostCollectionImpl[R]]
+      }
+      private val targetSub = target match {
+        case x: SubCollection[R] => x.host
+        case _ => null.asInstanceOf[SubHostCollectionImpl[R]]
+      }
+
+      override final def onEntityInsert(newEntity: R)(implicit db: DBSessionUpdatable): Unit = {
+        //doNothing
+      }
+
+      override final def onEntityDelete(oldEntity: R)(implicit db: DBSessionUpdatable): Unit = {
+        val oldBuf = bufCreator()
+        this.extract(oldEntity, oldBuf)
+        this.traceUp(oldEntity, oldBuf, null.asInstanceOf[R], null.asInstanceOf[BUF], null)
+      }
+
+      override final def onEntityUpdate(oldEntity: R, newEntity: R)(implicit db: DBSessionUpdatable): Unit = {
+        val oldBuf = bufCreator()
+        val newBuf = bufCreator()
+        this.extract(oldEntity, oldBuf)
+        this.extract(newEntity, newBuf)
+        this.traceUp(oldEntity, oldBuf, newEntity, newBuf, null)
+      }
+
+      /**
+       * REF or NULL
+       */
+      @inline final private[common] def getRef(entity: E)(implicit db: DBSessionUpdatable): R = {
+        if (entity ne null) {
+          val ref = refGetter(entity)
+          if (ref ne null) {
+            val id = ref.id
+            if (id != 0l) {
+              if (targetHost ne null) {
+                return targetHost.apply(id).get
+              } else {
+                return targetSub.apply(id).get.v
+              }
+            }
+          }
+        }
+        null.asInstanceOf[R]
+      }
+
+      @inline final def traceDown(oldEntity: E, oldBuf: BUF, newEntity: E, newBuf: BUF)(implicit db: DBSessionUpdatable): Unit = {
+        val or = getRef(oldEntity)
+        val nr = getRef(newEntity)
+        if (oldBuf ne null) {
+          this.extract(or, oldBuf)
+        }
+        if (newBuf ne null) {
+          this.extract(nr, newBuf)
+        }
+        traceDownSub(or, oldBuf, nr, newBuf, null)
+      }
+
+      @inline final private[common] override def traceUp(oldEntity: R, oldBuf: BUF, newEntity: R, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
+        traceDownSub(oldEntity, oldBuf, newEntity, newBuf, excludeSubTracer)
+
+        //        for (u <- getAffects(oldEntity.newRef())) {
+        //          tracer.extract(u, oldBuf)
+        //          if (newBuf != null) {
+        //            tracer.extract(u, newBuf)
+        //          }
+        //          tracer.traceUp(u, oldBuf, u, newBuf, this)
+        //        }
+        ???
+      }
+
+      override private[common] val bufCreator = tracer.bufCreator
     }
 
+
+    private var subRefs: Array[SubRef[_]] = null
+
+    @inline private[common] final def addSub(sub: SubRef[_]): Unit = {
+      if (subRefs eq null) {
+        subRefs = Array[SubRef[_]](sub)
+      } else {
+        val l = subRefs.length
+        val newSubRefs = new Array[SubRef[_]](l + 1)
+        System.arraycopy(subRefs, 0, newSubRefs, 0, l)
+        newSubRefs(l) = sub
+        subRefs = newSubRefs
+      }
+    }
+
+    @inline private[common] final def traceDownSub(oldEntity: E, oldBuf: BUF, newEntity: E, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
+      if (subRefs != null) {
+        var i = 0
+        val l = subRefs.length
+        while (i < l) {
+          val st = subRefs(i)
+          if (st ne excludeSubTracer) {
+            st.traceDown(oldEntity, oldBuf, newEntity, newBuf)
+          }
+          i += 1
+        }
+      }
+    }
   }
 
+  protected abstract class DataViewMeta[BUF <: AnyRef, ROOT <: Entity : TypeTag](root: EntityCollection[ROOT]) extends Tracer[BUF, ROOT] {
 
-  protected abstract class DataViewMeta[BUF, ROOT <: Entity : TypeTag] extends Tracer[BUF, ROOT] {
+    def createBuf: BUF
 
-    def extractKey(buf: BUF): Map[K, V]
+    private[common] val bufCreator = createBuf _
+
+    def extractView(buf: BUF): Map[K, V]
+
+
+    override final def onEntityInsert(newEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
+      val newBuf = bufCreator()
+      this.extract(newEntity, newBuf)
+      this.traceUp(null.asInstanceOf[ROOT], null.asInstanceOf[BUF], newEntity, newBuf, null)
+    }
+
+    override final def onEntityDelete(oldEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
+      val oldBuf = bufCreator()
+      this.extract(oldEntity, oldBuf)
+      this.traceUp(oldEntity, oldBuf, null.asInstanceOf[ROOT], null.asInstanceOf[BUF], null)
+    }
+
+    override final def onEntityUpdate(oldEntity: ROOT, newEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
+      val oldBuf = bufCreator()
+      val newBuf = bufCreator()
+      this.extract(oldEntity, oldBuf)
+      this.extract(newEntity, newBuf)
+      this.traceUp(oldEntity, oldBuf, newEntity, newBuf, null)
+    }
+
+    private[common] def traceUp(oldEntity: ROOT, oldBuf: BUF, newEntity: ROOT, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
+      traceDownSub(oldEntity, oldBuf, newEntity, newBuf, excludeSubTracer)
+      if (oldBuf ne null) {
+      }
+      val oldKV = if (oldBuf ne null) Map.empty[K, V] else this.extractView(oldBuf)
+      val newKV = if (newBuf ne null) Map.empty[K, V] else this.extractView(newBuf)
+    }
+
+    root.addListener(this)
   }
 
   class MyBuffer {
