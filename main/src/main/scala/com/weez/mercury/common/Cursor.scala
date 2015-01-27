@@ -13,6 +13,13 @@ trait Cursor[+T] extends AutoCloseable {
 
   def value: T
 
+  def foreach[U](f: T => U) {
+    while (isValid) {
+      f(value)
+      next()
+    }
+  }
+
   def size: Int = {
     var count = 0
     while (isValid) {

@@ -1,7 +1,9 @@
 package com.weez.mercury.common
 
 
-import scala.reflect.runtime.universe.TypeTag
+import com.weez.mercury.common.EntityCollections.MayBeReverseIndex
+
+import scala.reflect.runtime.universe._
 
 private object EntityCollections {
 
@@ -28,7 +30,7 @@ private object EntityCollections {
     }
   }
 
-  def forPartitionHost[V <: Entity : Packer](pc: SubCollection[V])(implicit typeTag: TypeTag[V]): SubHostCollectionImpl[V] = {
+  def forPartitionHost[V <: Entity : Packer : TypeTag](pc: SubCollection[V]): SubHostCollectionImpl[V] = {
     this.hosts.synchronized {
       this.hosts.get(pc.name) match {
         case Some(host: SubHostCollectionImpl[V]) => host
@@ -43,7 +45,7 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String)(implicit typeTag: TypeTag[V]): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer : TypeTag](name: String): HostCollectionImpl[V] = {
     this.hosts.synchronized {
       if (this.hosts.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
@@ -51,7 +53,7 @@ private object EntityCollections {
       if (this.hostsByType.contains(typeTag)) {
         throw new IllegalArgumentException( s"""HostCollection typed "$typeTag" exist!""")
       }
-      val host = new HostCollectionImpl[V](name, typeTag) {}
+      val host = new HostCollectionImpl[V](name) {}
       this.hosts.put(name, host)
       this.hostsByType.put(typeTag, host)
       host
@@ -63,11 +65,21 @@ private object EntityCollections {
   val hostsByType = collection.mutable.HashMap[TypeTag[_], HostCollectionImpl[_]]()
 
 
-  //  trait IndexImplBase[V] {
-  //    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
-  //  }
+//  trait IndexImplBase[V] {
+//    def reverseRef(ref: Ref[_]): CursorImpl[_, V]
+//  }
 
-  abstract class HostCollectionImpl[V <: Entity : Packer](val name: String, val typeTag: TypeTag[V]) {
+  trait MayBeReverseIndex[V <: Entity] {
+    def canBeReverseIndex: Boolean
+
+    def scanReverse[R <: Entity](ref: Ref[R])(implicit db: DBSessionQueryable): Cursor[V] = throw new UnsupportedOperationException
+  }
+
+  final val RefType = typeOf[Ref[Entity]]
+
+  final val ProductType = typeOf[Product]
+
+  abstract class HostCollectionImpl[V <: Entity : Packer](val name: String) {
     host =>
     val valuePacker = implicitly[Packer[V]]
 
@@ -209,8 +221,7 @@ private object EntityCollections {
 
     @inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(this.fixID(id))
 
-    @inline final def newID()(implicit db: DBSessionUpdatable) = this.fixID(db.newEntityId())
-
+    @inline final def newEntityID()(implicit db: DBSessionUpdatable) = this.fixID(db.newEntityId())
 
     @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = {
       if (id == 0) {
@@ -261,7 +272,41 @@ private object EntityCollections {
 
     val indexes = collection.mutable.Map[String, IndexBaseImpl[_]]()
 
-    abstract class HostIndexBaseImpl[FK: Packer, K: Packer](name: String) extends IndexBaseImpl[FK](name) {
+    abstract class HostIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K], keyTypeTag: TypeTag[K])
+      extends IndexBaseImpl[FK](name)
+      with MayBeReverseIndex[V] {
+
+      override def canBeReverseIndex: Boolean = {
+        keyTypeTag match {
+          case TypeRef(RefType, _, _) => true
+          case TypeRef(t, _, args) => t <:< ProductType && args != Nil && args.head <:< RefType
+          case _ => false
+        }
+      }
+
+      override def scanReverse[R <: Entity](ref: Ref[R])(implicit db: DBSessionQueryable): Cursor[V] = {
+        keyTypeTag match {
+          case TypeRef(RefType, _, _) =>
+            val start = (this.getIndexID, ref)
+            val end = (this.getIndexID, RefSome[R](ref.id + 1))
+            new CursorImpl[Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
+              host(id).get
+            }
+          case TypeRef(t, _, args) =>
+            if (t <:< ProductType && args != Nil && args.head <:< RefType) {
+              val start = (this.getIndexID, Tuple1(ref))
+              val end = (this.getIndexID, Tuple1(RefSome[R](ref.id + 1)))
+              new CursorImpl[Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
+                host(id).get
+              }
+            } else {
+              throw new UnsupportedOperationException
+            }
+          case _ =>
+            throw new UnsupportedOperationException
+        }
+      }
+
       val cursorKeyRangePacker = Packer.of[(Int, RangeBound[K])]
 
       def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
@@ -381,7 +426,7 @@ private object EntityCollections {
 
   import scala.reflect.runtime.universe._
 
-  class SubHostCollectionImpl[V <: Entity : Packer : TypeTag](name: String) extends HostCollectionImpl[SCE[V]](name, typeTag[SCE[V]]) {
+  class SubHostCollectionImpl[V <: Entity : Packer : TypeTag](name: String) extends HostCollectionImpl[SCE[V]](name) {
     subHost =>
     final def update(ownerID: Long, value: V)(implicit db: DBSessionUpdatable): Unit = {
       super.update(SCE(ownerID, value))
@@ -476,11 +521,7 @@ abstract class DataView[K: Packer, V: Packer] {
   def name: String
 
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
-
-  //  def apply(range: Range[K], forward: Boolean): Cursor[(K, V)] = {
-  //    ???
-  //  }
-
+  
   protected sealed trait Tracer[BUF <: AnyRef, E <: Entity] extends EntityCollectionListener[E] {
     tracer =>
 
@@ -504,6 +545,8 @@ abstract class DataView[K: Packer, V: Packer] {
 
       target.addListener(this)
       tracer.addSub(this)
+
+      private val index = refIndex.asInstanceOf[MayBeReverseIndex[E]]
 
 
       import com.weez.mercury.common.EntityCollections._
@@ -545,9 +588,9 @@ abstract class DataView[K: Packer, V: Packer] {
             val id = ref.id
             if (id != 0l) {
               if (targetHost ne null) {
-                return targetHost.apply(id).get
+                return targetHost(id).get
               } else {
-                return targetSub.apply(id).get.v
+                return targetSub(id).get.v
               }
             }
           }
@@ -569,15 +612,13 @@ abstract class DataView[K: Packer, V: Packer] {
 
       @inline final private[common] override def traceUp(oldEntity: R, oldBuf: BUF, newEntity: R, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
         traceDownSub(oldEntity, oldBuf, newEntity, newBuf, excludeSubTracer)
-
-        //        for (u <- getAffects(oldEntity.newRef())) {
-        //          tracer.extract(u, oldBuf)
-        //          if (newBuf != null) {
-        //            tracer.extract(u, newBuf)
-        //          }
-        //          tracer.traceUp(u, oldBuf, u, newBuf, this)
-        //        }
-        ???
+        for (u <- index.scanReverse(oldEntity.newRef())) {
+          tracer.extract(u, oldBuf)
+          if (newBuf != null) {
+            tracer.extract(u, newBuf)
+          }
+          tracer.traceUp(u, oldBuf, u, newBuf, this)
+        }
       }
 
       override private[common] val bufCreator = tracer.bufCreator
@@ -615,28 +656,30 @@ abstract class DataView[K: Packer, V: Packer] {
 
   protected abstract class DataViewMeta[BUF <: AnyRef, ROOT <: Entity : TypeTag](root: EntityCollection[ROOT]) extends Tracer[BUF, ROOT] {
 
-    def createBuf: BUF
+    def createBuf(): BUF
 
     private[common] val bufCreator = createBuf _
 
-    def extractView(buf: BUF): Map[K, V]
+    def extractKV(buf: BUF): Seq[(K, V)]
+
+    def extractK(buf: BUF): Seq[V] = extractKV(buf).map(_._2)
 
 
     override final def onEntityInsert(newEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
-      val newBuf = bufCreator()
+      val newBuf = createBuf()
       this.extract(newEntity, newBuf)
       this.traceUp(null.asInstanceOf[ROOT], null.asInstanceOf[BUF], newEntity, newBuf, null)
     }
 
     override final def onEntityDelete(oldEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
-      val oldBuf = bufCreator()
+      val oldBuf = createBuf()
       this.extract(oldEntity, oldBuf)
       this.traceUp(oldEntity, oldBuf, null.asInstanceOf[ROOT], null.asInstanceOf[BUF], null)
     }
 
     override final def onEntityUpdate(oldEntity: ROOT, newEntity: ROOT)(implicit db: DBSessionUpdatable): Unit = {
-      val oldBuf = bufCreator()
-      val newBuf = bufCreator()
+      val oldBuf = createBuf()
+      val newBuf = createBuf()
       this.extract(oldEntity, oldBuf)
       this.extract(newEntity, newBuf)
       this.traceUp(oldEntity, oldBuf, newEntity, newBuf, null)
@@ -644,10 +687,19 @@ abstract class DataView[K: Packer, V: Packer] {
 
     private[common] def traceUp(oldEntity: ROOT, oldBuf: BUF, newEntity: ROOT, newBuf: BUF, excludeSubTracer: Tracer[BUF, _])(implicit db: DBSessionUpdatable): Unit = {
       traceDownSub(oldEntity, oldBuf, newEntity, newBuf, excludeSubTracer)
-      if (oldBuf ne null) {
+      if ((oldBuf ne null) && (newBuf ne null)) {
+        val oldKV = this.extractKV(oldBuf)
+        val newKV = this.extractKV(newBuf)
+
+      } else if (newBuf ne null) {
+        this.extractKV(newBuf).foreach { kv =>
+          db.put(kv._1, kv._2)
+        }
+      } else {
+        this.extractK(oldBuf).foreach { k =>
+          db.del(k)
+        }
       }
-      val oldKV = if (oldBuf ne null) Map.empty[K, V] else this.extractView(oldBuf)
-      val newKV = if (newBuf ne null) Map.empty[K, V] else this.extractView(newBuf)
     }
 
     root.addListener(this)

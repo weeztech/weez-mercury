@@ -117,41 +117,41 @@ trait EntityCollection[V <: Entity] {
   def addListener(listener: EntityCollectionListener[V]): Unit
 
   def removeListener(listener: EntityCollectionListener[V]): Unit
+
+  def newEntityID()(implicit db: DBSessionUpdatable): Long
 }
 
 abstract class SubCollection[V <: Entity : Packer : TypeTag](owner: Entity) extends EntityCollection[V] {
+
+  @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerID, value)
+
+
+  @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = host.delete(value.id)
+
+
+  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerID, name, getKey)
+
+
+  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerID, name, getKey)
+
+
+  @inline final override def addListener(listener: EntityCollectionListener[V]) = host.addSubListener(listener)
+
+
+  @inline final override def removeListener(listener: EntityCollectionListener[V]) = host.removeSubListener(listener)
+
+
+  @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = host.newEntityID()
+
   val ownerID = owner.id
-
-  @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
-    this.host.update(ownerID, value)
-  }
-
-  @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = {
-    this.host.delete(value.id)
-  }
-
-  @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: V => K): UniqueIndex[K, V] = {
-    this.host.defUniqueIndex[K](ownerID, name, getKey)
-  }
-
-
-  @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = {
-    this.host.defIndex[K](ownerID, name, getKey)
-  }
-
-  @inline final override def addListener(listener: EntityCollectionListener[V]) = {
-    this.host.addSubListener(listener)
-  }
-
-  @inline final override def removeListener(listener: EntityCollectionListener[V]) = {
-    this.host.removeSubListener(listener)
-  }
 
   private[common] lazy val host: SubHostCollectionImpl[V] = EntityCollections.forPartitionHost[V](this)
 }
 
 abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] {
   private[common] val impl = EntityCollections.newHost[V](name)
+
+  @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = impl.newEntityID()
 
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = impl.delete(value.id)
 
@@ -167,11 +167,8 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl()
 
-  @inline final override def addListener(listener: EntityCollectionListener[V]) = {
-    impl.addListener(listener)
-  }
+  @inline final override def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
-  @inline final override def removeListener(listener: EntityCollectionListener[V]) = {
-    impl.removeListener(listener)
-  }
+  @inline final override def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
+
 }
