@@ -1,8 +1,10 @@
 package com.weez.mercury.common
 
+import java.util.Date
+
 import akka.event.LoggingAdapter
 import com.weez.mercury.collect
-import com.weez.mercury.common.EntityCollections.{DataViewImpl, SubHostCollectionImpl}
+import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
 
 trait Context extends RangeImplicits {
   implicit val context: this.type = this
@@ -94,15 +96,15 @@ trait Entity {
 import scala.reflect.runtime.universe.TypeTag
 
 trait EntityCollectionListener[-V <: Entity] {
-  val canListenEntityInsert: Boolean = true
+  def canListenEntityInsert: Boolean = true
 
   def onEntityInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit
 
-  val canListenEntityUpdate: Boolean = true
+  def canListenEntityUpdate: Boolean = true
 
   def onEntityUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit
 
-  val canListenEntityDelete: Boolean = true
+  def canListenEntityDelete: Boolean = true
 
   def onEntityDelete(oldEntity: V)(implicit db: DBSessionUpdatable): Unit
 }
@@ -187,8 +189,10 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
   private[common] val impl = EntityCollections.newHost[V](name)
 }
 
-abstract class DataView[K: Packer, V: Packer] {
+abstract class DataView[K: Packer, V: Packer, ROOT <: Entity, RTR](root: RootCollection[ROOT], trance: ROOT => RTR) {
   dataView =>
+
+  import DataView._
 
   def name: String
 
@@ -196,56 +200,25 @@ abstract class DataView[K: Packer, V: Packer] {
 
   @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V)] = impl(range, forward)
 
-  sealed abstract class Tracer[ES <: AnyRef, E <: Entity] {
-    tracer =>
-    def createEntities(): ES
+  @inline final protected def defSubTracer[S <: Entity, STR](name: String, trace: S => STR): Tracer[S, STR] = impl.defSubTracer(name, trace)
 
-    def put(entity: E, entities: ES)
+  protected def extract(traceResult: RTR)(implicit subTRs: TraceResults): (K, V)
 
-    def isChanged(oldEntity: E, newEntity: E): Boolean
+  protected def extractKVs(traceResult: RTR)(implicit subTRs: TraceResults): Map[K, V] = Map(extract(traceResult))
 
-    abstract class SubTracer[S <: Entity] extends Tracer[ES, S] {
-
-      def getSubRef(source: E): Ref[S]
-
-      def target: RootCollection[S]
-
-      def refIndex: IndexBase[_ >: Ref[S]
-        with Product1[Ref[S]]
-        with Product2[Ref[S], Nothing]
-        with Product3[Ref[S], Nothing, Nothing]
-        with Product4[Ref[S], Nothing, Nothing, Nothing]
-        with Product5[Ref[S], Nothing, Nothing, Nothing, Nothing]
-        with Product6[Ref[S], Nothing, Nothing, Nothing, Nothing, Nothing]
-        with Product7[Ref[S], Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
-        , E]
-
-      final def createEntities() = tracer.createEntities()
-
-      private[common] val impl = tracer.impl.newSub[S](this)
-    }
-
-    private[common] val impl: EntityCollections.DataViewImpl[K, V]#Tracer[ES, E]
-  }
-
-  abstract class Meta[ES <: AnyRef, ROOT <: Entity] extends Tracer[ES, ROOT] {
-    def root: RootCollection[ROOT]
-
-    def extract(entities: ES): Map[K, V]
-
-    private[common] val impl = dataView.impl.newMeta(this)
-  }
-
-  private[common] val impl: DataViewImpl[K, V] = EntityCollections.newDataView[K, V](name)
+  private val impl = root.impl.defDataView[K, V, RTR](name, trance, (traceResult, subTRs) => extractKVs(traceResult)(subTRs))
 }
 
-case class Test[A, B](a: A, b: B) {
+object DataView {
 
-  def foreach[U](f: (A, B) => U): Unit = {
-    f(a, b)
+  trait TraceResults {
+    def apply[TR](tracer: Tracer[_, TR]): TR
   }
-}
 
-object Test2 {
-  val t = Test(1, "String")
+  trait Tracer[E <: Entity, TR] {
+    val id: Int
+
+    def defSubTracer[S <: Entity, STR](name: String, trace: S => STR): Tracer[S, STR]
+  }
+
 }
