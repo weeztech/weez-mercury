@@ -242,7 +242,7 @@ private object EntityCollections {
     final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val prefix = this.meta.prefix
-      Cursor[Long, V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), forward)
+      Cursor[V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), forward)
     }
 
     @inline final def checkID(id: Long)(implicit db: DBSessionUpdatable): Long = {
@@ -299,14 +299,14 @@ private object EntityCollections {
           case TypeRef(RefType, _, _) =>
             val start = (this.getIndexID, ref)
             val end = (this.getIndexID, RefSome[R](ref.id + 1))
-            Cursor[FK, Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
+            Cursor[Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
               host(id).get
             }
           case TypeRef(t, _, args) =>
             if (t <:< ProductType && args != Nil && args.head <:< RefType) {
               val start = (this.getIndexID, Tuple1(ref))
               val end = (this.getIndexID, Tuple1(RefSome[R](ref.id + 1)))
-              Cursor[FK, Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
+              Cursor[Long](Range.BoundaryRange(Range.Include(start), Range.Exclude(end)), forward = true).map { id =>
                 host(id).get
               }
             } else {
@@ -321,7 +321,7 @@ private object EntityCollections {
 
       def newCursor(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long] = {
         val r = range.map(r => (this.getIndexID, r))(cursorKeyRangePacker)
-        Cursor[FK, Long](r, forward)
+        Cursor[Long](r, forward)
       }
     }
 
@@ -409,7 +409,7 @@ private object EntityCollections {
 
       def newCursor(owner: Ref[O], range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long] = {
         val r = range.map(r => (this.getIndexID, owner, r))(cursorKeyRangePacker)
-        Cursor[FK, Long](r, forward)
+        Cursor[Long](r, forward)
       }
     }
 
@@ -463,9 +463,9 @@ private object EntityCollections {
 
     def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
 
-    def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = {
+    def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V)] = {
       val r = range.map(r => (getViewID, r))(cursorRangePacker)
-      Cursor[FullKey, V](r, forward)
+      Cursor.raw[V](r, forward).map((k, v) => (fullKeyPacker.unapply(k)._2, v))
     }
 
     private type FullKey = (Int, K)

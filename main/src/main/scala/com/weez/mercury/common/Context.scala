@@ -194,7 +194,7 @@ abstract class DataView[K: Packer, V: Packer] {
 
   @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = impl(key)
 
-  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = impl(range, forward)
+  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V)] = impl(range, forward)
 
   sealed abstract class Tracer[ES <: AnyRef, E <: Entity] {
     tracer =>
@@ -238,13 +238,14 @@ abstract class DataView[K: Packer, V: Packer] {
 
   private[common] val impl: DataViewImpl[K, V] = EntityCollections.newDataView[K, V](name)
 }
-case class Test[A,B](a: A,b: B){
 
-  def foreach[U](f: (A,B) => U): Unit = {
-    f(a,b)
+case class Test[A, B](a: A, b: B) {
+
+  def foreach[U](f: (A, B) => U): Unit = {
+    f(a, b)
   }
 }
 
-object Test2{
-  val t = Test(1,"String")
+object Test2 {
+  val t = Test(1, "String")
 }

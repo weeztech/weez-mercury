@@ -73,7 +73,7 @@ trait Cursor[+V] extends AutoCloseable {
     this
   }
 
-  @inline final def map[KB, B](f: V => B): Cursor[B] =
+  @inline final def map[B](f: V => B): Cursor[B] =
     new Cursor[B] {
       def isValid = self.isValid
 
@@ -114,9 +114,12 @@ trait Cursor[+V] extends AutoCloseable {
 }
 
 object Cursor {
-  @inline final def apply[K: Packer, V: Packer](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) = new CursorImpl[K, V](range, forward)
+  @inline final def apply[V: Packer](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = new CursorImpl[V](range, forward)
 
-  class CursorImpl[K, V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pk: Packer[K], pv: Packer[V]) extends Cursor[V] {
+  @inline final def raw[V: Packer](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) = new CursorImpl[V](range, forward)
+
+  class CursorImpl[V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pv: Packer[V]) extends Cursor[V] {
+    self =>
 
     import com.weez.mercury.debug._
     import Range.{ByteArrayOrdering => O}
@@ -137,7 +140,7 @@ object Cursor {
       } else null
 
     var _value: V = _
-    var _key: K = _
+    var _key: Array[Byte] = _
     final val UPDATE_BIT_KEY = 1
     final val UPDATE_BIT_VALUE = 2
     var updates: Int = 0
@@ -172,17 +175,9 @@ object Cursor {
       _value
     }
 
-    def key: K = {
+    def key = {
       if ((updates & UPDATE_BIT_KEY) == 0) {
-        _key = try {
-          pk.unapply(dbCursor.key())
-        } catch {
-          case ex: IllegalArgumentException =>
-            println("range : " + range)
-            println("key   : " + PackerDebug.show(dbCursor.key()))
-            println("value : " + PackerDebug.show(dbCursor.value()))
-            throw ex
-        }
+        _key = dbCursor.key()
         updates |= UPDATE_BIT_KEY
       }
       _key
@@ -202,6 +197,17 @@ object Cursor {
         updates = 0
       }
     }
+
+    @inline final def map[KB, B](f: (Array[Byte], V) => (KB, B)): Cursor[(KB, B)] =
+      new Cursor[(KB, B)] {
+        def isValid = self.isValid
+
+        def value = f(self.key, self.value)
+
+        def next() = self.next()
+
+        def close() = self.close()
+      }
   }
 
 }
