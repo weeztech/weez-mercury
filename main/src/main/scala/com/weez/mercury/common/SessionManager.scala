@@ -89,6 +89,13 @@ class SessionManager(app: Application, config: Config) {
       }
     }
   }
+
+  def close() = {
+    sessions.synchronized {
+      sessions.clear()
+      peers.clear()
+    }
+  }
 }
 
 class Session(val id: String, val peer: String) {

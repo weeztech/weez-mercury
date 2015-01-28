@@ -38,7 +38,7 @@ object Setup {
         context.system.shutdown()
       case SetupDBTypes =>
         if (db == null) throw new IllegalStateException()
-        val dbtypes = new DBTypeCollector(g)
+        val dbtypes = new DBTypeCollector(g.types)
         dbtypes.collectDBTypes(log)
         val dbSession = db.createSession()
         val dbFactory = new DBSessionFactory(dbSession)
@@ -54,19 +54,13 @@ object Setup {
           }
 
           import DBType._
-
-          dbtypes.resolvedDBTypes foreach {
+          DBMetas.metas.values foreach CollectionMetaCollection.insert
+          dbtypes.resolvedMetas foreach {
             case x: EntityMeta =>
-              EntityMetaCollection.update(EntityMeta(x.name, x.columns, x.parents, x.isTopLevel, x.isAbstract))
+              EntityMetaCollection.insert(x)
             case x: CollectionMeta =>
-              CollectionMetaCollection.update(
-                CollectionMeta(
-                  x.name, x.valueType,
-                  x.indexes map { i =>
-                    IndexMeta(i.name, i.key, i.unique, newPrefix)
-                  },
-                  x.isRoot, newPrefix))
-            case _ => throw new IllegalStateException()
+              if (!DBMetas.metas.contains(x.name))
+                CollectionMetaCollection.insert(x.copy(prefix = newPrefix, indexes = x.indexes.map(_.copy(prefix = newPrefix))))
           }
           dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, newPrefix)
         }

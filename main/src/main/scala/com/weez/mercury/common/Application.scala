@@ -13,10 +13,7 @@ trait GlobalSettings {
 }
 
 trait Application extends GlobalSettings {
-
-  import akka.actor._
-
-  def system: ActorSystem
+  def system: akka.actor.ActorSystem
 
   def serviceManager: ServiceManager
 

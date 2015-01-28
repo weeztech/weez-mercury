@@ -27,69 +27,36 @@ object App {
     if (config.getBoolean("akka.enable")) {
       system.actorOf(Props(classOf[AkkaServer.ServerActor], app), "akka")
     }
+    app.start()
     app
   }
 
   import common._
 
-  class ApplicationImpl(val system: ActorSystem, val config: Config) extends Application with common.ServiceManager {
-    val devmode = config.getBoolean("devmode")
-    val types = ClassFinder.collectTypes(system.log).map(tp => tp._1 -> tp._2.toSeq).toMap
+  class ApplicationImpl(val system: ActorSystem, val config: Config) extends Application {
+    val _devmode = config.getBoolean("devmode")
+    val _types = ClassFinder.collectTypes(system.log).map(tp => tp._1 -> tp._2.toSeq).toMap
+    val dbtypeCollector = new DBTypeCollector(types).collectDBTypes(system.log)
 
-    def actorFactory = system
+    def devmode = _devmode
 
-    def app = this
-
-    def serviceManager = this
+    def types = _types
 
     val sessionManager = new SessionManager(this, config)
 
-    val remoteCalls = {
-      val mirror = ru.runtimeMirror(this.getClass.getClassLoader)
-      val builder = Map.newBuilder[String, RemoteCall]
-      def collectCalls(classType: ru.Type, instance: Any) = {
-        val instanceMirror = mirror.reflect(instance)
-        classType.members foreach { member =>
-          if (member.isPublic && member.isMethod) {
-            val method = member.asMethod
-            if (method.paramLists.isEmpty) {
-              val tpe = method.returnType.baseType(ru.typeOf[Function1[_, _]].typeSymbol)
-              if (!(tpe =:= ru.NoType)) {
-                val paramType = tpe.typeArgs(0)
-                if (ru.typeOf[ContextImpl] <:< paramType) {
-                  builder += method.fullName -> RemoteCall(
-                    instanceMirror.reflectMethod(method)().asInstanceOf[ContextImpl => Unit],
-                    paramType <:< ru.typeOf[SessionState],
-                    paramType <:< ru.typeOf[DBSessionQueryable],
-                    paramType <:< ru.typeOf[DBSessionUpdatable])
-                }
-              }
-            }
-          }
-        }
-      }
-      types("com.weez.mercury.common.RemoteService") withFilter {
-        !_.isAbstract
-      } foreach { symbol =>
-        var instance: Any = null
-        if (symbol.isModule) {
-          collectCalls(symbol.typeSignature, mirror.reflectModule(symbol.asModule).instance)
-        } else {
-          val classSymbol = symbol.asClass
-          val classType = classSymbol.toType
-          val ctorSymbol = classType.member(ru.termNames.CONSTRUCTOR).asMethod
-          if (ctorSymbol.paramLists.flatten.nonEmpty)
-            throw new IllegalStateException(s"expect no arguments or abstract: ${classSymbol.fullName}")
-          val ctorMirror = mirror.reflectClass(classSymbol).reflectConstructor(ctorSymbol)
-          collectCalls(classType, ctorMirror())
-        }
-      }
-      builder.result()
+    val serviceManager = new ServiceManager(this, config)
+
+    def start() = {
+      dbtypeCollector.clear()
+    }
+
+    system.registerOnTermination {
+      serviceManager.close()
+      sessionManager.close()
     }
 
     override def close() = {
       system.shutdown()
-      super.close()
     }
   }
 

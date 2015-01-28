@@ -1,19 +1,55 @@
 package com.weez.mercury.common
 
+import com.typesafe.config.Config
 
-trait ServiceManager {
+class ServiceManager(app: Application, config: Config) {
 
   import scala.concurrent._
   import akka.actor._
-  import com.typesafe.config.Config
 
-  def actorFactory: ActorRefFactory
-
-  def config: Config
-
-  def app: Application
-
-  def remoteCalls: Map[String, RemoteCall]
+  def remoteCalls: Map[String, RemoteCall] = {
+    import scala.reflect.runtime.universe._
+    val mirror = runtimeMirror(this.getClass.getClassLoader)
+    val builder = Map.newBuilder[String, RemoteCall]
+    def collectCalls(classType: Type, instance: Any) = {
+      val instanceMirror = mirror.reflect(instance)
+      classType.members foreach { member =>
+        if (member.isPublic && member.isMethod) {
+          val method = member.asMethod
+          if (method.paramLists.isEmpty) {
+            val tpe = method.returnType.baseType(typeOf[Function1[_, _]].typeSymbol)
+            if (!(tpe =:= NoType)) {
+              val paramType = tpe.typeArgs(0)
+              if (typeOf[ContextImpl] <:< paramType) {
+                builder += method.fullName -> RemoteCall(
+                  instanceMirror.reflectMethod(method)().asInstanceOf[ContextImpl => Unit],
+                  paramType <:< typeOf[SessionState],
+                  paramType <:< typeOf[DBSessionQueryable],
+                  paramType <:< typeOf[DBSessionUpdatable])
+              }
+            }
+          }
+        }
+      }
+    }
+    app.types("com.weez.mercury.common.RemoteService") withFilter {
+      !_.isAbstract
+    } foreach { symbol =>
+      var instance: Any = null
+      if (symbol.isModule) {
+        collectCalls(symbol.typeSignature, mirror.reflectModule(symbol.asModule).instance)
+      } else {
+        val classSymbol = symbol.asClass
+        val classType = classSymbol.toType
+        val ctorSymbol = classType.member(termNames.CONSTRUCTOR).asMethod
+        if (ctorSymbol.paramLists.flatten.nonEmpty)
+          throw new IllegalStateException(s"expect no arguments or abstract: ${classSymbol.fullName}")
+        val ctorMirror = mirror.reflectClass(classSymbol).reflectConstructor(ctorSymbol)
+        collectCalls(classType, ctorMirror())
+      }
+    }
+    builder.result()
+  }
 
   case class RemoteCall(f: ContextImpl => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
@@ -95,7 +131,7 @@ trait ServiceManager {
           val worker = idle.dequeue()
           worker ! newTask(worker, func)
         } else if (workerCount < maxWorkerCount) {
-          val worker = actorFactory.actorOf(
+          val worker = app.system.actorOf(
             Props(new WorkerActor(permitDBQuery, permitDBUpdate)),
             s"$name-worker-${counter.next()}")
           worker ! newTask(worker, func)
@@ -123,7 +159,7 @@ trait ServiceManager {
         if (queue.nonEmpty) {
           worker ! queue.dequeue()
         } else if (workerCount > minWorkerCount) {
-          actorFactory.stop(worker)
+          app.system.stop(worker)
           workerCount -= 1
         } else {
           idle.enqueue(worker)
