@@ -1,6 +1,6 @@
 package com.weez.mercury.common
 
-trait Cursor[K, +V] extends AutoCloseable {
+trait Cursor[+V] extends AutoCloseable {
   self =>
 
   import scala.language.higherKinds
@@ -13,9 +13,8 @@ trait Cursor[K, +V] extends AutoCloseable {
 
   def value: V
 
-  def key: K
 
-  def foreach[U](f: V => U) {
+  def foreach[U](f: V => U) = {
     while (isValid) {
       f(value)
       next()
@@ -31,9 +30,9 @@ trait Cursor[K, +V] extends AutoCloseable {
     count
   }
 
-  def slice(from: Int, until: Int): Cursor[K, V] = {
+  def slice(from: Int, until: Int): Cursor[V] = {
     drop(from)
-    new Cursor[K, V] {
+    new Cursor[V] {
       var remain = until - from
 
       def isValid = {
@@ -46,8 +45,6 @@ trait Cursor[K, +V] extends AutoCloseable {
       }
 
       def value = self.value
-
-      def key = self.key
 
       def next() = {
         if (remain > 0) {
@@ -64,10 +61,10 @@ trait Cursor[K, +V] extends AutoCloseable {
     }
   }
 
-  @inline final def take(n: Int): Cursor[K, V] = slice(0, n)
+  @inline final def take(n: Int): Cursor[V] = slice(0, n)
 
 
-  @inline final def drop(n: Int): Cursor[K, V] = {
+  @inline final def drop(n: Int): Cursor[V] = {
     var count = n
     while (count > 0) {
       next()
@@ -76,23 +73,19 @@ trait Cursor[K, +V] extends AutoCloseable {
     this
   }
 
-  def mapKV[KB, B](kf: K => KB, f: V => B): Cursor[KB, B] =
-    new Cursor[KB, B] {
+  @inline final def map[KB, B](f: V => B): Cursor[B] =
+    new Cursor[B] {
       def isValid = self.isValid
 
       def value = f(self.value)
-
-      def key = kf(self.key)
 
       def next() = self.next()
 
       def close() = self.close()
     }
 
-  def map[B](f: V => B): Cursor[K, B] = mapKV(k => k, f)
-
-  def filter(f: V => Boolean): Cursor[K, V] =
-    new Cursor[K, V] {
+  def filter(f: V => Boolean): Cursor[V] =
+    new Cursor[V] {
       def next() = {
         self.next()
         while (self.isValid && !f(self.value))
@@ -102,8 +95,6 @@ trait Cursor[K, +V] extends AutoCloseable {
       def isValid = self.isValid
 
       def value = self.value
-
-      def key = self.key
 
       def close() = self.close()
     }
@@ -125,7 +116,7 @@ trait Cursor[K, +V] extends AutoCloseable {
 object Cursor {
   @inline final def apply[K: Packer, V: Packer](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) = new CursorImpl[K, V](range, forward)
 
-  class CursorImpl[K, V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pk: Packer[K], pv: Packer[V]) extends Cursor[K, V] {
+  class CursorImpl[K, V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pk: Packer[K], pv: Packer[V]) extends Cursor[V] {
 
     import com.weez.mercury.debug._
     import Range.{ByteArrayOrdering => O}

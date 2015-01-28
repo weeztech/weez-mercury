@@ -239,7 +239,7 @@ private object EntityCollections {
       }
     }
 
-    final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long, V] = {
+    final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val prefix = this.meta.prefix
       Cursor[Long, V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), forward)
@@ -294,7 +294,7 @@ private object EntityCollections {
     abstract class HostIndexBaseImpl[FK, K](name: String)(implicit fullKeyPacker: Packer[FK], keyPacker: Packer[K], keyTypeTag: TypeTag[K])
       extends IndexBaseImpl[FK](name) {
 
-      def scanReverse[R <: Entity](ref: Ref[R])(implicit db: DBSessionQueryable): Cursor[_, V] = {
+      def scanReverse[R <: Entity](ref: Ref[R])(implicit db: DBSessionQueryable): Cursor[V] = {
         keyTypeTag match {
           case TypeRef(RefType, _, _) =>
             val start = (this.getIndexID, ref)
@@ -319,7 +319,7 @@ private object EntityCollections {
 
       val cursorKeyRangePacker = Packer.of[(Int, RangeBound[K])]
 
-      def newCursor(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[FK, Long] = {
+      def newCursor(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long] = {
         val r = range.map(r => (this.getIndexID, r))(cursorKeyRangePacker)
         Cursor[FK, Long](r, forward)
       }
@@ -347,8 +347,8 @@ private object EntityCollections {
             host.update(value)
           }
 
-          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[K, V] = {
-            newCursor(range, forward).mapKV(fk => fk._2, id => host(id).get)
+          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+            newCursor(range, forward).map(id => host(id).get)
           }
         }
         this.indexes.put(name, idx)
@@ -365,8 +365,8 @@ private object EntityCollections {
         val idx = new HostIndexBaseImpl[FullKey, K](name) with Index[K, V] {
           override def v2fk(value: V)(implicit db: DBSessionQueryable) = (this.getIndexID, keyGetter(value), value.id)
 
-          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[K, V] = {
-            newCursor(range, forward).mapKV(fk => fk._2, id => host(id).get)
+          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+            newCursor(range, forward).map(id => host(id).get)
           }
         }
         this.indexes.put(name, idx)
@@ -407,7 +407,7 @@ private object EntityCollections {
     abstract class SubRawIndexBaseImpl[FK: Packer, K: Packer](name: String) extends IndexBaseImpl[FK](name) {
       val cursorKeyRangePacker = Packer.of[(Int, Ref[O], RangeBound[K])]
 
-      def newCursor(owner: Ref[O], range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[FK, Long] = {
+      def newCursor(owner: Ref[O], range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long] = {
         val r = range.map(r => (this.getIndexID, owner, r))(cursorKeyRangePacker)
         Cursor[FK, Long](r, forward)
       }
@@ -435,8 +435,8 @@ private object EntityCollections {
             rawIndex.getByFullKey(rawIndex.getIndexID, owner, key).map(_.entity)
           }
 
-          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[K, V] = {
-            rawIndex.newCursor(owner, range, forward).mapKV(fk => fk._3, id => subHost(id).get.entity)
+          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+            rawIndex.newCursor(owner, range, forward).map(id => subHost(id).get.entity)
           }
         }
       }
@@ -451,8 +451,8 @@ private object EntityCollections {
           }
         ).asInstanceOf[SubRawIndexBaseImpl[FullKey, K]]
         new SubIndexBaseImpl[FullKey, K](rawIndex, owner) with Index[K, V] {
-          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[K, V] = {
-            rawIndex.newCursor(owner, range, forward).mapKV(fk => fk._3, id => subHost(id).get.entity)
+          override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
+            rawIndex.newCursor(owner, range, forward).map(id => subHost(id).get.entity)
           }
         }
       }
@@ -463,9 +463,9 @@ private object EntityCollections {
 
     def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = db.get[FullKey, V](this.getViewID, key)
 
-    def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[K, V] = {
+    def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = {
       val r = range.map(r => (getViewID, r))(cursorRangePacker)
-      Cursor[FullKey, V](r, forward).mapKV(fk => fk._2, v => v)
+      Cursor[FullKey, V](r, forward)
     }
 
     private type FullKey = (Int, K)

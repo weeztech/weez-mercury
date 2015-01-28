@@ -42,10 +42,10 @@ trait DBSessionUpdatable extends DBSessionQueryable {
 
 trait IndexBase[K, V <: Entity] {
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[K, V] =
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
     this.apply(Range.All)
 
-  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[K, V]
+  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
 }
 
 /**
@@ -176,9 +176,9 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[Long, V] = impl(forward)
+  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = impl(forward)
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[Long, V] = impl(forward = true)
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl(forward = true)
 
   @inline final def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
@@ -194,7 +194,7 @@ abstract class DataView[K: Packer, V: Packer] {
 
   @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = impl(key)
 
-  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[K, V] = impl(range, forward)
+  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V] = impl(range, forward)
 
   sealed abstract class Tracer[ES <: AnyRef, E <: Entity] {
     tracer =>
@@ -237,4 +237,14 @@ abstract class DataView[K: Packer, V: Packer] {
   }
 
   private[common] val impl: DataViewImpl[K, V] = EntityCollections.newDataView[K, V](name)
+}
+case class Test[A,B](a: A,b: B){
+
+  def foreach[U](f: (A,B) => U): Unit = {
+    f(a,b)
+  }
+}
+
+object Test2{
+  val t = Test(1,"String")
 }
