@@ -43,11 +43,14 @@ object Setup {
         val dbSession = db.createSession()
         val dbFactory = new DBSessionFactory(dbSession)
         dbFactory.withTransaction(dbSession, log) { implicit dbc =>
-          var prefixCounter = 0
+          dbc.put(dbFactory.KEY_OBJECT_ID_COUNTER, 0L)
+        }
+        dbFactory.withTransaction(dbSession, log) { implicit dbc =>
+          var counter = 10
 
           def newPrefix = {
-            prefixCounter += 1
-            prefixCounter
+            counter += 1
+            counter
           }
 
           import DBType._
@@ -59,11 +62,13 @@ object Setup {
               CollectionMetaCollection.update(
                 CollectionMeta(
                   x.name, x.valueType,
-                  x.indexes map { i => IndexMeta(i.name, i.key, i.unique, newPrefix)},
+                  x.indexes map { i =>
+                    IndexMeta(i.name, i.key, i.unique, newPrefix)
+                  },
                   x.isRoot, newPrefix))
             case _ => throw new IllegalStateException()
           }
-          dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, prefixCounter)
+          dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, newPrefix)
         }
         dbSession.close()
     }

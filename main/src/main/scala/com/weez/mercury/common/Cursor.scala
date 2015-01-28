@@ -161,15 +161,7 @@ object Cursor {
 
     def value: V = {
       if ((updates & UPDATE_BIT_VALUE) == 0) {
-        _value = try {
-          pv.unapply(dbCursor.value())
-        } catch {
-          case ex: IllegalArgumentException =>
-            println("range : " + range)
-            println("key   : " + PackerDebug.show(dbCursor.key()))
-            println("value : " + PackerDebug.show(dbCursor.value()))
-            throw ex
-        }
+        _value = pv.unapply(dbCursor.value())
         updates |= UPDATE_BIT_VALUE
       }
       _value
@@ -198,8 +190,8 @@ object Cursor {
       }
     }
 
-    @inline final def map[KB, B](f: (Array[Byte], V) => (KB, B)): Cursor[(KB, B)] =
-      new Cursor[(KB, B)] {
+    @inline final def mapWithKey[B](f: (Array[Byte], V) => B): Cursor[B] =
+      new Cursor[B] {
         def isValid = self.isValid
 
         def value = f(self.key, self.value)

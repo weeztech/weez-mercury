@@ -53,7 +53,10 @@ object PackerDebug {
       }
     }
     val (s, x) = eat(start)
-    require(x == end, "invalid length")
+    require(x == end, {
+      val m = "invalid length"
+      m
+    })
     s
   }
 }

@@ -242,7 +242,10 @@ private object EntityCollections {
     final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val prefix = this.meta.prefix
-      Cursor[V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), forward)
+      Cursor.raw[V](entityIDOf(prefix, 0) +-+ entityIDOf(prefix, -1L), forward).mapWithKey((k, v) => {
+        v._id = Packer.LongPacker.unapply(k);
+        v
+      })
     }
 
     @inline final def checkID(id: Long)(implicit db: DBSessionUpdatable): Long = {
@@ -465,7 +468,7 @@ private object EntityCollections {
 
     def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V)] = {
       val r = range.map(r => (getViewID, r))(cursorRangePacker)
-      Cursor.raw[V](r, forward).map((k, v) => (fullKeyPacker.unapply(k)._2, v))
+      Cursor.raw[V](r, forward).mapWithKey((k, v) => (fullKeyPacker.unapply(k)._2, v))
     }
 
     private type FullKey = (Int, K)
