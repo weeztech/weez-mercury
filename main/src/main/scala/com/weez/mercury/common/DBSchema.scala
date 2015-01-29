@@ -109,7 +109,7 @@ object DBMetas {
     isRoot = true, EntityMetaCollection.prefix)
   val collectionMetaCollectionMeta = CollectionMeta(
     CollectionMetaCollection.name,
-    EntityRef("entity-meta"),
+    EntityRef("collection-meta"),
     IndexMeta("by-name", String, unique = true, 2) :: Nil,
     isRoot = true, CollectionMetaCollection.prefix)
 
