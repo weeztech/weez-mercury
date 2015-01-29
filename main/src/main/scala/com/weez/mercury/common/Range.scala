@@ -1,8 +1,6 @@
 package com.weez.mercury.common
 
-sealed trait RangeBound[+A] {
-  private[common] def map[B](f: this.type => B): RangeBound[B]
-}
+sealed trait RangeBound[+A]
 
 sealed trait Range[+A] extends DBRange {
   def map[B: Packer](f: RangeBound[A] => B): Range[B]
@@ -16,112 +14,89 @@ trait DBRange {
 
 object Range {
 
-  sealed trait InfinitBound extends RangeBound[Nothing] {
-    def map[B](f: this.type => B) = Include(f(this))
-  }
+  case object Min extends RangeBound[Nothing]
 
-  sealed trait FinitBound[A] extends RangeBound[A]
+  case object Max extends RangeBound[Nothing]
 
-  case object Min extends InfinitBound
+  case class Bound[A](value: A) extends RangeBound[A]
 
-  case object Max extends InfinitBound
+  case class Succeed[A](value: A) extends RangeBound[A]
 
-  case class Include[A](value: A) extends FinitBound[A] {
-    def map[B](f: this.type => B) = Include(f(this))
-  }
-
-  case class Exclude[A](value: A) extends FinitBound[A] {
-    def map[B](f: this.type => B) = Exclude(f(this))
-  }
+  case class Prefixed(value: String) extends RangeBound[Nothing]
 
   case object All extends Range[Nothing] {
-    def keyStart = ByteArrayMin
+    val keyStart = Array(TYPE_MIN)
 
-    def keyEnd = ByteArrayMax
+    val keyEnd = Array(TYPE_MAX)
 
-    def map[B: Packer](f: RangeBound[Nothing] => B) = BoundaryRange(Min.map(f), Max.map(f))
+    def map[B: Packer](f: RangeBound[Nothing] => B) = BoundaryRange(Bound(f(Min)), Bound(f(Max)))
   }
 
   case object Empty extends Range[Nothing] {
-    def keyStart = ByteArrayMax
+    val keyStart = Array(TYPE_MIN)
 
-    def keyEnd = ByteArrayMin
+    val keyEnd = Array(TYPE_MIN)
 
     def map[B: Packer](f: RangeBound[Nothing] => B) = this
   }
 
-  case class SingleValueRange[A](value: A)(implicit p: Packer[A]) extends Range[A] {
-    def keyStart = p(value)
+  case class BoundaryRange[A](start: RangeBound[A], end: RangeBound[A])(implicit p: Packer[RangeBound[A]]) extends Range[A] {
+    lazy val keyStart = p(start)
 
-    def keyEnd = keyStart
+    lazy val keyEnd = p(end)
 
-    def map[B: Packer](f: RangeBound[A] => B) = SingleValueRange(f(Include(value)))
-  }
-
-  case class BoundaryRange[A](start: RangeBound[A], end: RangeBound[A])(implicit p: Packer[A]) extends Range[A] {
-
-    import java.util.{Arrays => JArrays}
-
-    def keyStart = start match {
-      case Min => ByteArrayMin
-      case Max => ByteArrayMax
-      case Include(x) => p(x)
-      case Exclude(x) =>
-        val arr = p(x)
-        JArrays.copyOf(arr, arr.length + 1)
-    }
-
-    def keyEnd = end match {
-      case Min => ByteArrayMin
-      case Max => ByteArrayMax
-      case Include(x) =>
-        val arr = p(x)
-        JArrays.copyOf(arr, arr.length + 1)
-      case Exclude(x) => p(x)
-    }
-
-    def map[B: Packer](f: RangeBound[A] => B) = BoundaryRange(start.map(f), end.map(f))
-  }
-
-  case class PrefixRange[A](prefix: A)(implicit p: Packer[A]) extends Range[A] {
-    def keyStart = p(prefix)
-
-    def keyEnd = {
-      val arr = p(prefix)
-      var i = arr.length - 1
-      var c = 1
-      while (i >= 0 && c > 0) {
-        c += (arr(i) & 0xff)
-        arr(i) = c.asInstanceOf[Byte]
-        c >>= 8
-        i -= 1
-      }
-      if (c > 0) ByteArrayMax else arr
-    }
-
-    def map[B: Packer](f: RangeBound[A] => B) = PrefixRange(f(Include(prefix)))
+    def map[B: Packer](f: RangeBound[A] => B) = BoundaryRange(Bound(f(start)), Bound(f(end)))
   }
 
   class ValueHelper[T](val value: T) extends AnyVal {
-    def +-+(end: T)(implicit p: Packer[T]) = BoundaryRange(Include(value), Include(end))
+    def +-+(end: T)(implicit p: Packer[T]) = BoundaryRange(Bound(value), Succeed(end))
 
-    def +--(end: T)(implicit p: Packer[T]) = BoundaryRange(Include(value), Exclude(end))
+    def +--(end: T)(implicit p: Packer[T]) = BoundaryRange(Bound(value), Bound(end))
 
-    def --+(end: T)(implicit p: Packer[T]) = BoundaryRange(Exclude(value), Include(end))
+    def --+(end: T)(implicit p: Packer[T]) = BoundaryRange(Succeed(value), Succeed(end))
 
-    def ---(end: T)(implicit p: Packer[T]) = BoundaryRange(Exclude(value), Exclude(end))
+    def ---(end: T)(implicit p: Packer[T]) = BoundaryRange(Succeed(value), Bound(end))
 
-    def asMax(implicit p: Packer[T]) = BoundaryRange[T](Min, Include(value))
+    def +--(end: RangeBound[T])(implicit p: Packer[T]) = BoundaryRange(Bound(value), end)
 
-    def asMin(implicit p: Packer[T]) = BoundaryRange[T](Include(value), Max)
+    def ---(end: RangeBound[T])(implicit p: Packer[T]) = BoundaryRange(Succeed(value), end)
 
-    def asPrefix(implicit p: Packer[T]) = PrefixRange(value)
+    def asMax(implicit p: Packer[T]) = BoundaryRange[T](Min, Bound(value))
+
+    def asMaxInclude(implicit p: Packer[T]) = BoundaryRange[T](Min, Succeed(value))
+
+    def asMin(implicit p: Packer[T]) = BoundaryRange[T](Bound(value), Max)
+
+    def asMinExclude(implicit p: Packer[T]) = BoundaryRange[T](Succeed(value), Max)
+
+    def asRange(implicit p: Packer[T]) = BoundaryRange(Bound(value), Succeed(value))
+  }
+
+  class StringHelper(val value: String) extends AnyVal {
+    def prefixed = Prefixed(value)
+
+    def asPrefix = BoundaryRange(Bound(value), Prefixed(value))
   }
 
   val TYPE_MIN: Byte = 1
   val TYPE_MAX: Byte = -1
 
-  class RangeBoundPacker[T](implicit packer: Packer[T]) extends Packer[RangeBound[T]] {
+  object ByteArrayOrdering extends Ordering[Array[Byte]] {
+    def compare(x: Array[Byte], y: Array[Byte]) = Util.compareUInt8s(x, y)
+  }
+
+  import scala.language.implicitConversions
+
+  implicit def value2helper[T](value: T): ValueHelper[T] = new ValueHelper(value)
+
+  implicit def string2helper(value: String): StringHelper = new StringHelper(value)
+}
+
+object RangeBound {
+
+  import Range._
+
+  class RangeBoundPacker[T](implicit packer: Packer[T]) extends Packer.RawPacker[RangeBound[T]] {
     def pack(value: RangeBound[T], buf: Array[Byte], offset: Int) = {
       value match {
         case Min =>
@@ -130,66 +105,76 @@ object Range {
         case Max =>
           buf(offset) = TYPE_MAX
           offset + 1
-        case Include(x) => packer.pack(x, buf, offset)
-        case Exclude(x) => packer.pack(x, buf, offset)
+        case Bound(x) =>
+          packer.pack(x, buf, offset)
+        case Succeed(x) =>
+          val end = packer.pack(x, buf, offset)
+          buf(offset) match {
+            case Packer.TYPE_STRING | Packer.TYPE_TUPLE =>
+              buf(end - 1) = TYPE_MIN
+              buf(end) = Packer.TYPE_END
+              end + 1
+            case Packer.TYPE_UINT32 | Packer.TYPE_UINT64 =>
+              if (!succeedInPlace(buf, offset + 1, end))
+                buf(offset) = TYPE_MAX
+              end
+            case Packer.TYPE_FALSE =>
+              buf(offset) = Packer.TYPE_TRUE
+              end
+            case Packer.TYPE_TRUE =>
+              buf(offset) = TYPE_MAX
+              end
+            case Packer.TYPE_RAW =>
+              if (!succeedInPlace(buf, offset + 2, end))
+                buf(offset) = TYPE_MAX
+              end
+          }
+        case Prefixed(x) =>
+          val end = packer.asInstanceOf[Packer[String]].pack(x, buf, offset)
+          buf(end - 1) = TYPE_MAX
+          buf(end) = Packer.TYPE_END
+          end + 1
       }
+    }
+
+    def succeedInPlace(buf: Array[Byte], start: Int, end: Int) = {
+      var i = end - 1
+      var c = 1
+      while (c > 0 && i >= start) {
+        c += buf(i) & 0xff
+        buf(i) = c.asInstanceOf[Byte]
+        c >>= 8
+        i -= 1
+      }
+      i >= start
     }
 
     def packLength(value: RangeBound[T]) = {
       value match {
         case Min | Max => 1
-        case Include(x) => packer.packLength(x)
-        case Exclude(x) => packer.packLength(x)
+        case Bound(x) => packer.packLength(x)
+        case Succeed(x) =>
+          def getLen[A](packer: Packer[A], v: A): Int = {
+            packer match {
+              case p: Packer.MappedPacker[A, _] => getLen(p.underlying, p.mapTo(v))
+              case p: Packer.FixedLengthPacker[_] => p.packLength(v)
+              case p if p eq Packer.ByteArrayPacker => p.packLength(v)
+              case p => p.packLength(v) + 1
+            }
+          }
+          getLen(packer, x)
+        case Prefixed(x) => Packer.of[String].packLength(x) + 1
       }
     }
 
-    def unpack(buf: Array[Byte], offset: Int, length: Int): RangeBound[T] = {
-      buf(offset) match {
-        case TYPE_MIN => Min
-        case TYPE_MAX => Max
-        case _ => Include(packer.unpack(buf, offset, length))
-      }
-    }
+    def unpack(buf: Array[Byte], offset: Int, length: Int): RangeBound[T] = ???
 
-    def unpackLength(buf: Array[Byte], offset: Int) = {
-      buf(offset) match {
-        case TYPE_MIN | TYPE_MAX => 1
-        case _ => packer.unpackLength(buf, offset)
-      }
-    }
+    def unpackLength(buf: Array[Byte], offset: Int) = ???
   }
 
-  val ByteArrayMin = Array(TYPE_MIN)
-  val ByteArrayMax = Array(TYPE_MAX)
+  implicit def rangeBoundPacker[T: Packer]: Packer[RangeBound[T]] = new RangeBoundPacker[T]
 
-  @inline final def isMin(arr: Array[Byte]) = arr eq ByteArrayMin
-
-  @inline final def isMax(arr: Array[Byte]) = arr eq ByteArrayMax
-
-  object ByteArrayOrdering extends Ordering[Array[Byte]] {
-    def compare(x: Array[Byte], y: Array[Byte]) = {
-      if (x eq y)
-        0
-      else if ((x eq ByteArrayMin) || (y eq ByteArrayMax))
-        -1
-      else if ((x eq ByteArrayMax) || (y eq ByteArrayMin))
-        1
-      else
-        Util.compareUInt8s(x, y)
-    }
-  }
-
-  import scala.language.implicitConversions
-
-  implicit def value2range[T: Packer](value: T): Range[T] = SingleValueRange(value)
-
-  implicit def value2helper[T](value: T): ValueHelper[T] = new ValueHelper(value)
-}
-
-object RangeBound {
-  implicit def rangeBoundPacker[T: Packer]: Packer[RangeBound[T]] = new Range.RangeBoundPacker[T]
-
-  implicit val nothingPacker = rangeBoundPacker[Nothing]
+  implicit val nothingPacker: Packer[RangeBound[Nothing]] = rangeBoundPacker[Nothing]
 }
 
 trait RangeImplicits {
@@ -202,5 +187,7 @@ trait RangeImplicits {
   val All = Range.All
 
   implicit def value2helper[T](value: T): Range.ValueHelper[T] = new Range.ValueHelper(value)
+
+  implicit def string2helper(value: String): Range.StringHelper = new Range.StringHelper(value)
 }
 
