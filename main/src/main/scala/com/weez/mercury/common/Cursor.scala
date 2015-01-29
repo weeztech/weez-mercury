@@ -121,13 +121,60 @@ object Cursor {
   class CursorImpl[V](range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable, pv: Packer[V]) extends Cursor[V] {
     self =>
 
-    import com.weez.mercury.debug._
+    private val rawCur = new RawCursor(range, forward)
+    private var _value: V = _
+    private var _key: Array[Byte] = _
+    final val UPDATE_BIT_KEY = 1
+    final val UPDATE_BIT_VALUE = 2
+    private var updates: Int = 0
+
+    def isValid = rawCur.isValid
+
+    def value = {
+      if ((updates & UPDATE_BIT_VALUE) == 0) {
+        _value = pv.unapply(rawCur.value)
+        updates |= UPDATE_BIT_VALUE
+      }
+      _value
+    }
+
+    def key = {
+      if ((updates & UPDATE_BIT_KEY) == 0) {
+        _key = rawCur.key
+        updates |= UPDATE_BIT_KEY
+      }
+      _key
+    }
+
+    def next() = {
+      rawCur.next()
+      updates = 0
+    }
+
+    def close() = rawCur.close()
+
+    @inline final def mapWithKey[B](f: (Array[Byte], V) => B): Cursor[B] =
+      new Cursor[B] {
+        def isValid = self.isValid
+
+        def value = f(self.key, self.value)
+
+        def next() = self.next()
+
+        def close() = self.close()
+      }
+  }
+
+
+  class RawCursor(range: DBRange, forward: Boolean)(implicit db: DBSessionQueryable) extends Cursor[Array[Byte]] {
+    self =>
+
     import Range.{ByteArrayOrdering => O}
 
-    val step = if (forward) 1 else -1
-    val rangeStart = range.keyStart
-    val rangeEnd = range.keyEnd
-    var dbCursor: DBCursor =
+    private val step = if (forward) 1 else -1
+    private val rangeStart = range.keyStart
+    private val rangeEnd = range.keyEnd
+    private var dbCursor: DBCursor =
       if (O.compare(rangeStart, rangeEnd) < 0) {
         val c = db.newCursor()
         if (forward)
@@ -138,12 +185,6 @@ object Cursor {
         }
         c
       } else null
-
-    var _value: V = _
-    var _key: Array[Byte] = _
-    final val UPDATE_BIT_KEY = 1
-    final val UPDATE_BIT_VALUE = 2
-    var updates: Int = 0
 
     def isValid: Boolean = {
       dbCursor != null && {
@@ -159,26 +200,13 @@ object Cursor {
       }
     }
 
-    def value: V = {
-      if ((updates & UPDATE_BIT_VALUE) == 0) {
-        _value = pv.unapply(dbCursor.value())
-        updates |= UPDATE_BIT_VALUE
-      }
-      _value
-    }
+    def value = dbCursor.value()
 
-    def key = {
-      if ((updates & UPDATE_BIT_KEY) == 0) {
-        _key = dbCursor.key()
-        updates |= UPDATE_BIT_KEY
-      }
-      _key
-    }
+    def key = dbCursor.key()
 
     def next() = {
       if (dbCursor != null) {
         dbCursor.next(step)
-        updates = 0
       }
     }
 
@@ -186,20 +214,8 @@ object Cursor {
       if (dbCursor != null) {
         dbCursor.close()
         dbCursor = null
-        updates = 0
       }
     }
-
-    @inline final def mapWithKey[B](f: (Array[Byte], V) => B): Cursor[B] =
-      new Cursor[B] {
-        def isValid = self.isValid
-
-        def value = f(self.key, self.value)
-
-        def next() = self.next()
-
-        def close() = self.close()
-      }
   }
 
 }
