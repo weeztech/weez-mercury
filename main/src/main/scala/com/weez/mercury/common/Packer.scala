@@ -2,7 +2,7 @@ package com.weez.mercury.common
 
 import scala.language.implicitConversions
 
-trait Packer[T] {
+sealed trait Packer[T] {
   def apply(value: T): Array[Byte] = {
     val buf = new Array[Byte](packLength(value))
     pack(value, buf, 0)
@@ -38,11 +38,13 @@ object Packer extends CollectionPackers {
 
   def unpack[T](buf: Array[Byte])(implicit packer: Packer[T]) = packer.unapply(buf)
 
-  abstract class FixedLengthPacker[T](length: Int) extends Packer[T] {
+  abstract class FixedLengthPacker[T](val length: Int) extends Packer[T] {
     def packLength(value: T) = length
 
     def unpackLength(buf: Array[Byte], offset: Int) = length
   }
+
+  private[common] trait RawPacker[T] extends Packer[T]
 
   val charset = java.nio.charset.Charset.forName("UTF-8")
 
@@ -192,16 +194,48 @@ object Packer extends CollectionPackers {
     }
   }
 
-  def map[A, B](to: A => B, from: B => A)(implicit underlying: Packer[B]): Packer[A] =
-    new Packer[A] {
-      def pack(value: A, buf: Array[Byte], offset: Int) = underlying.pack(to(value), buf, offset)
 
-      def packLength(value: A) = underlying.packLength(to(value))
+  sealed trait MappedPacker[A, B] extends Packer[A] {
+    def underlying: Packer[B]
 
-      def unpack(buf: Array[Byte], offset: Int, length: Int) = from(underlying.unpack(buf, offset, length))
+    def mapTo: A => B
 
-      def unpackLength(buf: Array[Byte], offset: Int) = underlying.unpackLength(buf, offset)
+    def mapFrom: B => A
+
+    def pack(value: A, buf: Array[Byte], offset: Int) = underlying.pack(mapTo(value), buf, offset)
+
+    def packLength(value: A) = underlying.packLength(mapTo(value))
+
+    def unpack(buf: Array[Byte], offset: Int, length: Int) = mapFrom(underlying.unpack(buf, offset, length))
+
+    def unpackLength(buf: Array[Byte], offset: Int) = underlying.unpackLength(buf, offset)
+  }
+
+  def map[A, B](to: A => B, from: B => A)(implicit _underlying: Packer[B]): Packer[A] = {
+    new MappedPacker[A, B] {
+      def underlying = _underlying
+
+      def mapTo = to
+
+      def mapFrom = from
     }
+  }
+
+  def getLengthByType(buf: Array[Byte], offset: Int): Int = {
+    buf(offset) match {
+      case TYPE_STRING => StringPacker.unpackLength(buf, offset)
+      case TYPE_UINT32 => IntPacker.length
+      case TYPE_UINT64 => LongPacker.length
+      case TYPE_TRUE => BooleanPacker.length
+      case TYPE_FALSE => BooleanPacker.length
+      case TYPE_RAW => ByteArrayPacker.unpackLength(buf, offset)
+      case TYPE_TUPLE =>
+        var end = offset + 1
+        while (buf(end) != TYPE_END)
+          end += getLengthByType(buf, end)
+        end + 1 - offset
+    }
+  }
 
   implicit val DoublePacker = map[Double, Long](java.lang.Double.doubleToLongBits, java.lang.Double.longBitsToDouble)
 
