@@ -4,59 +4,166 @@ object PackerDebug {
 
   import com.weez.mercury.common._
 
-  def show(buf: Array[Byte]): String = show(buf, 0, buf.length)
+  case class ShowOptions(offset: Boolean = false, tpe: Boolean = false, wrap: Boolean = false, hex: Boolean = false)
 
-  def show(buf: Array[Byte], start: Int, end: Int): String = {
-    def eat(offset: Int): (String, Int) = {
+  def show(buf: Array[Byte], options: ShowOptions): String = show(buf, 0, buf.length, options)
+
+  def show(buf: Array[Byte], start: Int, end: Int, options: ShowOptions): String = {
+    new ShowContext(buf, start, end, options).show()
+  }
+
+  trait ShowPrinter[T] {
+    def tpe: String
+
+    def apply(options: ShowOptions, value: T): String
+  }
+
+  object ShowPrinter {
+    def apply[T](_tpe: String)(f: (ShowOptions, T) => String): ShowPrinter[T] =
+      new ShowPrinter[T] {
+        def tpe = _tpe
+
+        def apply(options: ShowOptions, value: T) = f(options, value)
+      }
+
+    implicit val stringPrinter = apply("String") { (_, v: String) =>
+      val re = "\t|\n|\r|\"".r
+      val s =
+        re.replaceAllIn(v, m => {
+          m.toString() match {
+            case "\t" => "\\t"
+            case "\n" => "\\n"
+            case "\r" => "\\r"
+            case "\"" => "\\\""
+          }
+        })
+      "\"" + s + "\""
+    }
+
+    implicit val intPrinter = apply("Int") { (o, v: Int) =>
+      if (o.hex) {
+        val i = f"$v%x"
+        "0" * (8 - i.length) + i
+      } else
+        v.toString
+    }
+
+    implicit val longPrinter = apply("Long") { (o, v: Long) =>
+      if (o.hex) {
+        val i = f"$v%xL"
+        "0" * (17 - i.length) + i
+      } else
+        v.toString
+    }
+
+    implicit val booleanPrinter = apply("Boolean") { (_, v: Boolean) =>
+      v.toString
+    }
+
+    implicit val byteArrayPrinter = apply("Raw") { (_, v: Array[Byte]) =>
+      val sb = new StringBuilder
+      for (b <- v)
+        sb.append(f"${b & 0xff}%02x").append(' ')
+      sb.toString()
+    }
+  }
+
+  class ShowContext(buf: Array[Byte], start: Int, end: Int, val options: ShowOptions) {
+    private val sb = new StringBuilder
+    private val sb2 = new StringBuilder
+    private val stack = scala.collection.mutable.Stack[(Int, Int, String)]()
+    private var offset = start
+    private var firstInTuple = false
+    private var indent = 0
+
+    def show(): String = {
       import Packer._
-      buf(offset) match {
-        case TYPE_STRING =>
-          val len = StringPacker.unpackLength(buf, offset)
-          val v = StringPacker.unpack(buf, offset, len)
-          Util.showString(v) -> (offset + len)
-        case TYPE_UINT32 =>
-          val len = IntPacker.unpackLength(buf, offset)
-          val v = IntPacker.unpack(buf, offset, len)
-          v.toString -> (offset + len)
-        case TYPE_UINT64 =>
-          val len = LongPacker.unpackLength(buf, offset)
-          val v = LongPacker.unpack(buf, offset, len)
-          (v.toString + "L") -> (offset + len)
-        case TYPE_TRUE | TYPE_FALSE =>
-          val len = BooleanPacker.unpackLength(buf, offset)
-          val v = BooleanPacker.unpack(buf, offset, len)
-          v.toString -> (offset + len)
-        case TYPE_RAW =>
-          val len = ByteArrayPacker.unpackLength(buf, offset)
-          val v = ByteArrayPacker.unpack(buf, offset, len)
-          Util.showHex(v) -> (offset + len)
-        case TYPE_TUPLE =>
-          val sb = new StringBuilder
-          sb.append('(')
-          var off = offset + 1
-          if (buf(off) != TYPE_END) {
-            val (s, end) = eat(off)
-            sb.append(s)
-            off = end
-            while (buf(off) != TYPE_END) {
-              val (s, end) = eat(off)
-              sb.append(", ").append(s)
-              off = end
+      while (offset < end) {
+        buf(offset) match {
+          case TYPE_STRING => eatWith(of[String])
+          case TYPE_UINT32 => eatWith(of[Int])
+          case TYPE_UINT64 => eatWith(of[Long])
+          case TYPE_TRUE | TYPE_FALSE => eatWith(of[Boolean])
+          case TYPE_RAW => eatWith(of[Array[Byte]])
+          case TYPE_TUPLE => tupleBegin(1)
+          case TYPE_END => tupleEnd(1)
+          case Range.TYPE_MAX => eat(1, "Max")
+          case Range.TYPE_MIN => eat(1, "Max")
+        }
+      }
+      sb.toString()
+    }
+
+    private def tokenBegin(tpe: String) = {
+      stack.push((offset, sb.length, tpe))
+      this
+    }
+
+    private def tokenEnd() = {
+      val (start, sbStart, tpe) = stack.pop()
+      val end = offset
+      if (options.tpe) {
+        sb2.append(tpe)
+        if (options.offset)
+          sb2.append(" : ").append(start).append(" : ").append(end)
+        sb2.append(" -> ")
+      } else if (options.offset) {
+        sb2.append(start).append(" : ").append(end).append(" -> ")
+      }
+      sb.insert(sbStart, sb2.toString())
+      sb2.clear()
+    }
+
+    private def eatWith[T](p: Packer[T])(implicit printer: ShowPrinter[T]): Unit = {
+      val len = p.unpackLength(buf, offset)
+      val v = p.unpack(buf, offset, len)
+      eat[T](len, v)
+    }
+
+    private def eat[T](len: Int, v: T)(implicit printer: ShowPrinter[T]): Unit = {
+      space()
+      tokenBegin(printer.tpe)
+      sb.append(printer(options, v))
+      offset += len
+      tokenEnd()
+    }
+
+    private def space(): Unit = {
+      if (!stack.isEmpty) {
+        if (firstInTuple)
+          firstInTuple = false
+        else
+          sb.append(", ")
+        if (options.wrap) {
+          sb.append("\r\n")
+          if (indent > 0) {
+            var i = 0
+            while (i < indent) {
+              sb.append("  ")
+              i += 1
             }
           }
-          sb.append(')')
-          sb.toString() -> (off + 1)
-        case Range.TYPE_MAX =>
-          "Max" -> (offset + 1)
-        case Range.TYPE_MIN =>
-          "Min" -> (offset + 1)
+        }
       }
     }
-    val (s, x) = eat(start)
-    require(x == end, {
-      val m = "invalid length"
-      m
-    })
-    s
+
+    private def tupleBegin(len: Int) = {
+      space()
+      tokenBegin("Tuple")
+      sb.append("(")
+      firstInTuple = true
+      indent += 1
+      offset += len
+    }
+
+    private def tupleEnd(len: Int) = {
+      require(stack.top._3 == "Tuple")
+      sb.append(")")
+      offset += len
+      indent -= 1
+      tokenEnd()
+    }
+
   }
+
 }

@@ -56,19 +56,15 @@ object DBDebugService extends RemoteService {
     CollectionMetaCollection.byName(name) match {
       case Some(x) =>
         if (x.isRoot) {
+          val options = PackerDebug.ShowOptions(wrap = true, offset = true, tpe = true)
           val mc = new MetaContext
-          val cur = newCursor()
-          val range = Range.All.map(y => (x.prefix, y))
-          val start = range.keyStart
-          val end = range.keyEnd
-          val o = Range.ByteArrayOrdering
-          var valid = cur.seek(start)
-          val builder = Seq.newBuilder[Any]
-          while (valid && o.compare(cur.key(), end) < 0) {
-            builder += unpack(cur.value(), 0, x.valueType, mc)
-            valid = cur.next(1)
+          val prefix = (x.prefix & 0xffffL) << 48
+          val range = prefix +-+ (prefix | (-1L >>> 16))
+          val cur = new Cursor.RawCursor(range, true) map { buf =>
+            val (v, _) = unpack(buf, 0, x.valueType, mc)
+            v.asInstanceOf[ModelObject]
           }
-          completeWith("items" -> builder.result())
+          completeWithPager(cur, "id")
           cur.close()
         } else {
           failWith("not root collection")
@@ -115,20 +111,53 @@ object DBDebugService extends RemoteService {
         }
         builder.result() -> (off + 1)
       case DBType.EntityRef(x) =>
-        require(buf(offset) == Packer.TYPE_TUPLE)
         val meta = c.getEntityMeta(x)
-        var off = offset + 1
-        val cols = meta.columns map { col =>
-          val (column, end) = unpack(buf, off, col.tpe, c)
-          off = end
-          col.name -> column
+        if (meta.isAbstract) {
+          unpack(buf, offset)
+        } else {
+          require(buf(offset) == Packer.TYPE_TUPLE)
+          var off = offset + 1
+          val cols = meta.columns map { col =>
+            val (column, end) = unpack(buf, off, col.tpe, c)
+            off = end
+            col.name -> column
+          }
+          require(buf(off) == Packer.TYPE_END)
+          ModelObject(cols: _*) -> (off + 1)
         }
-        require(buf(off) == Packer.TYPE_END)
-        ModelObject(cols: _*) -> (off + 1)
       case DBType.EntityCollRef(x) =>
         ???
       case DBType.Ref(x) =>
         x.toString -> (Packer.of[Long].unpackLength(buf, offset) + offset)
+    }
+  }
+
+  def unpack(buf: Array[Byte], offset: Int): (Any, Int) = {
+    if (buf(offset) == Packer.TYPE_TUPLE) {
+      val builder = Seq.newBuilder[(String, Any)]
+      var off = offset + 1
+      var i = 1
+      while (buf(off) != Packer.TYPE_END) {
+        val (v, end) = unpack(buf, off)
+        builder += s"_$i" -> v
+        i += 1
+        off = end
+      }
+      require(buf(off) == Packer.TYPE_END)
+      ModelObject(builder.result(): _*) -> (off + 1)
+    } else {
+      val packer =
+        buf(offset) match {
+          case Packer.TYPE_STRING => Packer.of[String]
+          case Packer.TYPE_UINT32 => Packer.of[Int]
+          case Packer.TYPE_UINT64 => Packer.of[Long]
+          case Packer.TYPE_FALSE => Packer.of[Boolean]
+          case Packer.TYPE_TRUE => Packer.of[Boolean]
+          case Packer.TYPE_RAW => Packer.of[Array[Byte]]
+        }
+      val len = packer.unpackLength(buf, offset)
+      val v = packer.unpack(buf, offset, len)
+      v -> (offset + len)
     }
   }
 
