@@ -1,9 +1,9 @@
 <link rel="import" href="../common/common-search-input.html">
 <link rel="import" href="../common/common-pager.html">
+<link rel="import" href="../common/common-pager-query.html">
 <link rel="import" href="../common/common-selection.html">
 <link rel="import" href="../common/common-search-selector.html">
 <link rel="import" href="../common/common-link.html">
-<link rel="import" href="../common/common-remote.html">
 
 <polymer-element name="app-entity-selector">
   <template>
@@ -14,15 +14,20 @@
       .spinner {
         background-color: rgba(255, 255, 255, 0.3);
       }
+      common-pager {
+        height: 100%;
+      }
     </style>
-    <common-pager id="pager" on-common-query="{{queryAction}}" flex>
-      <template>
-        <common-link>{{name}}</common-link>
+    <common-pager flex>
+      <template repeat="{{i in items}}">
+        <pre>{{i | format}}</pre>
       </template>
+      <common-pager-query api="debug.DBDebugService.listRootCollection" items="{{items}}" args="{{queryArgs}}" batch="5"></common-pager-query>
     </common-pager>
+    <!--
     <common-selection selected="{{selected}}">
       <common-selector target="{{$.pager}}"></common-selector>
-    </common-selection>
+    </common-selection>-->
   </template>
   <script>
     Polymer({
@@ -30,22 +35,13 @@
         collection: null
       },
       collectionChanged: function () {
-        this.$.pager.reload();
+        this.items = [];
+        this.queryArgs = this.collection && {
+          collectionName: this.collection.name
+        };
       },
-      queryAction: function (e, detail) {
-        if (!this.collection) {
-          detail.result = {
-            items: [],
-            keyprop: 'id',
-            hasMore: false
-          };
-          return;
-        }
-        detail.result = Weez.remoteCall('debug.DBDebugService.listRootCollection', {
-          name: this.collection.name,
-          start: detail.start,
-          count: 24
-        });
+      format: function (val) {
+        return JSON.stringify(val, null, '\t');
       }
     });
   </script>

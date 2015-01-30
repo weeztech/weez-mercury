@@ -168,7 +168,10 @@
         targetChanged: function () {
           if (this._target) this.updateListener(false);
           this._target = this.target;
-          if (this._target) this.updateListener(true);
+          if (this._target) {
+            this.updateListener(true);
+            this.model = this._target.templateVarName;
+          }
         },
         commonQueryAction: function (e) {
           var detail = e.detail;
