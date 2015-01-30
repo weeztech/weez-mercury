@@ -3,8 +3,10 @@ package com.weez.mercury.common
 import java.util.Date
 
 import akka.event.LoggingAdapter
+import com.github.nscala_time.time.Imports._
 import com.weez.mercury.collect
 import com.weez.mercury.common.EntityCollections.SubHostCollectionImpl
+import com.weez.mercury.product._
 
 trait Context extends RangeImplicits {
   implicit val context: this.type = this
@@ -42,7 +44,7 @@ trait DBSessionUpdatable extends DBSessionQueryable {
   def del[K: Packer](key: K): Unit
 }
 
-trait IndexBase[K, V <: Entity] {
+trait IndexBase[K, V] {
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
     this.apply(Range.All)
@@ -58,6 +60,7 @@ trait IndexBase[K, V <: Entity] {
  */
 trait Index[K, V <: Entity] extends IndexBase[K, V]
 
+
 /**
  * RootCollection.UniqueIndex : (indexID:Int, userKey: K) ->Long
  * SubCollection.UniqueIndex : (indexID:Int, ownerID: Long, userKey: K) -> Long
@@ -71,7 +74,6 @@ trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
   def delete(key: K)(implicit db: DBSessionUpdatable): Unit
 
   def update(value: V)(implicit db: DBSessionUpdatable): Unit
-
 }
 
 trait Ref[+T <: Entity] {
@@ -85,7 +87,7 @@ trait Ref[+T <: Entity] {
 }
 
 @collect
-trait Entity {
+trait Entity extends AnyRef {
   private[common] var _id: Long = 0
 
   def id: Long = _id
@@ -157,7 +159,7 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer : TypeTag](ownerR
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = host.newEntityID()
 
-  private[common] lazy val host: SubHostCollectionImpl[O, V] = EntityCollections.forPartitionHost[O, V](this)
+  private[common] lazy val host: SubHostCollectionImpl[O, V] = EntityCollections.forSubCollection[O, V](this)
 }
 
 abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] {
@@ -172,15 +174,19 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
 
   @inline final def delete(id: Long)(implicit db: DBSessionUpdatable): Unit = impl.delete(id)
 
-  @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl(id)
+  @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl.safeGet(id)
 
   @inline final override def defUniqueIndex[K: Packer : TypeTag](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
 
   @inline final override def defIndex[K: Packer : TypeTag](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
-  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = impl(forward)
+  @inline final def defUniqueKeyView: DataViewBuilder[V, UniqueKeyView] = impl.rootTracer.defUniqueKeyView
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl(forward = true)
+  @inline final def defDataView: DataViewBuilder[V, DataView] = impl.rootTracer.defDataView
+
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] = impl.scan(forward = true)
+
+  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = impl.scan(forward)
 
   @inline final def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
@@ -189,36 +195,48 @@ abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityColl
   private[common] val impl = EntityCollections.newHost[V](name)
 }
 
-abstract class DataView[K: Packer, V: Packer, ROOT <: Entity, RTR](root: RootCollection[ROOT], trance: ROOT => RTR) {
-  dataView =>
+trait DataView[K, V, E <: Entity] {
 
-  import DataView._
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])] = apply(forward = true)
 
-  def name: String
+  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])] = apply(Range.All, forward)
 
-  @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = impl(key)
-
-  @inline final def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V)] = impl(range, forward)
-
-  @inline final protected def defSubTracer[S <: Entity, STR](name: String, trace: S => STR): Tracer[S, STR] = impl.defSubTracer(name, trace)
-
-  protected def extract(traceResult: RTR)(implicit subTRs: TraceResults): (K, V)
-
-  protected def extractKVs(traceResult: RTR)(implicit subTRs: TraceResults): Map[K, V] = Map(extract(traceResult))
-
-  private val impl = root.impl.defDataView[K, V, RTR](name, trance, (traceResult, subTRs) => extractKVs(traceResult)(subTRs))
+  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])]
 }
 
-object DataView {
+trait UniqueKeyView[K, V, E <: Entity] extends DataView[K, V, E] {
+  def apply(key: K)(implicit db: DBSessionQueryable): Option[V]
 
-  trait TraceResults {
-    def apply[TR](tracer: Tracer[_, TR]): TR
-  }
-
-  trait Tracer[E <: Entity, TR] {
-    val id: Int
-
-    def defSubTracer[S <: Entity, STR](name: String, trace: S => STR): Tracer[S, STR]
-  }
-
+  def getRV(key: K)(implicit db: DBSessionQueryable): Option[(Ref[E], V)]
 }
+
+import scala.language.higherKinds
+
+trait DataViewBuilder[E <: Entity, DW[_, _, _ <: Entity]] {
+  def apply[DK: Packer, DV: Packer, T](name: String, trace: E => T)(extract: T => Map[DK, DV]): DW[DK, DV, E]
+
+  def apply[DK: Packer, DV: Packer, T, R1, R1T](name: String, trace: E => T, r1Path: String, r1Trace: R1 => R1T)(extract: (T, R1T) => Map[DK, DV]): DW[DK, DV, E]
+
+  def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T](name: String, trace: E => T, r1Path: String, r1Trace: R1 => R1T
+                                                         , r2Path: String, r2Trace: R2 => R2T)
+                                                        (extract: (T, R1T, R2T) => Map[DK, DV]): DW[DK, DV, E]
+
+  def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T](name: String, trace: E => T, r1Path: String, r1Trace: R1 => R1T,
+                                                                  r2Path: String, r2Trace: R2 => R2T,
+                                                                  r3Path: String, r3Trace: R3 => R3T)
+                                                                 (extract: (T, R1T, R2T, R3T) => Map[DK, DV]): DW[DK, DV, E]
+
+  def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T, R4, R4T](name: String, trace: E => T, r1Path: String, r1Trace: R1 => R1T,
+                                                                           r2Path: String, r2Trace: R2 => R2T,
+                                                                           r3Path: String, r3Trace: R3 => R3T,
+                                                                           r4Path: String, r4Trace: R4 => R4T)
+                                                                          (extract: (T, R1T, R2T, R3T, R4T) => Map[DK, DV]): DW[DK, DV, E]
+
+  def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T, R4, R4T, R5, R5T](name: String, trace: E => T, r1Path: String, r1Trace: R1 => R1T,
+                                                                                    r2Path: String, r2Trace: R2 => R2T,
+                                                                                    r3Path: String, r3Trace: R3 => R3T,
+                                                                                    r4Path: String, r4Trace: R4 => R4T,
+                                                                                    r5Path: String, r5Trace: R5 => R5T)
+                                                                                   (extract: (T, R1T, R2T, R3T, R4T, R5T) => Map[DK, DV]): DW[DK, DV, E]
+}
+
