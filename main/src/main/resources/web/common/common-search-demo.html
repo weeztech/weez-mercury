@@ -5,8 +5,6 @@
   <title></title>
   <script src="../bower_components/webcomponentsjs/webcomponents.min.js"></script>
   <link rel="import" href="../bower_components/polymer/polymer.html">
-  <link rel="import" href="common-framework.html">
-
   <link rel="stylesheet" href="../index.css">
 </head>
 
@@ -87,7 +85,7 @@
         i.num = k;
       });
       var tpl = e.target;
-      tpl.selectAction = function(e) {
+      tpl.selectAction = function (e) {
         e.target.fire('common-select');
       };
       tpl.queryAction = function (e, detail) {

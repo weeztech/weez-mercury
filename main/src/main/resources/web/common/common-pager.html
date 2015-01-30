@@ -18,9 +18,10 @@
         color: #777;
       }
     </style>
-    <content id="content" select="template"></content>
     <core-scroll-threshold id="scrollThreshold" lowerThreshold="{{threshold}}" on-lower-trigger="{{loadMore}}" flex>
-      <div id="list"></div>
+      <div>
+        <content></content>
+      </div>
       <div vertical layout center hidden?="{{!loading}}">
         <paper-spinner active></paper-spinner>
       </div>
@@ -34,40 +35,13 @@
   <script>
     Polymer({
       publish: {
-        threshold: 20,
-        keywords: ''
+        threshold: 20
       },
       loading: false,
       hasMore: true,
       domReady: function () {
-        var arr = this.$.content.getDistributedNodes();
-        if (arr.length > 1) throw new Error('multiple templates found');
-        if (arr.length == 0) throw new Error('cannot find template');
-        var tpl = arr[0];
-        if (tpl.hasAttribute('repeat') || tpl.hasAttribute('bind') || tpl.hasAttribute('if'))
-          throw new Error('cannot use template with repeat/if/bind attribute');
-        var clone = this.ownerDocument.importNode(tpl, false);
-        if (clone.hasAttribute('norepeat')) {
-          clone.setAttribute('bind', '{{items}}');
-        } else {
-          clone.setAttribute('repeat', '{{items}}');
-        }
-        this.$.list.appendChild(clone);
-        HTMLTemplateElement.decorate(clone, tpl);
-        clone.bindingDelegate = this.element.syntax;
-        clone.model = this;
-        this.itemTemplate = clone;
         this.isReady = true;
         this.fill();
-      },
-      detached: function () {
-        if (this.itemTemplate) {
-          this.itemTemplate.unbind('repeat');
-          this.itemTemplate = null;
-        }
-      },
-      keywordsChanged: function () {
-        this.reload();
       },
       retryAction: function () {
         this.error = null;
@@ -77,6 +51,7 @@
         if (!this.isReady) return;
         this.hasMore = true;
         this.items = null;
+        this.error = null;
         this.loadMore();
       },
       fill: function () {
@@ -90,37 +65,25 @@
       },
       loadMore: function () {
         if (!this.hasMore || this.error) return;
-        var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+        this.loading = true;
         var detail = {};
-        this.beforeQuery(detail);
         this.fire('common-query', detail);
         var result = detail.result;
-        if (!result)
+        if (typeof result == 'undefined')
           throw new Error('no response on common-query');
-        if (!result.then) {
-          result = Promise.resolve(result);
+        if (result.then) {
+          result.then(this.afterQuery.bind(this));
+        } else {
+          this.afterQuery(result);
         }
-        if (detail.filter) result = detail.filter(result);
-        result.then(this.afterQuery.bind(this));
-      },
-      beforeQuery: function (detail) {
-        detail.start = this.items ? this.items.length : 0;
-        detail.keywords = this.keywords;
-        this.loading = true;
-        this.error = null;
       },
       afterQuery: function (result) {
+        this.loading = false;
         if (result instanceof Error) {
           this.error = result.message;
-          this.loading = false;
           return;
         }
-        this.hasMore = result.hasMore;
-        if (this.items)
-          Array.prototype.push.apply(this.items, result.items);
-        else
-          this.items = result.items;
-        this.loading = false;
+        this.hasMore = result;
         this.$.scrollThreshold.clearLower();
         this.fill();
       }

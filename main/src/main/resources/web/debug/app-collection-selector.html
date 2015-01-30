@@ -1,7 +1,4 @@
 <link rel="import" href="../common/common-search-input.html">
-<link rel="import" href="../common/common-pager.html">
-<link rel="import" href="../common/common-selection.html">
-<link rel="import" href="../common/common-search-selector.html">
 <link rel="import" href="../common/common-link.html">
 <link rel="import" href="../common/common-remote.html">
 
@@ -16,26 +13,48 @@
       }
     </style>
     <common-search-input value="{{keywords}}"></common-search-input>
-    <common-pager id="pager" keywords="{{keywords}}" on-common-query="{{queryAction}}" flex>
-      <template>
-        <common-link>{{name}}</common-link>
+    <div hidden?="{{!error}}">{{error}}</div>
+    <div hidden?="{{error}}">
+      <template repeat="{{items}}">
+        <common-link hidden?="{{hide}}" on-tap="{{selectAction}}">{{name}}</common-link>
       </template>
-    </common-pager>
-    <common-selection selected="{{selected}}">
-      <common-selector target="{{$.pager}}"></common-selector>
-    </common-selection>
+    </div>
   </template>
   <script>
     Polymer({
       publish: {
         selected: null
       },
-      queryAction: function (e, detail) {
-        detail.result = Weez.remoteCall('debug.DBDebugService.listCollectionMetas', {
-          prefix: detail.keywords,
-          start: detail.start,
-          count: 100
+      keywordsChanged: '',
+      ready: function () {
+        var self = this;
+        Weez.remoteCall('debug.DBDebugService.listCollectionMetas', {
+          prefix: ''
+        }).then(function (resp) {
+          if (resp instanceof Error) {
+            self.error = resp.message;
+          } else {
+            self.error = null;
+            self.items = resp.items;
+          }
         });
+      },
+      keywordsChanged: function () {
+        if (!this.items) return;
+        var arr = this.items;
+        var keywords = this.keywords;
+        if (keywords) {
+          for (var i = 0; i < arr.length; i++) {
+            arr[i].hide = arr[i].name.indexOf(keywords) < 0;
+          }
+        } else {
+          for (var i = 0; i < arr.length; i++) {
+            arr[i].hide = false;
+          }
+        }
+      },
+      selectAction: function (e) {
+        this.selected = e.target.templateInstance.model;
       }
     });
   </script>
