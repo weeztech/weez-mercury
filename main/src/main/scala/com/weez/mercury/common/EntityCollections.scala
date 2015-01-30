@@ -72,7 +72,16 @@ private object EntityCollections {
   class HostCollectionImpl[V <: Entity](val name: String)(implicit val valuePacker: Packer[V]) {
     host =>
 
-    @volatile var _meta: DBType.CollectionMeta = null
+    @volatile private var _meta: DBType.CollectionMeta = null
+    private var dvtCount = 0
+    private var dvCount = 0
+    private val trsCache = new AtomicReference[TraceResults]
+    private val listeners = scala.collection.mutable.AnyRefMap[EntityCollectionListener[_], ListenerInfo]()
+    @volatile private var deleteListeners: Seq[EntityCollectionListener[V]] = Seq.empty
+    @volatile private var updateListeners: Seq[EntityCollectionListener[V]] = Seq.empty
+    @volatile private var insertListeners: Seq[EntityCollectionListener[V]] = Seq.empty
+    private val indexes = collection.mutable.Map[String, AbstractIndexImpl[V]]()
+    val rootTracer = new RootTracer(this)
 
     final def getMeta(implicit db: DBSessionQueryable): DBType.CollectionMeta = {
       if (_meta == null) {
@@ -111,9 +120,6 @@ private object EntityCollections {
       }
     }
 
-    private var dvtCount = 0
-    private var dvCount = 0
-
     @inline final def newDataViewTracerID() = {
       val id = dvtCount
       dvtCount += 1
@@ -126,8 +132,6 @@ private object EntityCollections {
       id
     }
 
-    val trsCache = new AtomicReference[TraceResults]
-
     @inline final def allocTraceResults() = {
       val cache = trsCache.getAndSet(null)
       if (cache ne null) cache.reset() else new TraceResults(dvtCount, dvCount)
@@ -137,14 +141,7 @@ private object EntityCollections {
       trsCache.compareAndSet(null, trs)
     }
 
-    val rootTracer = new RootTracer(this)
-
     private case class ListenerInfo(l: EntityCollectionListener[V], var refCount: Int)
-
-    private val listeners = scala.collection.mutable.AnyRefMap[EntityCollectionListener[_], ListenerInfo]()
-    @volatile private var deleteListeners: Seq[EntityCollectionListener[V]] = Seq.empty
-    @volatile private var updateListeners: Seq[EntityCollectionListener[V]] = Seq.empty
-    @volatile private var insertListeners: Seq[EntityCollectionListener[V]] = Seq.empty
 
     def regListener[VL <: Entity](listener: EntityCollectionListener[VL], v2vl: Option[V => VL], reg: Boolean): Unit = {
       listeners synchronized {
@@ -274,8 +271,6 @@ private object EntityCollections {
       }
       db.del(id)
     }
-
-    val indexes = collection.mutable.Map[String, AbstractIndexImpl[V]]()
 
     final def newIndex[INDEX <: AbstractIndexImpl[V]](indexName: String)(f: => INDEX): INDEX = {
       indexes.synchronized {
