@@ -230,7 +230,7 @@ private object EntityCollections {
         import Range._
         val tableID = host.meta.prefix
         val indexID = getIndexID()
-        Cursor.raw[Boolean](BoundaryRange(Include(id, tableID, indexID, 0L), Exclude(id, tableID, indexID, Long.MaxValue)), forward = true).mapWithKey { (k, _) =>
+        Cursor.raw[Boolean]((id, tableID, indexID, 0L) +--(id, tableID, indexID, Long.MaxValue), forward = true).mapWithKey { (k, _) =>
           host.apply(fullKeyPacker.unapply(k)._3).get
         }
       }
@@ -509,7 +509,7 @@ private object EntityCollections {
 
 
           override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-            val r = range.map(r => (this.getIndexID, r))(cursorKeyRangePacker)//TODO prefix
+            val r = range.map(r => (this.getIndexID, r))(cursorKeyRangePacker) //TODO prefix
             Cursor[Long](r, forward).map(id => host(id).get)
           }
         }
@@ -602,7 +602,7 @@ private object EntityCollections {
         ).asInstanceOf[IndexImpl[FullKey] with SubIndex[K]]
         new Index[K, V] {
           override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-            val r = range.map(r => (rawIndex.getIndexID, owner, r))(rawIndex.cursorKeyRangePacker)//TODO prefix
+            val r = range.map(r => (rawIndex.getIndexID, owner, r))(rawIndex.cursorKeyRangePacker) //TODO prefix
             Cursor.raw[Long](r, forward).mapWithKey((k, _) => subHost(rawIndex.fullKeyPacker.unapply(k)._4).get.entity)
           }
         }
