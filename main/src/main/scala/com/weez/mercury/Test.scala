@@ -8,7 +8,7 @@ object Test {
   def main(args: Array[String]): Unit = {
     import scala.concurrent.ExecutionContext.Implicits._
     val app = App.start(args)
-    //showDB(app.serviceManager.database)
+    showDB(app.serviceManager.database)
     val serviceManager = app.serviceManager
     val sessionManager = app.sessionManager
     val peer = "test"
