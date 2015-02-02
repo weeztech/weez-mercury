@@ -491,7 +491,7 @@ private object EntityCollections {
       }
       new Index[K, V] {
         override def apply(range: Range[K], forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
-          val r = range.map(r => (rawIndex.getIndexID, owner.id, r))(rawIndex.cursorKeyRangePacker) //TODO prefix
+          val r = range.map(r => (rawIndex.getIndexID, owner.id, r))(rawIndex.cursorKeyRangePacker)
           new RawKVCursor[V](r, forward = true) {
             override def buildValue(): V = {
               subHost.get1(rawIndex.fullKeyPacker.unapply(rawKey)._4).entity
@@ -1071,15 +1071,15 @@ private object EntityCollections {
   }
 
   object RefReverseIndex {
-    implicit val fullKeyPacker = Packer.of[(Long, Long, Long)]
+    implicit val fullKeyPacker = Packer.of[(Long, Long)]
 
     @inline final def update(oldRID: Long, newRID: Long, id: Long)(implicit db: DBSessionUpdatable): Unit = {
       if (oldRID != newRID) {
         if (oldRID != 0) {
-          db.del((oldRID, 0, id))
+          db.del((oldRID, id))
         }
         if (newRID != 0) {
-          db.put((newRID, 0, id), true)
+          db.put((newRID, id), true)
         }
       }
     }
@@ -1090,7 +1090,7 @@ private object EntityCollections {
       val idMax = if (host == null) host.fixID(Long.MaxValue) else Long.MaxValue
       new RawKVCursor[V]((id, idMin, 0L) +-+(id, idMax, Long.MaxValue), forward = true) {
         override def buildValue() = {
-          getEntity[V](fullKeyPacker.unapply(rawKey)._3)
+          getEntity[V](fullKeyPacker.unapply(rawKey)._2)
         }
       }
     }

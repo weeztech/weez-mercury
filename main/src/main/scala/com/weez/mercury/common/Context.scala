@@ -133,9 +133,12 @@ trait EntityCollection[V <: Entity] {
 }
 
 object Collections {
+
+  def entity(id: Long)(implicit db: DBSessionQueryable): Entity = getEntity[Entity](id)
+
   def scanFX(word: String)(implicit db: DBSessionQueryable): Cursor[Entity] = FullTextSearchIndex.scan(word, null.asInstanceOf[HostCollectionImpl[Entity]])
 
-  def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity] = RefReverseIndex.scan(id,null.asInstanceOf[HostCollectionImpl[Entity]])
+  def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity] = RefReverseIndex.scan(id, null.asInstanceOf[HostCollectionImpl[Entity]])
 }
 
 
@@ -156,7 +159,7 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]
 
   @inline final override def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V] = FullTextSearchIndex.scan(word, host).map(v => v.entity)
 
-  @inline final override def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[V] = RefReverseIndex.scan(id,host).map(e=>e.entity)
+  @inline final override def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[V] = RefReverseIndex.scan(id, host).map(e => e.entity)
 
   @inline final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerRef, name, getKey)
 
@@ -207,7 +210,7 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final override def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V] = FullTextSearchIndex.scan(word, impl)
 
-  @inline final override def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[V] = RefReverseIndex.scan(id,impl)
+  @inline final override def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[V] = RefReverseIndex.scan(id, impl)
 
   @inline final def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
@@ -260,9 +263,4 @@ trait DataViewBuilder[E <: Entity, DW[_, _, _ <: Entity]] {
                                                                                     r4Path: String, r4Trace: R4 => R4T,
                                                                                     r5Path: String, r5Trace: R5 => R5T)
                                                                                    (extract: (T, R1T, R2T, R3T, R4T, R5T) => Map[DK, DV]): DW[DK, DV, E]
-}
-
-case class B(b: Int)
-
-case class A(a: Int, b: B) {
 }
