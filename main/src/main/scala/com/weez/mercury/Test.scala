@@ -14,12 +14,10 @@ object Test {
     val peer = "test"
     sessionManager.createPeer(Some(peer))
     val session = sessionManager.createSession(peer)
-
     def call(api: String, args: (String, Any)*) = {
       val api0 = "com.weez.mercury." + api
-      val req = ModelObject(args: _*)
-      serviceManager.postRequest(session, api0, req).onComplete { result =>
-        sessionManager.returnAndUnlockSession(session)
+      val req = ModelObject(args :+("sid", session.id): _*)
+      serviceManager.postRequest(api0, req).onComplete { result =>
         app.close()
         import scala.util._
         result match {
