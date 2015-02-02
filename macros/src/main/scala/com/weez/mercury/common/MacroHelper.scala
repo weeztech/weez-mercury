@@ -1,10 +1,11 @@
 package com.weez.mercury.common
 
 import scala.language.experimental.macros
-import scala.reflect.macros.whitebox.Context
+import scala.reflect.macros.blackbox
+
 
 trait MacroHelper {
-  val c: Context
+  val c: blackbox.Context
 
   import c.universe._
 
@@ -81,13 +82,13 @@ trait MacroHelper {
     }
   }
 
-  def withException(f: => Tree): c.Expr[Any] = {
+  def withException(f: => c.Tree): c.Tree = {
     try {
-      c.Expr(f)
+      f
     } catch {
       case ex: PositionedException =>
         c.error(ex.pos, ex.getMessage)
-        c.Expr(EmptyTree)
+        EmptyTree
     }
   }
 
@@ -180,7 +181,7 @@ trait MacroHelper {
     }
   }
 
-  def println(a: Any): Unit = {
+  def warn(a: Any): Unit = {
     c.warning(c.enclosingPosition, if (a == null) "<null>" else a.toString)
   }
 

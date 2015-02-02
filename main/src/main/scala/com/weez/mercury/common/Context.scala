@@ -16,6 +16,10 @@ trait Context extends RangeImplicits {
   def response: ModelObject
 
   def complete(response: ModelObject): Unit
+
+  def peer: String
+
+  private[common] def app: Application
 }
 
 trait SessionState {
@@ -44,10 +48,9 @@ trait DBSessionUpdatable extends DBSessionQueryable {
 
 trait IndexBase[K, V] {
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[V] =
-    this.apply(Range.All)
+  def apply()(implicit db: DBSessionQueryable): Cursor[V]
 
-  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[V]
+  def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V]
 }
 
 /**
@@ -224,9 +227,9 @@ trait DataView[K, V, E <: Entity] {
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])] = apply(forward = true)
 
-  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])] = apply(Range.All, forward)
+  def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])]
 
-  def apply(range: Range[K], forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[(K, V, Ref[E])]
+  def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[(K, V, Ref[E])]
 }
 
 trait UniqueKeyView[K, V, E <: Entity] extends DataView[K, V, E] {

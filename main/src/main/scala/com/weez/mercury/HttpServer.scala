@@ -52,14 +52,9 @@ object HttpServer {
     def route: Receive = runRoute {
       post {
         cookie(PEER_NAME) { peer =>
-          path("init") {
-            withSession(peer.content) { sid =>
-              complete(JsObject("result" -> JsString(sid)).toString())
-            }
+          path("service" / Rest) { api =>
+            postRequest(peer.value, api)
           } ~
-            path("service" / Rest) { api =>
-              postRequest(peer.value, api)
-            } ~
             path("resource" / Rest) { resourceid =>
               ???
             }
@@ -107,38 +102,18 @@ object HttpServer {
       }
     }
 
-    def withSession(peer: String) = new Directive[String :: HNil] {
-      def happly(f: String :: HNil => Route) = ctx => {
-        val sessionManager = app.sessionManager
-        val session = sessionManager.createSession(peer)
-        f(session.id :: HNil)(ctx)
-      }
-    }
-
     def postRequest(peer: String, api: String)(implicit log: LoggingContext): Route = ctx => {
       import context.dispatcher
       val startTime = System.nanoTime
       val p = Promise[JsValue]()
-      val json = ctx.request.entity.asString.parseJson.asJsObject()
-      val sid = json.fields.get("sid") match {
-        case Some(JsString(x)) => x
-        case _ => ErrorCode.InvalidRequest.raise
-      }
-      val req = json.fields.get("request") match {
-        case Some(x: JsObject) => ModelObject.parse(x)
-        case _ => ErrorCode.InvalidRequest.raise
-      }
-      val session = app.sessionManager.getAndLockSession(sid).getOrElse(ErrorCode.InvalidSessionID.raise)
-      app.serviceManager.postRequest(session, api, req).onComplete { result =>
-        app.sessionManager.returnAndUnlockSession(session)
-        result match {
-          case Success(out) =>
-            import akka.event.Logging._
-            val costTime = (System.nanoTime - startTime) / 1000000 // ms
-            log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
-            complete(ModelObject.toJson(out).toString())(ctx)
-          case Failure(ex) => exceptionHandler(ex)(ctx)
-        }
+      val req = ctx.request.entity.asString.parseJson.asJsObject()
+      app.serviceManager.postRequest(api, req).onComplete {
+        case Success(out) =>
+          import akka.event.Logging._
+          val costTime = (System.nanoTime - startTime) / 1000000 // ms
+          log.log(InfoLevel, "remote call complete in {} ms - {}", costTime, api)
+          complete(ModelObject.toJson(out).toString())(ctx)
+        case Failure(ex) => exceptionHandler(ex)(ctx)
       }
     }
   }

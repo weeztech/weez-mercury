@@ -4,6 +4,7 @@ import com.weez.mercury.collect
 
 @collect
 trait RemoteService {
+  type NoSessionCall = Context => Unit
   type SimpleCall = Context with SessionState => Unit
   type QueryCall = Context with SessionState with DBSessionQueryable => Unit
   type PersistCall = Context with SessionState with DBSessionUpdatable => Unit

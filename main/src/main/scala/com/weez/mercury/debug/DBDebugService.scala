@@ -8,7 +8,7 @@ object DBDebugService extends RemoteService {
     val prefix: String = request.prefix
     val cur =
       (if (prefix.length > 0) {
-        EntityMetaCollection.byName(prefix.asPrefix)
+        EntityMetaCollection.byName(prefix +-- prefix.prefixed)
       } else {
         EntityMetaCollection()
       }) map { m =>
@@ -30,7 +30,7 @@ object DBDebugService extends RemoteService {
     val prefix: String = request.prefix
     val cur =
       (if (prefix.length > 0) {
-        CollectionMetaCollection.byName(prefix.asPrefix)
+        CollectionMetaCollection.byName(prefix +-- prefix.prefixed)
       } else {
         CollectionMetaCollection()
       }) map { m =>

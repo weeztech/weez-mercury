@@ -20,6 +20,8 @@ sealed trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
+private[common] trait RawPacker[T] extends Packer[T]
+
 @tuplePackers
 @caseClassPackers
 object Packer extends CollectionPackers {
@@ -43,8 +45,6 @@ object Packer extends CollectionPackers {
 
     def unpackLength(buf: Array[Byte], offset: Int) = length
   }
-
-  private[common] trait RawPacker[T] extends Packer[T]
 
   val charset = java.nio.charset.Charset.forName("UTF-8")
 

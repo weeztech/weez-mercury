@@ -2,7 +2,7 @@ package com.weez.mercury.common
 
 import scala.annotation.StaticAnnotation
 import scala.language.experimental.macros
-import scala.reflect.macros.whitebox.Context
+import scala.reflect.macros.whitebox
 
 class packable extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro PackerMacro.packableImpl
@@ -16,13 +16,13 @@ class caseClassPackers extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro PackerMacro.caseClassImpl
 }
 
-class PackerMacro(val c: Context) extends MacroHelper {
+class PackerMacro(val c: whitebox.Context) extends MacroHelper {
 
   import c.universe._
 
-  def packableImpl(annottees: c.Expr[Any]*): c.Expr[Any] = {
+  def packableImpl(annottees: c.Tree*): c.Tree = {
     withException {
-      annottees.head.tree match {
+      annottees.head match {
         case q"$mods class $name[..$tparams](...$paramss) extends ..$parents { ..$_ }" if mods.hasFlag(Flag.CASE) =>
           val packer = flattenFunction(q"apply", paramss)
           var companionBody =
@@ -53,12 +53,12 @@ class PackerMacro(val c: Context) extends MacroHelper {
               q"implicit def packer[..$tparams](..$params) = _root_.com.weez.mercury.common.Packer.caseClass($packer)" :: Nil
             }
           val all =
-            annottees.head.tree ::
+            annottees.head ::
               q"object ${name.toTermName} { ..$companionBody }" ::
               Nil
           //println(show(q"..$all"))
           q"..$all"
-        case _ => throw new PositionedException(annottees.head.tree.pos, "expect case class")
+        case _ => throw new PositionedException(annottees.head.pos, "expect case class")
       }
     }
   }

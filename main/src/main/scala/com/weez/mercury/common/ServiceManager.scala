@@ -3,6 +3,7 @@ package com.weez.mercury.common
 import com.typesafe.config.Config
 
 class ServiceManager(app: Application, config: Config) {
+  serviceManager =>
 
   import scala.concurrent._
   import akka.actor._
@@ -73,37 +74,34 @@ class ServiceManager(app: Application, config: Config) {
     builder.result()
   }
 
-  def postRequest(session: Session, api: String, req: ModelObject): Future[ModelObject] = {
+  def postRequest(api: String, req: ModelObject): Future[ModelObject] = {
     import scala.util.control.NonFatal
     import scala.util.Try
-
-    val p = Promise[ModelObject]()
-    try {
-      val rc = remoteCalls.getOrElse(api, ErrorCode.NotAcceptable.raise)
-      workerPools.find(wp =>
+    val rc = remoteCalls.getOrElse(api, ErrorCode.NotAcceptable.raise)
+    val wp =
+      workerPools.find { wp =>
         wp.permitSessionState == rc.sessionState &&
           wp.permitDBQuery == rc.dbQuery &&
-          wp.permitDBUpdate == rc.dbUpdate) match {
-        case Some(x) =>
-          // get session before worker start to avoid session timeout.
-          val sessionState =
-            if (x.permitSessionState) {
-              new SessionStateImpl(session)
-            } else null
-          x.post { c =>
-            p.complete(Try {
-              c.sessionState = sessionState
-              c.request = req
-              rc.f(c)
-              if (c.response == null)
-                throw new IllegalStateException("no response")
-              c.response
-            })
-          }
-        case None => ErrorCode.NotAcceptable.raise
-      }
-    } catch {
-      case NonFatal(ex) => p.failure(ex)
+          wp.permitDBUpdate == rc.dbUpdate
+      }.getOrElse(ErrorCode.NotAcceptable.raise)
+    val sessionState =
+      if (wp.permitSessionState) {
+        new SessionStateImpl(app.sessionManager
+          .getAndLockSession(req.sid)
+          .getOrElse(ErrorCode.InvalidSessionID.raise))
+      } else null
+    val p = Promise[ModelObject]()
+    wp.post { c =>
+      p.complete(Try {
+        c.sessionState = sessionState
+        c.request = req
+        rc.f(c)
+        if (c.response == null)
+          throw new IllegalStateException("no response")
+        c.response
+      })
+      if (sessionState != null)
+        app.sessionManager.returnAndUnlockSession(sessionState.session)
     }
     p.future
   }
@@ -178,6 +176,9 @@ class ServiceManager(app: Application, config: Config) {
 
     var log: LoggingAdapter = _
 
+    var peer: String = _
+
+    def app = serviceManager.app
 
     def complete(response: ModelObject) = {
       this.response = response

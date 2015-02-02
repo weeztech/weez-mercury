@@ -1,20 +1,18 @@
 package com.weez.mercury.common
 
 import scala.language.experimental.macros
-import scala.reflect.macros.whitebox.Context
-import scala.annotation.StaticAnnotation
-import scala.util.matching.Regex
+import scala.reflect.macros.whitebox
 
 /*
 class dbtype() extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro DBTypeMacro.impl
 }*/
 
-class DBTypeMacro(val c: Context) extends MacroHelper {
+class DBTypeMacro(val c: whitebox.Context) extends MacroHelper {
 
   import c.universe._
 
-  def impl(annottees: c.Expr[Any]*): c.Expr[Any] = {
+  def impl(annottees: c.Tree*): c.Tree = {
     def ensureEntityAsSuperType(parents: List[Tree]) = {
       val entityType = tq"_root_.com.weez.mercury.common.Entity"
       findInherit(parents, entityType) match {
@@ -51,7 +49,7 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
     }
 
     withException {
-      annottees.head.tree match {
+      annottees.head match {
         case q"$mods class $name[..$tparams](...$paramss) extends ..$parents { ..$body }" if mods.hasFlag(Flag.CASE) =>
           val caseClassParents = ensureEntityAsSuperType(parents)
           val caseClassParams = ensureIdParam(paramss)
@@ -78,7 +76,7 @@ class DBTypeMacro(val c: Context) extends MacroHelper {
          """
           //println(show(tree))
           tree
-        case _ => throw new PositionedException(annottees.head.tree.pos, "expect case class")
+        case _ => throw new PositionedException(annottees.head.pos, "expect case class")
       }
     }
   }

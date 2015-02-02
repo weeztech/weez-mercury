@@ -9,7 +9,7 @@ trait CollectionPackers {
   import scala.collection._
   import scala.collection.generic._
 
-  class CollectionPacker[X, CC[X] <: GenTraversable[X]](companion: GenericCompanion[CC])(implicit packer: Packer[X]) extends Packer[CC[X]] {
+  class CollectionPacker[X, CC[A] <: GenTraversable[A]](companion: GenericCompanion[CC])(implicit packer: Packer[X]) extends RawPacker[CC[X]] {
     def pack(value: CC[X], buf: Array[Byte], offset: Int) = {
       buf(offset) = TYPE_TUPLE
       var end = offset + 1
