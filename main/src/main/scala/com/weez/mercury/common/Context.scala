@@ -157,7 +157,6 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]
 
   @inline final override def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerRef, value)
 
-
   @inline final override def delete(value: V)(implicit db: DBSessionUpdatable): Unit = host.delete(value.id)
 
   @inline final override def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V] = FullTextSearchIndex.scan(word, host).map(v => v.entity)
@@ -166,9 +165,7 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]
 
   @inline final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerRef, name, getKey)
 
-
   @inline final def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerRef, name, getKey)
-
 
   @inline final def defMIndex[K: Packer](name: String, getKeys: V => Seq[K]): Index[K, V] = host.defMKIndex[K](ownerRef, name, getKeys)
 
@@ -218,7 +215,6 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
   @inline final def addListener(listener: EntityCollectionListener[V]) = impl.addListener(listener)
 
   @inline final def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
-
 
   private[common] val impl = newHost[V](name, fxFunc)
 }

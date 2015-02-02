@@ -11,6 +11,7 @@ private object EntityCollections {
 
 
   val emptyStringSeq = Seq[String]()
+  val emptyLongSet = Set[Long]()
 
   @inline final def collectionIDOf(entityID: Long): Int = (entityID >>> 48).asInstanceOf[Int]
 
@@ -132,6 +133,26 @@ private object EntityCollections {
       }
     }
 
+    @inline final def hasReverseIndex: Boolean = true //todo 采用Ref信息实现
+
+    final def updateReverseIndex(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      //todo 采用Ref信息实现
+
+      def getRefs(e: Any, rs: Set[Long]): Set[Long] = e match {
+        case p: Product =>
+          var _rs = rs
+          var i = p.productArity - 1
+          while (i >= 0) {
+            _rs = getRefs(p.productElement(i), _rs)
+            i -= 1
+          }
+          _rs
+        case r: Ref[_] => rs + r.id
+        case _ => rs
+      }
+      RefReverseIndex.update(entityID, getRefs(oldEntity, emptyLongSet), getRefs(newEntity, emptyLongSet))
+    }
+
     @inline final def newDataViewTracerID() = {
       val id = dvtCount
       dvtCount += 1
@@ -216,6 +237,7 @@ private object EntityCollections {
       if (getFX ne null) {
         FullTextSearchIndex.update(oldEntity.id, getFX(oldEntity), getFX(newEntity))
       }
+      updateReverseIndex(oldEntity.id, oldEntity, newEntity)
     }
 
     @inline final def notifyInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -228,18 +250,18 @@ private object EntityCollections {
       if (getFX ne null) {
         FullTextSearchIndex.update(newEntity.id, null, getFX(newEntity))
       }
+      updateReverseIndex(newEntity.id, null.asInstanceOf[V], newEntity)
     }
 
     @inline final def notifyDelete(id: Long)(implicit db: DBSessionUpdatable): Boolean = {
       val uls = insertListeners
       var i = uls.length - 1
-      if (i >= 0 || (getFX ne null)) {
+      if (i >= 0 || (getFX ne null) || hasReverseIndex) {
         val d = get0(id)
         if (d.isEmpty) {
           return false
         }
         val oldEntity = d.get
-
         while (i >= 0) {
           uls(i).onEntityDelete(oldEntity)
           i -= 1
@@ -247,6 +269,7 @@ private object EntityCollections {
         if (getFX ne null) {
           FullTextSearchIndex.update(id, getFX(oldEntity), null)
         }
+        updateReverseIndex(id, oldEntity, null.asInstanceOf[V])
       }
       true
     }
@@ -495,7 +518,7 @@ private object EntityCollections {
       new Index[K, V] {
         override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
           import Range._
-          dv.scan(Tuple1(owner.id).asRange, true).map(v => subHost.get1(v._3.id).entity)
+          dv.scan(Tuple1(owner.id).asRange, forward = true).map(v => subHost.get1(v._3.id).entity)
         }
 
         override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
@@ -536,7 +559,7 @@ private object EntityCollections {
     }
   }
 
-  type DVI = DataViewBaseImpl[_, _, _]
+  type DVI = DataViewImpl[_, _, _]
 
   class DataViewTracer[E <: Entity, T](val Tracer: Tracer[E], val trace: E => T, val dataView: DVI, val id: Int)
 
@@ -794,8 +817,8 @@ private object EntityCollections {
     }
   }
 
-  class DataViewBaseImpl[DK: Packer, DV: Packer, E <: Entity](val host: HostCollectionImpl[E], val name: String, val id: Int,
-                                                              builder: (DataViewBaseImpl[DK, DV, E]) => TraceResults => Map[DK, DV], uniqueKey: Boolean)
+  class DataViewImpl[DK: Packer, DV: Packer, E <: Entity](val host: HostCollectionImpl[E], val name: String, val id: Int,
+                                                              builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV], uniqueKey: Boolean)
     extends AbstractIndexImpl[E] with UniqueKeyView[DK, DV, E] {
 
     final def newViewTracer[T](trace: E => T) = {
@@ -898,7 +921,7 @@ private object EntityCollections {
 
     override final def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[DK, P]): Cursor[(DK, DV, Ref[E])] = {
       val r = if (canUse.shouldTuple) range.map(r => (getIndexID, Tuple1(r))) else range.map(r => (getIndexID, r))
-      scan(range, forward)
+      scan(r, forward)
     }
   }
 
@@ -912,13 +935,13 @@ private object EntityCollections {
   import scala.language.higherKinds
 
   class DataViewBuilderImpl[E <: Entity, DW[_, _, _ <: Entity]](host: HostCollectionImpl[E], uniqueKey: Boolean) extends DataViewBuilder[E, DW] {
-    final def newDataView0[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewBaseImpl[DK, DV, E]) => TraceResults => Map[DK, DV]): DataViewBaseImpl[DK, DV, E] = {
+    final def newDataView0[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV]): DataViewImpl[DK, DV, E] = {
       host.newIndex(indexName) {
-        new DataViewBaseImpl[DK, DV, E](host, indexName, host.newDataViewID(), builder, uniqueKey)
+        new DataViewImpl[DK, DV, E](host, indexName, host.newDataViewID(), builder, uniqueKey)
       }
     }
 
-    final def newDataView[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewBaseImpl[DK, DV, E]) => TraceResults => Map[DK, DV]) = {
+    final def newDataView[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV]) = {
       newDataView0(indexName)(builder).asInstanceOf[DW[DK, DV, E]]
     }
 
@@ -1108,13 +1131,15 @@ private object EntityCollections {
   object RefReverseIndex {
     implicit val fullKeyPacker = Packer.of[(Long, Long)]
 
-    @inline final def update(oldRID: Long, newRID: Long, id: Long)(implicit db: DBSessionUpdatable): Unit = {
-      if (oldRID != newRID) {
-        if (oldRID != 0) {
-          db.del((oldRID, id))
+    @inline final def update(entityID: Long, oldRefs: Set[Long], newRefs: Set[Long])(implicit db: DBSessionUpdatable): Unit = {
+      for (r <- newRefs) {
+        if (!oldRefs.contains(r)) {
+          db.put((r, entityID), true)
         }
-        if (newRID != 0) {
-          db.put((newRID, id), true)
+      }
+      for (r <- oldRefs) {
+        if (!newRefs.contains(r)) {
+          db.del((r, entityID))
         }
       }
     }
