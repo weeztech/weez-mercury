@@ -1158,37 +1158,11 @@ private object EntityCollections {
 
   object FullTextSearchIndex {
 
-    val emptyStringSet = Set[String]()
-
     implicit val fullKeyPacker = Packer.of[(String, Long)]
 
-    val kc = new JiebaSegmenter()
-
-    def toWords(text: Seq[String]): scala.collection.Set[String] = {
-      if (text ne null) {
-        val sb = new StringBuilder()
-        for (s <- text) {
-          sb.append(s).append(' ')
-        }
-        if (sb.length > 0) {
-          val words = kc.sentenceProcess(sb.toString())
-          var i = words.size() - 1
-          if (i >= 0) {
-            val words2 = scala.collection.mutable.Set[String]()
-            do {
-              words2.add(words.get(i).getToken)
-              i -= 1
-            } while (i >= 0)
-            return words2
-          }
-        }
-      }
-      emptyStringSet
-    }
-
     def update(entityID: Long, oldText: Seq[String], newText: Seq[String])(implicit db: DBSessionUpdatable): Unit = {
-      val oldWords = toWords(oldText)
-      val newWords = toWords(newText)
+      val oldWords = FullTextSearch.split(oldText: _*)
+      val newWords = FullTextSearch.split(newText: _*)
       for (w <- newWords) {
         if (!oldWords.contains(w)) {
           db.put((w, entityID), true)
