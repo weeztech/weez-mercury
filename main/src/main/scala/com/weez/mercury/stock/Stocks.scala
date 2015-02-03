@@ -11,21 +11,33 @@ object A extends App {
   // that determines the behavior of a database.
   val options = new Options().setCreateIfMissing(true)
   options.setUseFsync(false)
-  val db = RocksDB.open(options, "/Users/gaojingxin/rocksDB")
+  val db = RocksDB.open(options, "/Users/gaojingxin/rocksDB2")
   try {
-    var i = 1000000
-    val key = new Array[Byte](400)
-    val value = new Array[Byte](10)
+    var i = 10000000
+    var j = 0
+    val k = 10000
+    val key = new Array[Byte](40)
+    val value = new Array[Byte](200)
     val r = new Random()
     val start = System.currentTimeMillis()
     val rs = db.newIterator()
     while (i > 0) {
       r.nextBytes(key)
-      r.nextBytes(value)
+      //db.put(key,value)
+      //r.nextBytes(value)
+      //db.get(key)
+
       rs.seek(key)
+      var kk = 10000
+      while(rs.isValid && kk>=0){
+        rs.next()
+        i-=1
+        kk -=1
+      }
       i -= 1
+      j += 1
     }
-    System.out.println(System.currentTimeMillis() - start)
+    System.out.println(System.currentTimeMillis() - start + " - " + j)
 
   } finally {
     db.close()

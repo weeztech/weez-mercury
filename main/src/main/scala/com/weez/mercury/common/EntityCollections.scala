@@ -41,7 +41,7 @@ private object EntityCollections {
   }
 
   @inline final def getDataView[K, V](dataViewID: Int)(implicit db: DBSessionQueryable): DataViewImpl[K, V] = {
-    if (dataViewID == FullTextSearchIndex.prefix){
+    if (dataViewID == FullTextSearchIndex.prefix) {
       return FullTextSearchIndex.asInstanceOf[DataViewImpl[K, V]]
     }
     val dv = dbObjs(dataViewID)
@@ -165,8 +165,12 @@ private object EntityCollections {
 
     var extractors: DVExtractor[V, _, _] = null
 
-    val ftsExtractor = if (getFX ne null) new Extractor[V, String, Boolean](FullTextSearchIndex, this, (v: V, db: DBSessionQueryable) => FullTextSearch.split2(getFX(v, db): _*))
-    else null
+    val ftsExtractor = {
+      if (getFX ne null)
+        new Extractor[V, String, Boolean](FullTextSearchIndex, this, (v: V, db: DBSessionQueryable) => FullTextSearch.split2(getFX(v, db): _*))
+      else
+        null
+    }
 
     def updateDataView(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       var e = extractors
@@ -174,10 +178,12 @@ private object EntityCollections {
         e.update(entityID, oldEntity, newEntity)
         e = e.nextInHost
       }
-      for (x <- ExtractorIndex.scan(entityID)) {
-        val rootEntityID = x._2
-        val dataViewID = x._1
-        getDataView(dataViewID).update(rootEntityID, entityID, oldEntity, newEntity)
+      if (oldEntity ne null) {
+        for (x <- ExtractorIndex.scan(entityID)) {
+          val rootEntityID = x._2
+          val dataViewID = x._1
+          getDataView(dataViewID).update(rootEntityID, entityID, oldEntity, newEntity)
+        }
       }
       if (ftsExtractor ne null) {
         ftsExtractor.update(entityID, oldEntity, newEntity)
@@ -536,19 +542,17 @@ private object EntityCollections {
     }
   }
 
-  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, rootEntity: Entity, refEntityID: Long, refEntity: Entity) extends DBSessionQueryable {
+  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, refEntityID: Long, refEntity: Entity) extends DBSessionQueryable {
     val refIDs = mutable.HashSet[Long]()
 
     @inline final def optionEntity(e: Entity): Option[Entity] = {
       if (e == null) None else Some(e)
     }
 
-    val root = optionEntity(rootEntity)
     val ref = optionEntity(refEntity)
 
     def get[K: Packer, V: Packer](key: K): Option[V] = key match {
       case `refEntityID` => ref.asInstanceOf[Option[V]]
-      case `rootEntityID` => root.asInstanceOf[Option[V]]
       case id: Long =>
         if (id != rootEntityID) {
           refIDs += id
@@ -576,8 +580,8 @@ private object EntityCollections {
     def update(rootEntityID: Long, refEntityID: Long, oldEntity: Entity, newEntity: Entity)(implicit db: DBSessionUpdatable): Unit = {
       val oldRoot: E = if (rootEntityID == refEntityID) oldEntity.asInstanceOf[E] else host.get1(rootEntityID)
       val newRoot: E = if (rootEntityID == refEntityID) newEntity.asInstanceOf[E] else oldRoot
-      val oldTracer = new RefTracer(db, rootEntityID, oldRoot, refEntityID, oldEntity)
-      val newTracer = new RefTracer(db, rootEntityID, oldRoot, refEntityID, newEntity)
+      val oldTracer = new RefTracer(db, rootEntityID, refEntityID, oldEntity)
+      val newTracer = new RefTracer(db, rootEntityID, refEntityID, newEntity)
       val oldKV = if (oldRoot ne null) extract(oldRoot, db) else Map.empty[DK, DV]
       val newKV = if (newRoot ne null) extract(newRoot, db) else Map.empty[DK, DV]
       val dataViewID = dv.getDataViewID
@@ -767,7 +771,7 @@ private object EntityCollections {
   }
 
   object RefReverseIndex {
-    final val prefix = Int.MaxValue-1
+    final val prefix = Int.MaxValue - 1
     implicit val fullKeyPacker = Packer.of[(Int, Long, Long)]
 
     @inline final def update(entityID: Long, oldRefs: Set[Long], newRefs: Set[Long])(implicit db: DBSessionUpdatable): Unit = {
@@ -800,7 +804,8 @@ private object EntityCollections {
 
   object FullTextSearchIndex extends DataViewImpl[String, Boolean]("full-text-search", uniqueKey = false) {
 
-    final val prefix = Int.MaxValue-2
+    final val prefix = Int.MaxValue - 2
+
     override def getDataViewID(implicit db: DBSessionQueryable) = prefix
 
     override def findExtractor[E <: Entity](host: HostCollectionImpl[E]): Extractor[E, String, Boolean] = host.ftsExtractor
@@ -823,7 +828,7 @@ private object EntityCollections {
   }
 
   object ExtractorIndex {
-    final val prefix = Int.MaxValue-3
+    final val prefix = Int.MaxValue - 3
     implicit val fullKeyPacker = Packer.of[(Int, Long, Int, Long)]
 
     def update(dataViewID: Int, rootEntityID: Long, oldRefIDs: collection.Set[Long], newRefIDs: collection.Set[Long])(implicit db: DBSessionUpdatable): Unit = {
@@ -929,5 +934,33 @@ private object EntityCollections {
     }
   }
 
+}
+
+@packable
+case class Ref1(name: String) extends Entity
+
+object Ref1Collection extends RootCollection[Ref1] {
+  def name = "test-ref1"
+}
+
+@packable
+case class Ref2(name: String, ref: Ref[Ref1]) extends Entity
+
+object Ref2Collection extends RootCollection[Ref2] {
+  def name = "test-ref2"
+}
+
+@packable
+case class Entity1(name: String, ref: Ref[Ref2]) extends Entity
+
+object Entity1Collection extends RootCollection[Entity1] {
+  def name = "test-entity1"
+
+  override def fxFunc: Option[(Entity1, DBSessionQueryable) => Seq[String]] = Some { (e, db) =>
+    implicit val dbi=db
+    val ref2 = e.ref()
+    val ref1 = ref2.ref()
+    Seq(e.name, ref1.name, ref2.name)
+  }
 }
 
