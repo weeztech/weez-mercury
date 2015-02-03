@@ -97,7 +97,7 @@ object CollectionMetaCollection extends RootCollection[DBType.CollectionMeta] {
 
   val byName = defUniqueIndex("by-name", _.name)
 
-  override def fxFunc: Option[(CollectionMeta, DBSessionQueryable) => Seq[String]] = Some((c,db)=>Seq(c.name))
+  //override def fxFunc: Option[(CollectionMeta, DBSessionQueryable) => Seq[String]] = Some((c,db)=>Seq(c.name))
 
   val prefix = 2
 }
