@@ -181,6 +181,31 @@ trait MacroHelper {
     }
   }
 
+  def typesInHList(tpe: Type): List[Type] = {
+    import scala.annotation.tailrec
+    import scala.collection.mutable
+    @tailrec
+    def readTypes(tpe: Type, builder: mutable.Builder[Type, List[Type]]): List[Type] = {
+      tpe.typeSymbol.fullName match {
+        case "shapeless.$colon$colon" =>
+          builder += tpe.typeArgs.head
+          readTypes(tpe.typeArgs.last, builder)
+        case "shapeless.HNil" => builder.result()
+        case _ => throw new PositionedException(c.enclosingPosition, s"expect :: (HList), but found ${tpe.typeSymbol.fullName}")
+      }
+    }
+    readTypes(tpe, List.newBuilder[Type])
+  }
+
+  def symbolTree(s: Symbol, isType: Boolean): Tree = {
+    // skip <root> package
+    if (s.owner.owner != NoSymbol) {
+      Select(symbolTree(s.owner, false), if (isType) s.name.toTypeName else s.name.toTermName)
+    } else {
+      Ident(if (isType) s.name.toTypeName else s.name.toTermName)
+    }
+  }
+
   def warn(a: Any): Unit = {
     c.warning(c.enclosingPosition, if (a == null) "<null>" else a.toString)
   }

@@ -2,7 +2,12 @@ package com.weez.mercury.common
 
 import scala.language.implicitConversions
 
-sealed trait Packer[T] {
+/**
+ * do NOT implement this interfact directly,
+ * use Packer.map/imp_tuple/caseClass or @packable instead.
+ * @tparam T
+ */
+trait Packer[T] {
   def apply(value: T): Array[Byte] = {
     val buf = new Array[Byte](packLength(value))
     pack(value, buf, 0)
@@ -20,11 +25,9 @@ sealed trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
-private[common] trait RawPacker[T] extends Packer[T]
-
 @tuplePackers
 @caseClassPackers
-object Packer extends CollectionPackers {
+object Packer extends PackerMacros with CollectionPackers {
   val TYPE_STRING: Byte = 11
   val TYPE_UINT32: Byte = 12
   val TYPE_UINT64: Byte = 13
@@ -280,17 +283,5 @@ object Packer extends CollectionPackers {
   val refPacker = map[Ref[_], Long](_.id, id => if (id != 0) RefSome(id) else RefEmpty)
 
   implicit def ref[T <: Entity]: Packer[Ref[T]] = refPacker.asInstanceOf[Packer[Ref[T]]]
-
-  implicit object NothingPacker extends Packer[Nothing] {
-    var nothing: Nothing = _
-
-    def pack(value: Nothing, buf: Array[Byte], offset: Int) = offset
-
-    def packLength(value: Nothing) = 0
-
-    def unpack(buf: Array[Byte], offset: Int, length: Int) = nothing
-
-    def unpackLength(buf: Array[Byte], offset: Int) = 0
-  }
 
 }

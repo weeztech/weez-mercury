@@ -16,6 +16,10 @@ class caseClassPackers extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro PackerMacro.caseClassImpl
 }
 
+trait PackerMacros {
+  def poly[T, A]: Any = macro PackerMacro.polyImpl[T, A]
+}
+
 class PackerMacro(val c: whitebox.Context) extends MacroHelper {
 
   import c.universe._
@@ -23,7 +27,7 @@ class PackerMacro(val c: whitebox.Context) extends MacroHelper {
   def packableImpl(annottees: c.Tree*): c.Tree = {
     withException {
       annottees.head match {
-        case q"$mods class $name[..$tparams](...$paramss) extends ..$parents { ..$_ }" if mods.hasFlag(Flag.CASE) =>
+        case q"${mods: Modifiers} class ${name: TypeName}[..${tparams: List[Tree]}](...${paramss: List[List[Tree]]}) extends ..$_ { ..$_ }" if mods.hasFlag(Flag.CASE) =>
           val packer = flattenFunction(q"apply", paramss)
           var companionBody =
             if (tparams.isEmpty) {
@@ -58,7 +62,7 @@ class PackerMacro(val c: whitebox.Context) extends MacroHelper {
               Nil
           //println(show(q"..$all"))
           q"..$all"
-        case _ => throw new PositionedException(annottees.head.pos, "expect case class")
+        case _ => throw new PositionedException(annottees.head.pos, "expect case class or sealed trait")
       }
     }
   }
@@ -235,6 +239,83 @@ class PackerMacro(val c: whitebox.Context) extends MacroHelper {
         }
        """
       //println(show(tree))
+      tree
+    }
+  }
+
+  def polyImpl[T: c.WeakTypeTag, A: c.WeakTypeTag]: c.Tree = {
+    val packerType = tq"_root_.com.weez.mercury.common.Packer"
+    withException {
+      val baseType = weakTypeOf[T]
+      expect(baseType.typeArgs.isEmpty, c.enclosingPosition, s"expect no type arguments: $baseType")
+      val types = typesInHList(weakTypeOf[A])
+      val subs: List[(String, Tree, Tree)] = types map { tpe =>
+        expect(tpe <:< baseType, c.enclosingPosition, s"expect subtype of $baseType: $tpe")
+        val symbol = tpe.typeSymbol.asClass
+        if (symbol.isModuleClass) {
+          (camelCase2sepStyle(symbol.name.toString), symbolTree(symbol.selfType.termSymbol.asModule, false), null)
+        } else {
+          expect(tpe.typeArgs.isEmpty, c.enclosingPosition, s"expect no type arguments: ${symbol.fullName}")
+          expect(symbol.isCaseClass, c.enclosingPosition, s"expect case class: ${symbol.fullName}")
+          (camelCase2sepStyle(symbol.name.toString), symbolTree(symbol, true), Select(symbolTree(symbol, false), TermName("packer")))
+        }
+      }
+      val f_pack =
+        Match(Ident(TermName("value")), subs map { tp =>
+          if (tp._3 == null) {
+            CaseDef(tp._2, EmptyTree,
+              Block(q"buf(offset) = TYPE_TUPLE" ::
+                q"val end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset)" ::
+                q"buf(end) = TYPE_END" :: Nil,
+                q"end + 1"))
+          } else {
+            CaseDef(Bind(TermName("x"), Typed(Ident(termNames.WILDCARD), tp._2)), EmptyTree,
+              Block(q"buf(offset) = TYPE_TUPLE" ::
+                q"var end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset)" ::
+                q"end = ${tp._3}.pack(x, buf, end)" ::
+                q"buf(end) = TYPE_END" :: Nil,
+                q"end + 1"))
+          }
+        }) :: Nil
+      val f_packLength =
+        Match(Ident(TermName("value")), subs map { tp =>
+          if (tp._3 == null) {
+            CaseDef(tp._2, EmptyTree,
+              q"2 + of[String].packLength(${Literal(Constant(tp._1))})")
+          } else {
+            CaseDef(Bind(TermName("x"), Typed(Ident(termNames.WILDCARD), tp._2)), EmptyTree,
+              q"2 + of[String].packLength(${Literal(Constant(tp._1))}) + ${tp._3}.packLength(x)")
+          }
+        }) :: Nil
+      val f_unpack =
+        q"""require(buf(offset) == TYPE_TUPLE, "not a tuple")""" ::
+          q"var end = offset + 1" ::
+          q"var len = of[String].unpackLength(buf, end)" ::
+          q"val tpe = of[String].unpack(buf, end, len)" ::
+          q"end += len" ::
+          Match(Ident(TermName("tpe")), subs map { tp =>
+            CaseDef(Literal(Constant(tp._1)), EmptyTree,
+              if (tp._3 == null) {
+                Block( q"""require(buf(end) == TYPE_END, "invalid length")""" :: Nil,
+                  tp._2)
+              } else {
+                Block(q"len = ${tp._3}.unpackLength(buf, end)" ::
+                  q"val v = ${tp._3}.unpack(buf, end, len)" ::
+                  q"end += len" ::
+                  q"""require(buf(end) == TYPE_END, "invalid length")""" :: Nil,
+                  q"v")
+              })
+          }) :: Nil
+      val baseTypeTree = symbolTree(baseType.typeSymbol, true)
+      val tree =
+        q"""new $packerType[$baseTypeTree] {
+                  import _root_.com.weez.mercury.common.Packer._
+                  def pack(value: $baseTypeTree, buf: Array[Byte], offset: Int) = { ..$f_pack }
+                  def packLength(value: $baseTypeTree) = { ..$f_packLength }
+                  def unpack(buf: Array[Byte], offset: Int, length: Int): $baseTypeTree = { ..$f_unpack }
+                  def unpackLength(buf: Array[Byte], offset: Int) = { getLengthByType(buf, offset) }
+                }
+             """
       tree
     }
   }

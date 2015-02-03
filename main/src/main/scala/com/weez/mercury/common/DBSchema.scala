@@ -9,19 +9,29 @@ object DBType {
 
   sealed trait DBTypeRef
 
-  case class SimpleType private[DBType](typeCode: Int, name: String) extends DBType with DBTypeRef {
+  import shapeless._
+
+  implicit val typeRefPacker: Packer[DBTypeRef] = Packer.poly[DBTypeRef,
+    String.type :: Int.type :: Long.type :: Double.type :: Boolean.type :: DateTime.type :: Raw.type ::
+      Coll :: Tuple :: Ref :: EntityRef :: EntityCollRef :: HNil].asInstanceOf[Packer[DBTypeRef]]
+
+  sealed abstract class SimpleType(val typeCode: Int, name: String) extends DBType with DBTypeRef {
     override def toString = name
   }
 
-  private object SimpleType
+  object String extends SimpleType(1, "String")
 
-  val String = SimpleType(1, "String")
-  val Int = SimpleType(2, "Int")
-  val Long = SimpleType(3, "Long")
-  val Double = SimpleType(4, "Double")
-  val Boolean = SimpleType(5, "Boolean")
-  val DateTime = SimpleType(6, "DateTime")
-  val Raw = SimpleType(7, "Raw")
+  object Int extends SimpleType(2, "Int")
+
+  object Long extends SimpleType(3, "Long")
+
+  object Double extends SimpleType(4, "Double")
+
+  object Boolean extends SimpleType(5, "Boolean")
+
+  object DateTime extends SimpleType(6, "DateTime")
+
+  object Raw extends SimpleType(7, "Raw")
 
   def fromTypeCode(typeCode: Int): SimpleType = {
     typeCode match {
@@ -35,32 +45,19 @@ object DBType {
     }
   }
 
-  implicit val typeRefPacker: Packer[DBTypeRef] = Packer.map[DBTypeRef, (Int, Array[Byte])]({
-    case x: SimpleType => 1 -> Packer.pack(x.typeCode)
-    case x: Tuple => 2 -> Packer.pack(x.parts)
-    case x: Coll => 3 -> Packer.pack(x.element)
-    case x: Ref => 4 -> typeRefPacker(x.tpe)
-    case x: EntityRef => 10 -> Packer.pack(x.name)
-    case x: EntityCollRef => 11 -> Packer.pack(x.name)
-  }, x => {
-    x._1 match {
-      case 1 => fromTypeCode(Packer.unpack[Int](x._2))
-      case 2 => Tuple(Packer.unpack[Seq[DBTypeRef]](x._2))
-      case 3 => Coll(Packer.unpack[DBTypeRef](x._2))
-      case 4 => Ref(typeRefPacker.unapply(x._2))
-      case 10 => EntityRef(Packer.unpack[String](x._2))
-      case 11 => EntityCollRef(Packer.unpack[String](x._2))
-    }
-  })
-
+  @packable
   case class Coll(element: DBTypeRef) extends DBType with DBTypeRef
 
+  @packable
   case class Tuple(parts: Seq[DBTypeRef]) extends DBType with DBTypeRef
 
+  @packable
   case class Ref(tpe: DBTypeRef) extends DBType with DBTypeRef
 
+  @packable
   case class EntityRef(name: String) extends DBTypeRef
 
+  @packable
   case class EntityCollRef(name: String) extends DBTypeRef
 
   sealed trait Named {
