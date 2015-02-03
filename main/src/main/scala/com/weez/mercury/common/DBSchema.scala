@@ -1,6 +1,7 @@
 package com.weez.mercury.common
 
 import akka.event.LoggingAdapter
+import com.weez.mercury.common.DBType.CollectionMeta
 
 sealed trait DBType
 
@@ -95,6 +96,9 @@ object CollectionMetaCollection extends RootCollection[DBType.CollectionMeta] {
   def name = "collection-meta-collection"
 
   val byName = defUniqueIndex("by-name", _.name)
+
+  override def fxFunc: Option[(CollectionMeta, DBSessionQueryable) => Seq[String]] = Some((c,db)=>Seq(c.name))
+
   val prefix = 2
 }
 

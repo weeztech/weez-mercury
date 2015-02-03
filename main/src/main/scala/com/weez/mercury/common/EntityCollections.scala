@@ -1,10 +1,9 @@
 package com.weez.mercury.common
 
-import java.util.concurrent.atomic.AtomicReference
-
-import com.huaban.analysis.jieba.JiebaSegmenter
 import com.weez.mercury.common.DBType.IndexMeta
 
+import scala.collection.immutable.{TreeSet, TreeMap}
+import scala.collection.{immutable, mutable}
 import scala.reflect.runtime.universe._
 
 private object EntityCollections {
@@ -18,13 +17,13 @@ private object EntityCollections {
   @inline final def entityIDOf(collectionID: Int, rawID: Long): Long = (rawID & 0xFFFFFFFFFFFFL) | (collectionID.asInstanceOf[Long] << 48)
 
   @inline final def getEntity[V <: Entity](id: Long)(implicit db: DBSessionQueryable): V = {
-    this.getHost(collectionIDOf(id)).get1(id).asInstanceOf[V]
+    this.getHost[V](collectionIDOf(id)).get1(id)
   }
 
-  def getHost(collectionID: Int)(implicit db: DBSessionQueryable): HostCollectionImpl[_] = {
-    val host = hostsByID(collectionID)
+  def getHost[E <: Entity](collectionID: Int)(implicit db: DBSessionQueryable): HostCollectionImpl[E] = {
+    val host = dbObjs(collectionID)
     if (host ne null) {
-      return host
+      return host.asInstanceOf[HostCollectionImpl[E]]
     }
     hosts.synchronized {
       if (hosts.size != bondHostCount) {
@@ -33,12 +32,23 @@ private object EntityCollections {
         }
       }
     }
-    val host2 = hostsByID(collectionID)
+    val host2 = dbObjs(collectionID)
     if (host2 eq null) {
       None.get
     } else {
-      host2
+      host2.asInstanceOf[HostCollectionImpl[E]]
     }
+  }
+
+  @inline final def getDataView[K, V](dataViewID: Int)(implicit db: DBSessionQueryable): DataViewImpl[K, V] = {
+    if (dataViewID == FullTextSearchIndex.prefix){
+      return FullTextSearchIndex.asInstanceOf[DataViewImpl[K, V]]
+    }
+    val dv = dbObjs(dataViewID)
+    if (dv.isInstanceOf[DataViewImpl[_, _]]) {
+      return dv.asInstanceOf[DataViewImpl[K, V]]
+    }
+    None.get
   }
 
   def forSubCollection[O <: Entity, V <: Entity : Packer](pc: SubCollection[O, V]): SubHostCollectionImpl[O, V] = {
@@ -47,11 +57,8 @@ private object EntityCollections {
       hosts.get(name) match {
         case Some(host: SubHostCollectionImpl[O, V]) => host
         case None =>
-          val fxFunc = pc.fxFunc match {
-            case f: (V => Seq[String]) => (sce: SCE[O, V]) => f(sce.entity)
-            case _ => null
-          }
-          val host = new SubHostCollectionImpl[O, V](name, fxFunc)
+          val fxFunc = pc.fxFunc.map(f => (sce: SCE[O, V], db: DBSessionQueryable) => f(sce.entity, db))
+          val host = new SubHostCollectionImpl[O, V](name, fxFunc.orNull)
           hosts.put(name, host)
           host
         case _ =>
@@ -60,19 +67,32 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String, getFX: V => Seq[String]): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer](name: String, getFX: Option[(V, DBSessionQueryable) => Seq[String]]): HostCollectionImpl[V] = {
     hosts.synchronized {
       if (hosts.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name, getFX)
+      val host = new HostCollectionImpl[V](name, getFX.orNull)
       hosts.put(name, host)
       host
     }
   }
 
+  def newDataView[K: Packer, V: Packer](name: String): DataViewImpl[K, V] = {
+    dvs.synchronized {
+      if (dvs.contains(name)) {
+        throw new IllegalArgumentException( s"""DataView naming "$name" exist!""")
+      }
+      val dv = new DataViewImpl[K, V](name, false)
+      dvs.put(name, dv)
+      dv
+    }
+  }
+
+  val dvs = collection.mutable.HashMap[String, DataViewImpl[_, _]]()
+
   val hosts = collection.mutable.HashMap[String, HostCollectionImpl[_]]()
-  val hostsByID = new Array[HostCollectionImpl[_]](0xFFFF)
+  val dbObjs = new Array[AnyRef](0xFFFF)
   var bondHostCount = 0
 
   final val RefType = typeOf[Ref[Entity]]
@@ -83,19 +103,15 @@ private object EntityCollections {
 
   def emptyListeners[V <: Entity] = _emptyListeners.asInstanceOf[Array[EntityCollectionListener[V]]]
 
-  class HostCollectionImpl[V <: Entity](val name: String, getFX: V => Seq[String])(implicit val valuePacker: Packer[V]) {
+  class HostCollectionImpl[V <: Entity](val name: String, getFX: (V, DBSessionQueryable) => Seq[String])(implicit val valuePacker: Packer[V]) {
     host =>
 
     @volatile private var _meta: DBType.CollectionMeta = null
-    private var dvtCount = 0
-    private var dvCount = 0
-    private val trsCache = new AtomicReference[TraceResults]
-    private val listeners = scala.collection.mutable.AnyRefMap[EntityCollectionListener[_], ListenerInfo]()
+    private val listeners = mutable.AnyRefMap[EntityCollectionListener[_], ListenerInfo]()
     @volatile private var deleteListeners = emptyListeners[V]
     @volatile private var updateListeners = emptyListeners[V]
     @volatile private var insertListeners = emptyListeners[V]
     private val indexes = collection.mutable.Map[String, AbstractIndexImpl[V]]()
-    val rootTracer = new RootTracer(this)
 
     final def getMeta(implicit db: DBSessionQueryable): DBType.CollectionMeta = {
       if (_meta == null) {
@@ -109,7 +125,7 @@ private object EntityCollections {
           }
         }
         hosts.synchronized {
-          hostsByID(_meta.prefix) = this
+          dbObjs(_meta.prefix) = this
           bondHostCount += 1
         }
         val ims = _meta.indexes
@@ -127,13 +143,7 @@ private object EntityCollections {
 
     @inline final def getCollectionID(implicit db: DBSessionQueryable) = getMeta.prefix
 
-    final def getReverseIndex[R <: Entity](name: String): RefReverseIndex[V, R] = {
-      indexes.synchronized {
-        indexes.get(name).get.asInstanceOf[RefReverseIndex[V, R]]
-      }
-    }
-
-    @inline final def hasReverseIndex: Boolean = true //todo 采用Ref信息实现
+    @inline final def hasRefDefine: Boolean = true //todo 采用Ref信息实现
 
     final def updateReverseIndex(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       //todo 采用Ref信息实现
@@ -153,25 +163,25 @@ private object EntityCollections {
       RefReverseIndex.update(entityID, getRefs(oldEntity, emptyLongSet), getRefs(newEntity, emptyLongSet))
     }
 
-    @inline final def newDataViewTracerID() = {
-      val id = dvtCount
-      dvtCount += 1
-      id
-    }
+    var extractors: DVExtractor[V, _, _] = null
 
-    @inline final def newDataViewID() = {
-      val id = dvCount
-      dvCount += 1
-      id
-    }
+    val ftsExtractor = if (getFX ne null) new Extractor[V, String, Boolean](FullTextSearchIndex, this, (v: V, db: DBSessionQueryable) => FullTextSearch.split2(getFX(v, db): _*))
+    else null
 
-    @inline final def allocTraceResults() = {
-      val cache = trsCache.getAndSet(null)
-      if (cache ne null) cache.reset() else new TraceResults(dvtCount, dvCount)
-    }
-
-    @inline final def releaseTraceResults(trs: TraceResults): Unit = {
-      trsCache.compareAndSet(null, trs)
+    def updateDataView(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      var e = extractors
+      while (e ne null) {
+        e.update(entityID, oldEntity, newEntity)
+        e = e.nextInHost
+      }
+      for (x <- ExtractorIndex.scan(entityID)) {
+        val rootEntityID = x._2
+        val dataViewID = x._1
+        getDataView(dataViewID).update(rootEntityID, entityID, oldEntity, newEntity)
+      }
+      if (ftsExtractor ne null) {
+        ftsExtractor.update(entityID, oldEntity, newEntity)
+      }
     }
 
     private case class ListenerInfo(l: EntityCollectionListener[V], var refCount: Int)
@@ -234,29 +244,27 @@ private object EntityCollections {
         uls(i).onEntityUpdate(oldEntity, newEntity)
         i -= 1
       }
-      if (getFX ne null) {
-        FullTextSearchIndex.update(oldEntity.id, getFX(oldEntity), getFX(newEntity))
-      }
       updateReverseIndex(oldEntity.id, oldEntity, newEntity)
+      updateDataView(oldEntity.id, oldEntity, newEntity)
     }
 
     @inline final def notifyInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      val newID = newEntity.id
       val uls = insertListeners
       var i = uls.length - 1
       while (i >= 0) {
         uls(i).onEntityInsert(newEntity)
         i -= 1
       }
-      if (getFX ne null) {
-        FullTextSearchIndex.update(newEntity.id, null, getFX(newEntity))
-      }
-      updateReverseIndex(newEntity.id, null.asInstanceOf[V], newEntity)
+      val oldEntity = null.asInstanceOf[V]
+      updateReverseIndex(newID, oldEntity, newEntity)
+      updateDataView(newID, oldEntity, newEntity)
     }
 
     @inline final def notifyDelete(id: Long)(implicit db: DBSessionUpdatable): Boolean = {
       val uls = insertListeners
       var i = uls.length - 1
-      if (i >= 0 || (getFX ne null) || hasReverseIndex) {
+      if (i >= 0 || (getFX ne null) || hasRefDefine) {
         val d = get0(id)
         if (d.isEmpty) {
           return false
@@ -266,10 +274,9 @@ private object EntityCollections {
           uls(i).onEntityDelete(oldEntity)
           i -= 1
         }
-        if (getFX ne null) {
-          FullTextSearchIndex.update(id, getFX(oldEntity), null)
-        }
-        updateReverseIndex(id, oldEntity, null.asInstanceOf[V])
+        val newEntity = null.asInstanceOf[V]
+        updateReverseIndex(id, oldEntity, newEntity)
+        updateDataView(id, oldEntity, newEntity)
       }
       true
     }
@@ -408,19 +415,7 @@ private object EntityCollections {
     }
 
     final def defMKIndex[K: Packer](indexName: String, keyGetter: V => Seq[K]): Index[K, V] = {
-      val dv = rootTracer.defDataView.newDataView0[K, Boolean](indexName) { dv =>
-        val r = dv.newViewTracer(v => v)
-        v => keyGetter(v(r)).map(k => (k, true)).toMap
-      }
-      new Index[K, V] {
-        override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
-          dv(forward = true).map(v => host.get1(v._3.id))
-        }
-
-        override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
-          dv(range, forward).map(v => host.get1(v._3.id))
-        }
-      }
+      ???
     }
 
     final def defIndex[K: Packer](indexName: String, keyGetter: V => K): Index[K, V] = {
@@ -451,9 +446,7 @@ private object EntityCollections {
     this._id = entity.id
   }
 
-  import scala.reflect.runtime.universe._
-
-  class SubHostCollectionImpl[O <: Entity, V <: Entity : Packer](name: String, getFX: SCE[O, V] => Seq[String])
+  class SubHostCollectionImpl[O <: Entity, V <: Entity : Packer](name: String, getFX: (SCE[O, V], DBSessionQueryable) => Seq[String])
     extends HostCollectionImpl[SCE[O, V]](name, getFX) {
     subHost =>
     @inline final def update(owner: Ref[O], value: V)(implicit db: DBSessionUpdatable): Unit = {
@@ -508,23 +501,7 @@ private object EntityCollections {
     }
 
     final def defMKIndex[K: Packer](owner: Ref[O], indexName: String, keyGetter: V => Seq[K]): Index[K, V] = {
-      val dv = rootTracer.defDataView.newDataView0[(Long, K), Boolean](indexName) { dv =>
-        val r = dv.newViewTracer(v => v)
-        v => {
-          val e = v(r)
-          keyGetter(e.entity).map(k => ((e.owner.id, k), true)).toMap
-        }
-      }
-      new Index[K, V] {
-        override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
-          import Range._
-          dv.scan(Tuple1(owner.id).asRange, forward = true).map(v => subHost.get1(v._3.id).entity)
-        }
-
-        override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
-          dv.scan(range.map(k => (owner.id, k)), forward).map(v => subHost.get1(v._3.id).entity)
-        }
-      }
+      ???
     }
 
     final def defIndex[K: Packer](owner: Ref[O], indexName: String, keyGetter: V => K): Index[K, V] = {
@@ -559,479 +536,153 @@ private object EntityCollections {
     }
   }
 
-  type DVI = DataViewImpl[_, _, _]
+  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, rootEntity: Entity, refEntityID: Long, refEntity: Entity) extends DBSessionQueryable {
+    val refIDs = mutable.HashSet[Long]()
 
-  class DataViewTracer[E <: Entity, T](val Tracer: Tracer[E], val trace: E => T, val dataView: DVI, val id: Int)
-
-  class TraceResults(dvTracerCount: Int, dvCount: Int) {
-    var oldOrNew: Int = 0
-
-    @inline final def use(useOld: Boolean): Unit = {
-      oldOrNew = if (useOld) 0 else 1
+    @inline final def optionEntity(e: Entity): Option[Entity] = {
+      if (e == null) None else Some(e)
     }
 
-    private val oldAndNew = new Array[Any](dvTracerCount * 2)
-    private val dvs = new Array[DVI](dvCount)
-    var changed: Boolean = false
+    val root = optionEntity(rootEntity)
+    val ref = optionEntity(refEntity)
 
-
-    @inline final def reset() = {
-      if (changed) {
-        var i = dvCount - 1
-        do {
-          dvs(i) = null
-          i -= 1
-        } while (i >= 0)
-        changed = false
-      }
-      this
-    }
-
-    @inline final def mark(dataView: DVI): Unit = {
-      dvs(dataView.id) = dataView
-      changed = true
-    }
-
-    @inline final def tracing(dataView: DVI) = dvs(dataView.id) ne null
-
-
-    @inline final def trace[E <: Entity, T](tracer: DataViewTracer[E, T], oldEntity: E, newEntity: E, init: Boolean): Boolean = {
-      if (init) {
-        val oldTR = tracer.trace(oldEntity)
-        val newTR = tracer.trace(newEntity)
-        val id = tracer.id
-        oldAndNew(id * 2) = oldTR
-        oldAndNew(id * 2 + 1) = newTR
-        if (oldTR != newTR) {
-          val dv = tracer.dataView
-          dvs(dv.id) = dv
-          changed = true
-          return true
+    def get[K: Packer, V: Packer](key: K): Option[V] = key match {
+      case `refEntityID` => ref.asInstanceOf[Option[V]]
+      case `rootEntityID` => root.asInstanceOf[Option[V]]
+      case id: Long =>
+        if (id != rootEntityID) {
+          refIDs += id
         }
-      } else if (dvs(tracer.dataView.id) ne null) {
-        val id = tracer.id
-        val otr = tracer.trace(oldEntity)
-        oldAndNew(id * 2) = otr
-        oldAndNew(id * 2 + 1) = if (oldEntity eq newEntity) otr else tracer.trace(newEntity)
-        return true
-      }
-      false
+        db.get[Long, V](id)
+      case _ => db.get[K, V](key)
     }
 
+    def exists[K: Packer](key: K): Boolean = db.exists(key)
 
-    @inline final def apply[T](id: Int): T = {
-      oldAndNew(id * 2 + oldOrNew).asInstanceOf[T]
-    }
+    def newCursor(): DBCursor = db.newCursor()
 
-    @inline final def apply[T](dvt: DataViewTracer[_, T]): T = {
-      oldAndNew(dvt.id * 2 + oldOrNew).asInstanceOf[T]
-    }
-
-    @inline final def updateDataView(entityID: Long)(implicit db: DBSessionUpdatable): Unit = {
-      var i = dvCount - 1
-      do {
-        val dv = dvs(i)
-        if (dv ne null) {
-          dv.update(this, entityID)
-        }
-        i -= 1
-      } while (i >= 0)
-    }
+    def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): DBType.CollectionMeta = db.getRootCollectionMeta(name)
   }
 
-  abstract class Tracer[E <: Entity](val root: HostCollectionImpl[_], val host: HostCollectionImpl[E])
-    extends HostListening[E] {
-    tracer =>
 
-    @inline final def get(id: Long)(implicit db: DBSessionQueryable): E = {
-      if (id == 0)
-        null.asInstanceOf[E]
-      else {
-        host.get1(id)
-      }
+  type Extract[E <: Entity, DK, DV] = (E, DBSessionQueryable) => collection.Map[DK, DV]
+
+
+  class Extractor[E <: Entity, DK, DV](val dv: DataViewImpl[DK, DV], val host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) {
+    @inline final def update(rootEntityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
+      update(rootEntityID, rootEntityID, oldEntity, newEntity)
     }
 
-    @inline final def traceSelfAndSub(oldEntity: E, newEntity: E, trs: TraceResults, excludeSubTracer: AnyRef, init: Boolean)(implicit db: DBSessionQueryable): Unit = {
-      var i = dataViewTracerCount - 1
-      while (i >= 0) {
-        trs.trace(dataViewTracers(i), oldEntity, newEntity, init)
-        i -= 1
-      }
-      i = subRefCount - 1
-      while (i >= 0) {
-        val st = subRefs(i)
-        if (st ne excludeSubTracer) {
-          st.traceDown(oldEntity, newEntity, trs, init)
-        }
-        i -= 1
-      }
-    }
-
-    override final def onEntityInsert(newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
-      onEntityUpdate(null.asInstanceOf[E], newEntity)
-    }
-
-    override final def onEntityDelete(oldEntity: E)(implicit db: DBSessionUpdatable): Unit = {
-      onEntityUpdate(oldEntity, null.asInstanceOf[E])
-    }
-
-    override final def onEntityUpdate(oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
-      val trs = root.allocTraceResults()
-      try {
-        traceSelfAndSub(oldEntity, newEntity, trs, null, init = true)
-        if (trs.changed) {
-          traceEnd(oldEntity.id, trs)
-        }
-      } finally {
-        root.releaseTraceResults(trs)
-      }
-    }
-
-    def traceEnd(entityID: Long, trs: TraceResults)(implicit db: DBSessionUpdatable): Unit = {
-      trs.updateDataView(entityID)
-    }
-
-    var subRefs: Array[SubTracer[E, _]] = null
-    var subRefCount = 0
-
-    final def ensureSubTracer[S <: Entity](refName: String, dataView: DVI): SubTracer[E, S] = {
-      var i = subRefCount - 1
-      while (i >= 0) {
-        val sub = subRefs(i)
-        if (sub.reverseIndex.name == refName) {
-          return sub.ensureLink(dataView).asInstanceOf[SubTracer[E, S]]
-        }
-        i -= 1
-      }
-      val reverseIndex = host.getReverseIndex[S](refName)
-      val sub = new SubTracer[E, S](this, reverseIndex)
-      if (subRefCount == 0) {
-        subRefs = new Array[SubTracer[E, _]](4)
-      } else if (subRefCount == subRefs.length) {
-        val newArray = new Array[SubTracer[E, _]](subRefCount * 2)
-        System.arraycopy(subRefs, 0, newArray, 0, subRefCount)
-        subRefs = newArray
-      }
-      subRefs(subRefCount) = sub
-      subRefCount += 1
-      sub.ensureLink(dataView)
-    }
-
-    var dataViewTracers: Array[DataViewTracer[E, _]] = null
-    var dataViewTracerCount = 0
-
-    final def newViewTracer[T](trace: E => T, dataView: DVI): DataViewTracer[E, T] = {
-      if (dataViewTracerCount == 0) {
-        dataViewTracers = new Array[DataViewTracer[E, _]](4)
-      } else if (dataViewTracerCount == dataViewTracers.length) {
-        val newArray = new Array[DataViewTracer[E, _]](dataViewTracerCount * 2)
-        System.arraycopy(dataViewTracers, 0, newArray, 0, dataViewTracerCount)
-        dataViewTracers = newArray
-      }
-      val dvt = new DataViewTracer[E, T](this, trace, dataView, root.newDataViewTracerID())
-      dataViewTracers(dataViewTracerCount) = dvt
-      dataViewTracerCount += 1
-      dvt
-    }
-  }
-
-  class SubTracer[P <: Entity, S <: Entity](parent: Tracer[P], val reverseIndex: RefReverseIndex[P, S])
-    extends Tracer[S](parent.root, reverseIndex.getRefCollection) {
-
-    override final def canListenEntityInsert: Boolean = false
-
-    override final def canListenEntityDelete: Boolean = false
-
-    override def traceEnd(entityID: Long, trs: TraceResults)(implicit db: DBSessionUpdatable): Unit = {
-      for (u <- reverseIndex.scan(entityID)) {
-        parent.traceSelfAndSub(u, u, trs, this, init = false)
-        parent.traceEnd(u.id, trs)
-      }
-    }
-
-    @inline final def subID(entity: P): Long = {
-      if (entity ne null) {
-        val ref = reverseIndex.getRef(entity)
-        if (ref ne null) {
-          return ref.id
-        }
-      }
-      0
-    }
-
-    @inline final def traceDown(oldEntity: P, newEntity: P, trs: TraceResults, init: Boolean)(implicit db: DBSessionQueryable): Unit = {
-      val oid: Long = subID(oldEntity)
-      var nid: Long = 0
-      if (oldEntity ne newEntity) {
-        nid = subID(newEntity)
-        if (oid != nid && init) {
-          var i = dataViewLinkCount - 1
-          do {
-            trs.mark(dataViewLinks(i))
-            i -= 1
-          } while (i >= 0)
-        }
-      } else {
-        nid = oid
-      }
-      if (!init) {
-        var i = dataViewLinkCount - 1
-        do {
-          i = if (trs.tracing(dataViewLinks(i))) -2 else i - 1
-        } while (i >= 0)
-        if (i == -2) {
-          return
-        }
-      }
-      val os = get(oid)
-      val ns = if (oid != nid) get(nid) else os
-      traceSelfAndSub(os, ns, trs, null, init = false)
-    }
-
-    var dataViewLinks: Array[DVI] = null
-    var dataViewLinkCount = 0
-
-    def ensureLink(dataView: DVI): this.type = {
-      var i = dataViewLinkCount - 1
-      if (i < 0) {
-        dataViewLinks = new Array[DVI](4)
-        dataViewLinks(0) = dataView
-        dataViewLinkCount = 1
-        return this
-      }
-      do {
-        if (dataViewLinks(i) eq dataView) {
-          return this
-        }
-        i -= 1
-      } while (i >= 0)
-      if (dataViewLinkCount == dataViewLinks.length) {
-        val newArray = new Array[DVI](dataViewLinkCount * 2)
-        System.arraycopy(dataViewLinks, 0, newArray, 0, dataViewLinkCount)
-        dataViewLinks = newArray
-      }
-      dataViewLinks(dataViewLinkCount) = dataView
-      dataViewLinkCount += 1
-      this
-
-    }
-  }
-
-  class DataViewImpl[DK: Packer, DV: Packer, E <: Entity](val host: HostCollectionImpl[E], val name: String, val id: Int,
-                                                              builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV], uniqueKey: Boolean)
-    extends AbstractIndexImpl[E] with UniqueKeyView[DK, DV, E] {
-
-    final def newViewTracer[T](trace: E => T) = {
-      host.rootTracer.newViewTracer(trace, this)
-    }
-
-    final def newViewTracer[TE <: Entity, T](path: String, trace: TE => T) = {
-      var tracer: Tracer[_] = host.rootTracer
-      for (refName <- path.split(".")) {
-        tracer = tracer.ensureSubTracer(refName, this)
-      }
-      tracer.asInstanceOf[Tracer[TE]].newViewTracer(trace, this)
-    }
-
-    val kp_u = if (uniqueKey) Packer.of[(Int, DK)] else null
-    val kp = if (uniqueKey) null else Packer.of[(Int, DK, Long)]
-    val vp_u = if (uniqueKey) Packer.of[(Long, DV)] else null
-    val vp_uv = if (uniqueKey) Packer.map[DV, (Long, DV)]((0, _), _._2) else null
-    val vp_ur = if (uniqueKey) Packer.of[(Ref[E], DV)] else null
-    val vp = if (uniqueKey) null else Packer.of[DV]
-
-    val extract = builder(this)
-
-    def update(trs: TraceResults, entityID: Long)(implicit db: DBSessionUpdatable): Unit = {
-      trs.use(useOld = true)
-      val oldKV = extract(trs)
-      trs.use(useOld = false)
-      val newKV = extract(trs)
-      for ((k, v) <- oldKV) {
-        val newVO = newKV.get(k)
-        if (newVO.isEmpty) {
-          del(k, entityID)
-        } else if (newVO.get != v) {
-          put(k, v, entityID)
-        }
-      }
+    def update(rootEntityID: Long, refEntityID: Long, oldEntity: Entity, newEntity: Entity)(implicit db: DBSessionUpdatable): Unit = {
+      val oldRoot: E = if (rootEntityID == refEntityID) oldEntity.asInstanceOf[E] else host.get1(rootEntityID)
+      val newRoot: E = if (rootEntityID == refEntityID) newEntity.asInstanceOf[E] else oldRoot
+      val oldTracer = new RefTracer(db, rootEntityID, oldRoot, refEntityID, oldEntity)
+      val newTracer = new RefTracer(db, rootEntityID, oldRoot, refEntityID, newEntity)
+      val oldKV = if (oldRoot ne null) extract(oldRoot, db) else Map.empty[DK, DV]
+      val newKV = if (newRoot ne null) extract(newRoot, db) else Map.empty[DK, DV]
+      val dataViewID = dv.getDataViewID
       for ((k, v) <- newKV) {
-        if (oldKV.get(k).isEmpty) {
-          put(k, v, entityID)
-        }
-      }
-    }
-
-    @inline final def put(k: DK, v: DV, entityID: Long)(implicit db: DBSessionUpdatable) = {
-      if (uniqueKey) {
-        db.put((getIndexID, k), (entityID, v))(kp_u, vp_u)
-      } else {
-        db.put((getIndexID, k, entityID), v)(kp, vp)
-      }
-    }
-
-    @inline final def del(k: DK, entityID: Long)(implicit db: DBSessionUpdatable) = {
-      if (uniqueKey) {
-        db.del((getIndexID, k))(kp_u)
-      } else {
-        db.del((getIndexID, k, entityID))(kp)
-      }
-    }
-
-    override final def apply(key: DK)(implicit db: DBSessionQueryable): Option[DV] = {
-      if (uniqueKey) {
-        db.get((getIndexID, key))(kp_u, vp_uv)
-      } else {
-        throw new UnsupportedOperationException
-      }
-    }
-
-    override final def getRV(key: DK)(implicit db: DBSessionQueryable): Option[(Ref[E], DV)] = {
-      if (uniqueKey) {
-        db.get((getIndexID, key))(kp_u, vp_ur)
-      } else {
-        throw new UnsupportedOperationException
-      }
-    }
-
-    final def scan(dbRange: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): RawKVCursor[(DK, DV, Ref[E])] = {
-      if (uniqueKey) {
-        new RawKVCursor[(DK, DV, Ref[E])](dbRange, forward) {
-          override def buildValue(): (DK, DV, Ref[E]) = {
-            val rk = kp_u.unapply(rawKey)
-            val rv = vp_u.unapply(rawValue)
-            (rk._2, rv._2, RefSome(rv._1))
-          }
-        }
-      } else {
-        new RawKVCursor[(DK, DV, Ref[E])](dbRange, forward) {
-          override def buildValue(): (DK, DV, Ref[E]) = {
-            val rk = kp.unapply(rawKey)
-            val rv = vp.unapply(rawValue)
-            (rk._2, rv, RefSome(rk._3))
+        val oldV = oldKV.get(k)
+        if (oldV.isEmpty || oldV.get != v) {
+          if (dv.uniqueKey) {
+            db.put((dataViewID, k), (rootEntityID, v))(dv.ukPacker, dv.uvPacker)
+          } else {
+            db.put((dataViewID, k, rootEntityID), v)(dv.kPacker, dv.vPacker)
           }
         }
       }
+      for (k <- oldKV.keys) {
+        if (!newKV.contains(k)) {
+          if (dv.uniqueKey) {
+            db.del((dataViewID, k))(dv.ukPacker)
+          } else {
+            db.del((dataViewID, k, rootEntityID))(dv.kPacker)
+          }
+        }
+      }
+      ExtractorIndex.update(dataViewID, rootEntityID, oldTracer.refIDs, newTracer.refIDs)
+    }
+  }
+
+  class DVExtractor[E <: Entity, DK, DV](dv: DataViewImpl[DK, DV], host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) extends Extractor[E, DK, DV](dv, host, extract) {
+    if (dv.findExtractor(host) ne null) {
+      throw new IllegalArgumentException("dump extractor")
+    }
+    val nextInDV: DVExtractor[_, DK, DV] = dv.extractors
+    val nextInHost: DVExtractor[E, _, _] = host.extractors
+    dv.extractors = this
+    host.extractors = this
+  }
+
+  class DataViewImpl[DK: Packer, DV: Packer](val name: String, val uniqueKey: Boolean) {
+
+    val ukPacker = if (uniqueKey) Packer.of[(Int, DK)] else null
+    val kPacker = if (uniqueKey) null else Packer.of[(Int, DK, Long)]
+    val uvPacker = if (uniqueKey) Packer.of[(Long, DV)] else null
+    val vPacker = if (uniqueKey) null else Packer.of[DV]
+
+
+    var extractors: DVExtractor[_, DK, DV] = null
+
+    def defExtractor[E <: Entity](collection: EntityCollection[E], f: Extract[E, DK, DV]): Unit = {
+      collection match {
+        case r: RootCollection[E] =>
+          new DVExtractor(this, r.impl, f)
+        case s: SubCollection[_, E] =>
+          val ex = (sce: SCE[_, E], db: DBSessionQueryable) => f(sce.entity, db)
+          new DVExtractor(this, s.host, ex)
+      }
+
     }
 
-    override final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[(DK, DV, Ref[E])] = {
+    def findExtractor[E <: Entity](host: HostCollectionImpl[E]): Extractor[E, DK, DV] = {
+      var e = extractors
+      while (e ne null) {
+        if (e.host eq host) {
+          return e.asInstanceOf[Extractor[E, DK, DV]]
+        }
+        e = e.nextInDV
+      }
+      null
+    }
+
+    def update[E <: Entity](rootEntityID: Long, refEntityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
+      val extractor = findExtractor[E](getHost[E](collectionIDOf(rootEntityID)))
+      if (extractor ne null) {
+        extractor.update(rootEntityID, refEntityID, oldEntity, newEntity)
+      }
+    }
+
+    def getDataViewID(implicit db: DBSessionQueryable): Int = ???
+
+    final def scan(dbRange: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[KeyValue[DK, DV]] = {
+      new RawKVCursor[KeyValue[DK, DV]](dbRange, forward) {
+        override def buildValue() = {
+          if (uniqueKey) {
+            val rk = ukPacker.unapply(rawKey)
+            val rv = uvPacker.unapply(rawValue)
+            KeyValue[DK, DV](rk._2, rv._2)
+          } else {
+            val rk = kPacker.unapply(rawKey)
+            val rv = vPacker.unapply(rawValue)
+            KeyValue[DK, DV](rk._2, rv)
+          }
+        }
+      }
+    }
+
+    @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[KeyValue[DK, DV]] = {
       import Range._
-      scan(Tuple1(getIndexID).asRange, forward)
+      val prefix = Tuple1(getDataViewID)
+      scan(prefix +-+ prefix, forward)
     }
 
-    override final def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[DK, P]): Cursor[(DK, DV, Ref[E])] = {
-      val r = if (canUse.shouldTuple) range.map(r => (getIndexID, Tuple1(r))) else range.map(r => (getIndexID, r))
+    @inline final def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[DK, P]): Cursor[KeyValue[DK, DV]] = {
+      val dvID = getDataViewID
+      val r = if (canUse.shouldTuple) range.map(r => (dvID, Tuple1(r))) else range.map(r => (dvID, r))
       scan(r, forward)
     }
   }
-
-  class RootTracer[E <: Entity](host: HostCollectionImpl[E]) extends Tracer[E](host, host) with HostListening[E] {
-
-    val defUniqueKeyView = new DataViewBuilderImpl[E, UniqueKeyView](host, true)
-
-    val defDataView = new DataViewBuilderImpl[E, DataView](host, false)
-  }
-
-  import scala.language.higherKinds
-
-  class DataViewBuilderImpl[E <: Entity, DW[_, _, _ <: Entity]](host: HostCollectionImpl[E], uniqueKey: Boolean) extends DataViewBuilder[E, DW] {
-    final def newDataView0[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV]): DataViewImpl[DK, DV, E] = {
-      host.newIndex(indexName) {
-        new DataViewImpl[DK, DV, E](host, indexName, host.newDataViewID(), builder, uniqueKey)
-      }
-    }
-
-    final def newDataView[DK: Packer, DV: Packer](indexName: String)(builder: (DataViewImpl[DK, DV, E]) => TraceResults => Map[DK, DV]) = {
-      newDataView0(indexName)(builder).asInstanceOf[DW[DK, DV, E]]
-    }
-
-    override def apply[DK: Packer, DV: Packer, T](name: String, trace: (E) => T)(extract: (T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        (tr) => {
-          extract(tr(t))
-        }
-      }
-    }
-
-    override def apply[DK: Packer, DV: Packer, T, R1, R1T](name: String, trace: (E) => T,
-                                                           r1Path: String, r1Trace: (R1) => R1T)
-                                                          (extract: (T, R1T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        val t1 = dv.newViewTracer(r1Path, r1Trace)
-        (tr) => {
-          extract(tr(t), tr(t1))
-        }
-      }
-    }
-
-    override def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T](name: String, trace: (E) => T, r1Path: String, r1Trace: (R1) => R1T, r2Path: String, r2Trace: (R2) => R2T)(extract: (T, R1T, R2T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        val t1 = dv.newViewTracer(r1Path, r1Trace)
-        val t2 = dv.newViewTracer(r2Path, r2Trace)
-        (tr) => {
-          extract(tr(t), tr(t1), tr(t2))
-        }
-      }
-    }
-
-    override def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T](name: String, trace: (E) => T,
-                                                                             r1Path: String, r1Trace: (R1) => R1T,
-                                                                             r2Path: String, r2Trace: (R2) => R2T,
-                                                                             r3Path: String, r3Trace: (R3) => R3T)
-                                                                            (extract: (T, R1T, R2T, R3T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        val t1 = dv.newViewTracer(r1Path, r1Trace)
-        val t2 = dv.newViewTracer(r2Path, r2Trace)
-        val t3 = dv.newViewTracer(r3Path, r3Trace)
-        (tr) => {
-          extract(tr(t), tr(t1), tr(t2), tr(t3))
-        }
-      }
-    }
-
-    override def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T, R4, R4T](name: String, trace: (E) => T,
-                                                                                      r1Path: String, r1Trace: (R1) => R1T,
-                                                                                      r2Path: String, r2Trace: (R2) => R2T,
-                                                                                      r3Path: String, r3Trace: (R3) => R3T,
-                                                                                      r4Path: String, r4Trace: (R4) => R4T)
-                                                                                     (extract: (T, R1T, R2T, R3T, R4T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        val t1 = dv.newViewTracer(r1Path, r1Trace)
-        val t2 = dv.newViewTracer(r2Path, r2Trace)
-        val t3 = dv.newViewTracer(r3Path, r3Trace)
-        val t4 = dv.newViewTracer(r4Path, r4Trace)
-        (tr) => {
-          extract(tr(t), tr(t1), tr(t2), tr(t3), tr(t4))
-        }
-      }
-    }
-
-    override def apply[DK: Packer, DV: Packer, T, R1, R1T, R2, R2T, R3, R3T, R4, R4T, R5, R5T](name: String, trace: (E) => T,
-                                                                                               r1Path: String, r1Trace: (R1) => R1T,
-                                                                                               r2Path: String, r2Trace: (R2) => R2T,
-                                                                                               r3Path: String, r3Trace: (R3) => R3T,
-                                                                                               r4Path: String, r4Trace: (R4) => R4T,
-                                                                                               r5Path: String, r5Trace: (R5) => R5T)
-                                                                                              (extract: (T, R1T, R2T, R3T, R4T, R5T) => Map[DK, DV]) = {
-      newDataView[DK, DV](name) { dv =>
-        val t = dv.newViewTracer(trace)
-        val t1 = dv.newViewTracer(r1Path, r1Trace)
-        val t2 = dv.newViewTracer(r2Path, r2Trace)
-        val t3 = dv.newViewTracer(r3Path, r3Trace)
-        val t4 = dv.newViewTracer(r4Path, r4Trace)
-        val t5 = dv.newViewTracer(r5Path, r5Trace)
-        (tr) => {
-          extract(tr(t), tr(t1), tr(t2), tr(t3), tr(t4), tr(t5))
-        }
-      }
-    }
-  }
-
 
   trait HostListening[E <: Entity] extends EntityCollectionListener[E] {
     val host: HostCollectionImpl[E]
@@ -1115,74 +766,85 @@ private object EntityCollections {
 
   }
 
-
-  trait RefReverseIndex[V <: Entity, R <: Entity] {
-    val name: String
-
-    def getRef(entity: V): Ref[R]
-
-    val host: HostCollectionImpl[V]
-
-    def getRefCollection: HostCollectionImpl[R]
-
-    def scan(refID: Long): Cursor[V]
-  }
-
   object RefReverseIndex {
-    implicit val fullKeyPacker = Packer.of[(Long, Long)]
+    final val prefix = Int.MaxValue-1
+    implicit val fullKeyPacker = Packer.of[(Int, Long, Long)]
 
     @inline final def update(entityID: Long, oldRefs: Set[Long], newRefs: Set[Long])(implicit db: DBSessionUpdatable): Unit = {
       for (r <- newRefs) {
         if (!oldRefs.contains(r)) {
-          db.put((r, entityID), true)
+          db.put((prefix, r, entityID), true)
         }
       }
       for (r <- oldRefs) {
         if (!newRefs.contains(r)) {
-          db.del((r, entityID))
+          db.del((prefix, r, entityID))
+        }
+      }
+    }
+
+    @inline final def scanRefID(id: Long, cidFrom: Int, cidTo: Int)(implicit db: DBSessionQueryable): Cursor[Long] = {
+      import Range._
+      new RawKVCursor[Long]((prefix, id, entityIDOf(cidFrom, 0)) +-+(prefix, id, entityIDOf(cidTo, Long.MaxValue)), forward = true) {
+        override def buildValue() = {
+          fullKeyPacker.unapply(rawKey)._3
         }
       }
     }
 
     @inline final def scan[V <: Entity](id: Long, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
+      val (minCid, maxCid) = if (host eq null) (0, Int.MaxValue) else (host.getCollectionID, host.getCollectionID)
+      scanRefID(id, minCid, maxCid).map(id => getEntity[V](id))
+    }
+  }
+
+  object FullTextSearchIndex extends DataViewImpl[String, Boolean]("full-text-search", uniqueKey = false) {
+
+    final val prefix = Int.MaxValue-2
+    override def getDataViewID(implicit db: DBSessionQueryable) = prefix
+
+    override def findExtractor[E <: Entity](host: HostCollectionImpl[E]): Extractor[E, String, Boolean] = host.ftsExtractor
+
+
+    @inline final def scan[V <: Entity](word: String, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
-      val idMin = if (host == null) host.fixID(0) else 0L
-      val idMax = if (host == null) host.fixID(Long.MaxValue) else Long.MaxValue
-      new RawKVCursor[V]((id, idMin, 0L) +-+(id, idMax, Long.MaxValue), forward = true) {
+      val r = if (host eq null) {
+        (getDataViewID, word, 0l) +-+(getDataViewID, word, Long.MaxValue)
+      } else {
+        (getDataViewID, word, host.fixID(0)) +-+(getDataViewID, word, host.fixID(Long.MaxValue))
+      }
+      new RawKVCursor[V](r, forward = true) {
         override def buildValue() = {
-          getEntity[V](fullKeyPacker.unapply(rawKey)._2)
+          val rk = kPacker.unapply(rawKey)
+          getEntity[V](rk._3)
         }
       }
     }
   }
 
-  object FullTextSearchIndex {
+  object ExtractorIndex {
+    final val prefix = Int.MaxValue-3
+    implicit val fullKeyPacker = Packer.of[(Int, Long, Int, Long)]
 
-    implicit val fullKeyPacker = Packer.of[(String, Long)]
-
-    def update(entityID: Long, oldText: Seq[String], newText: Seq[String])(implicit db: DBSessionUpdatable): Unit = {
-      val oldWords = FullTextSearch.split(oldText: _*)
-      val newWords = FullTextSearch.split(newText: _*)
-      for (w <- newWords) {
-        if (!oldWords.contains(w)) {
-          db.put((w, entityID), true)
+    def update(dataViewID: Int, rootEntityID: Long, oldRefIDs: collection.Set[Long], newRefIDs: collection.Set[Long])(implicit db: DBSessionUpdatable): Unit = {
+      for (rid <- newRefIDs) {
+        if (!oldRefIDs.contains(rid)) {
+          db.put((prefix, rid, dataViewID, rootEntityID), true)
         }
       }
-      for (w <- oldWords) {
-        if (!newWords.contains(w)) {
-          db.del((w, entityID))
+      for (rid <- oldRefIDs) {
+        if (!newRefIDs.contains(rid)) {
+          db.del((prefix, rid, dataViewID, rootEntityID))
         }
       }
     }
 
-    @inline final def scan[V <: Entity](word: String, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
+    @inline final def scan(refID: Long)(implicit db: DBSessionQueryable): Cursor[(Int, Long)] = {
       import Range._
-      val cid = host.getCollectionID
-      val idMin = if (host == null) host.fixID(0) else 0
-      val idMax = if (host == null) host.fixID(Long.MaxValue) else Long.MaxValue
-      new RawKVCursor[V]((cid, word, idMin) +-+(cid, word, idMax), forward = true) {
-        override def buildValue(): V = {
-          host.get1(fullKeyPacker.unapply(rawKey)._2)
+      new RawKVCursor[(Int, Long)]((prefix, refID, 0, 0L) +--(prefix, refID, Int.MaxValue, Long.MaxValue), forward = true) {
+        override def buildValue() = {
+          val rv = fullKeyPacker.unapply(rawKey)
+          (rv._3, rv._4)
         }
       }
     }
