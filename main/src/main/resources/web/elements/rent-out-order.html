@@ -5,8 +5,9 @@
 <link rel="import" href="../common/common-action.html">
 <link rel="import" href="../common/common-image.html">
 <link rel="import" href="../common/common-search-selector.html">
+<link rel="import" href="../common/common-pager-query.html">
 
-<polymer-element name="sale-order">
+<polymer-element name="rent-out-order">
   <template>
     <style>
       :host {
@@ -33,14 +34,15 @@
           <paper-input value="{{beginDate}}"></paper-input>
         </common-form-group>
         <common-form-group label="摄影助理">
-          <common-search-selector on-common-query="{{assistantQueryAction}}" selected="{{assistants}}">
-            <template>
+          <common-search-selector selected="{{assistants}}">
+            <template repeat="{{assistants}}">
               <div class="assistant">
                 <common-image src="{{imgUrl}}"></common-image>
                 <span>{{name}}</span>
                 <common-action type="common-select"></common-action>
               </div>
             </template>
+            <common-pager-query api="product.DataService.listAssistants"></common-pager-query>
           </common-search-selector>
         </common-form-group>
         <common-form-group label="影棚">
@@ -88,22 +90,6 @@
   </template>
   <script>
     Polymer({
-      query: function (api, detail) {
-        return Weez.remoteCall(api, {
-          keywords: detail.keywords,
-          start: detail.start,
-          count: 10
-        });
-      },
-      assistantQueryAction: function (e, detail) {
-        detail.result = this.query('product.AssistantSelectService', detail);
-      },
-      roomQueryAction: function (e, detail) {
-        detail.result = this.query('product.RoomSelectService', detail);
-      },
-      deviceQueryAction: function (e, detail) {
-        detail.result = this.query('product.DeviceSelectService', detail);
-      },
       deviceCountPlus: function (e) {
         var box = e.target.model;
         box.count++;

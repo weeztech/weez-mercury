@@ -1,38 +1,24 @@
-<polymer-element name="common-action" hidden>
+<polymer-element name="common-action">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+    </style>
+    <content></content>
+  </template>
   <script>
     Polymer({
       publish: {
-        target: null,
-        type: ''
+        action: '',
+        args: null
       },
-      created: function () {
-        this._tapAction = this.element.getEventHandler(this, this, 'tapAction');
-      },
-      domReady: function () {
-        var expressionText = this.innerText.trim();
-        if (expressionText) {
-          try {
-            this.argsExpr = PolymerExpressions.getExpression('{' + expressionText + '}');
-          } catch (ex) {
-            console.error('Failed to create computed property', ex);
-          }
-        }
-        if (!this.target)
-          this.target = this.parentNode;
-      },
-      detached: function () {
-        if (this._target)
-          Polymer.removeEventListener(this._target, 'tap', this._tapAction);
-        this._target = null;
-      },
-      targetChanged: function () {
-        if (this._target)
-          Polymer.removeEventListener(this._target, 'tap', this._tapAction);
-        this._target = this.target;
-        if (this._target)
-          Polymer.addEventListener(this._target, 'tap', this._tapAction);
+      eventDelegates: {
+        'tap': 'tapAction'
       },
       tapAction: function (e) {
+        if (!this.action) return;
+        e.stopPropagation();
         var modifier = 0;
         if (e.metaKey) modifier |= 1;
         if (e.ctrlKey) modifier |= 2;
@@ -41,13 +27,11 @@
         this.go(modifier);
       },
       go: function (modifier) {
-        if (!this.type) return;
-        var args = this.argsExpr ?
-          this.argsExpr.getValue(
-            this.templateInstance && this.templateInstance.model,
-            null, this.element.syntax) : {};
+        var args = this.args || {};
+        if (typeof args == 'string')
+          args = JSON.parse(args);
         args.modifiers = modifier || 0;
-        this.fire(this.type, args);
+        this.fire(this.action, args);
       }
     });
   </script>

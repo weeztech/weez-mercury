@@ -2,6 +2,7 @@
 <link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
 <link rel="import" href="../bower_components/paper-icon-button/paper-icon-button.html">
 <link rel="import" href="common-resizable.html">
+<link rel="import" href="common-remote.html">
 
 <polymer-element name="common-pager" vertical layout>
   <template>
@@ -35,10 +36,22 @@
   <script>
     Polymer({
       publish: {
-        threshold: 20
+        threshold: 20,
+        api: '',
+        args: null,
+        items: null,
+        batch: 24,
+        hasMore: true
+      },
+      observe: {
+        'args api': 'reload'
       },
       loading: false,
-      hasMore: true,
+      created: function () {
+        this.args = {};
+        this.remote = document.createElement('common-remote');
+        this.remote.mode = 'singleton';
+      },
       domReady: function () {
         this.isReady = true;
         this.fill();
@@ -65,27 +78,108 @@
       },
       loadMore: function () {
         if (!this.hasMore || this.error) return;
+        var args = this.args;
+        args.start = this.items ? this.items.length : 0,
+        args.count = this.batch;
         this.loading = true;
-        var detail = {};
-        this.fire('common-query', detail);
-        var result = detail.result;
-        if (typeof result == 'undefined')
-          throw new Error('no response on common-query');
-        if (result.then) {
-          result.then(this.afterQuery.bind(this));
+        if (this.api) {
+          this.remote.request(this.api, args).then(this.afterQuery.bind(this));
         } else {
-          this.afterQuery(result);
+          this.fire('common-query', args);
+          var result = args.result;
+          delete args.result;
+          if (!result) throw new Error('no response on common-query');
+          if (result.then) {
+            result.then(this.afterQuery.bind(this));
+          } else {
+            this.afterQuery(result);
+          }
         }
       },
       afterQuery: function (result) {
         this.loading = false;
         if (result instanceof Error) {
           this.error = result.message;
-          return;
+        } else {
+          if (!result.items) throw new Error('expect items');
+          if (this.items) {
+            // 用splice代替concat，不改变引用，polymer只绑定增加的元素。
+            Array.prototype.splice.apply(this.items, [this.items.length, 0].concat(result.items));
+          } else {
+            this.items = result.items;
+          }
+          this.hasMore = result.hasMore;
+          this.$.scrollThreshold.clearLower();
+          this.fill();
         }
-        this.hasMore = result;
-        this.$.scrollThreshold.clearLower();
-        this.fill();
+        return result;
+      }
+    });
+  </script>
+</polymer-element>
+
+<link rel="import" href="../bower_components/core-collapse/core-collapse.html">
+<link rel="import" href="common-search-input.html">
+<link rel="import" href="common-selection.html">
+<link rel="import" href="common-capture.html">
+
+<polymer-element name="common-search-pager" extends="common-pager">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      common-search-input {
+        width: 100%;
+      }
+    </style>
+    <common-search-input value="{{keywords}}"></common-search-input>
+    <core-collapse opened?="{{!collapse || active}}">
+      <div vertical layout style="height: {{listHeight}}px">
+        <shadow></shadow>
+      </div>
+    </core-collapse>
+    <common-capture active="{{active}}"></common-capture>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        listHeight: 240,
+        collapse: false,
+        active: {
+          value: false,
+          reflect: true
+        }
+      },
+      keywordsChanged: function () {
+        this.args.keywords = this.keywords;
+        this.reload();
+      }
+    });
+  </script>
+</polymer-element>
+
+<link rel="import" href="common-selection.html">
+
+<polymer-element name="common-search-selector" extends="common-search-pager">
+  <template>
+    <div id="selectedList">
+      <content select="selectedList"></content>
+    </div>
+    <div id="selectList">
+      <shadow></shadow>
+    </div>
+    <common-selection keyprop="{{keyprop}}" items="{{items}}" selected="{{selected}}" multi?="{{multi}}">
+      <common-selector target="{{$.selectList}}"></common-selector>
+      <common-selector target="{{$.selectedList}}"></common-selector>
+    </common-selection>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        keyprop: '',
+        selected: null,
+        multi: false
       }
     });
   </script>

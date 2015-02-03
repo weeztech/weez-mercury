@@ -1,102 +1,99 @@
-<polymer-element name="common-remote-path" noscript hidden>
-</polymer-element>
-
-<script>
-  var Weez = {};
-
-  (function (scope) {
-    var sid = null;
-    var apiBase;
-
-    function init() {
-      return new Promise(function (resolve) {
-        Polymer.whenPolymerReady(function () {
-          var elements = Polymer.elements;
-          for (var i = 0; i < elements.length; i++) {
-            var el = elements[i];
-            if (el.name == 'common-remote-path') {
-              var u = new URL('../', el.ownerDocument.baseURI);
-              apiBase = u.href;
-              break;
-            }
-          }
-          if (!apiBase) throw new Error('cannot find api base path');
-          if (apiBase[apiBase.length - 1] == '/')
-            apiBase = apiBase.slice(0, apiBase.length - 1)
-          ajax({
-            method: 'POST',
-            url: apiBase + '/init',
-            type: 'json'
-          }, function (resp) {
-            sid = resp.result;
-            if (!sid)
-              alert('发生故障，请刷新页面');
-            else
-              resolve();
+<polymer-element name="common-remote" hidden>
+  <script>
+    (function () {
+      var sessionDefer = function () {
+        return new Promise(function (resolve) {
+          Polymer.whenReady(function () {
+            var el = document.createElement('common-remote');
+            apiBase = el.resolvePath('../service/');
+            request('common.SessionService.init', {}, function (sid) {
+              if (sid instanceof Error) {
+                alert('发生故障，请刷新页面');
+                throw new Error('failed to get session id');
+              }
+              resolve(sid);
+            });
           });
         });
-      });
-    }
+      };
 
-    function ajax(opts, callback) {
-      var xhr = new XMLHttpRequest();
-      xhr.open(opts.method, opts.url);
-      xhr.send(opts.request);
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState == 4) {
-          if (xhr.status == 200) {
-            callback(xhr.response);
+      var apiBase;
+
+      function request(api, args, callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', apiBase + 'com.weez.mercury.' + api);
+        xhr.responseType = 'json';
+        xhr.onload = function () {
+          var status = xhr.status || 0;
+          var success = !status || (status >= 200 && status < 300);
+          if (success) {
+            var resp = xhr.response;
+            resp.error && (resp = processError(resp.code, resp.error));
+            callback(resp);
           } else {
             callback(new Error(xhr.status + ' - ' + xhr.statusText));
           }
-        }
-      };
-      xhr.ontimeout = function () {
-        callback(new Error('request timeout'));
-      };
-      xhr.responseType = opts.type;
-    }
-
-    function remoteCall(opts, obj) {
-      if (!sid || !apiBase) throw new Error('call init() first');
-      var api = opts.api || opts;
-      var type = opts.type || 'json';
-      var request = JSON.stringify({
-        sid: sid,
-        request: obj
-      });
-      return new Promise(function (resolve) {
-        ajax({
-          method: 'POST',
-          url: apiBase + '/service/com.weez.mercury.' + api,
-          type: type,
-          request: request
-        }, function (resp) {
-          if (!(resp instanceof Error) && type == 'json' && resp.error) {
-            resp = processError(resp.code, resp.error);
-          }
-          resolve(resp);
-        });
-      });
-    }
-
-    function processError(code, msg) {
-      switch (code) {
-      case 800: // InvalidRequest: the request contains characters cannot be parsed or has invalid format
-        return new Error('800 - 请求无法被服务器处理');
-      case 801: // NotAcceptable: the request is not acceptable becuase cannot find RemoteCall
-        return new Error('801 - 请求无法被服务器处理');
-      case 802: // Reject: the request is not acceptable because too many requests are waiting
-        return new Error('802 - 服务器忙,请稍后重试');
-      case 803:
-      case 804:
-        return new Error(code + ' - 请求无效');
-      case 899: // Fail: user operation failed
-        return new Error('899 - ' + msg);
+        };
+        xhr.onerror = callback;
+        xhr.ontimeout = function () {
+          callback(new Error('request timeout'));
+        };
+        xhr.send(JSON.stringify(args));
+        return xhr;
       }
-    }
 
-    scope.remoteCall = remoteCall;
-    scope.init = init;
-  })(Weez);
-</script>
+      function processError(code, msg) {
+        switch (code) {
+        case 800: // InvalidRequest: the request contains characters cannot be parsed or has invalid format
+          return new Error('800 - 请求无法被服务器处理');
+        case 801: // NotAcceptable: the request is not acceptable becuase cannot find RemoteCall
+          return new Error('801 - 请求无法被服务器处理');
+        case 802: // Reject: the request is not acceptable because too many requests are waiting
+          return new Error('802 - 服务器忙,请稍后重试');
+        case 803:
+        case 804:
+          return new Error(code + ' - 请求无效');
+        case 899: // Fail: user operation failed
+          return new Error('899 - ' + msg);
+        }
+      }
+
+      Polymer({
+        publish: {
+          mode: 'concurrent'
+        },
+        request: function (api, args) {
+          this['request_' + this.mode](api, args);
+        },
+        request_single: function (api, args) {
+          var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+          var self = this;
+          if (this.activeRequest) {
+            this.activeRequest.abort();
+            this.activeRequest = null;
+          }
+          return new Promise(function (resolve) {
+            sessionDefer.then(function (sid) {
+              args.sid = sid;
+              self.activeRequest = request(api, args, function (resp) {
+                if (msgId == self.msgId) {
+                  self.activeRequest = null;
+                  resolve(resp);
+                }
+              });
+            });
+          });
+        },
+        request_concurrent: function (api, args) {
+          return new Promise(function (resolve) {
+            sessionDefer.then(function (sid) {
+              args.sid = sid;
+              request(api, args, resolve);
+            });
+          });
+        }
+      });
+    })();
+  </script>
+</polymer-element>
+

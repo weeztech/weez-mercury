@@ -1,0 +1,44 @@
+<polymer-element name="common-controller" hidden>
+  <script>
+    Polymer({
+      publish: {
+        target: null
+      },
+      domReady: function () {
+        var events = this.targetDelegates
+        var delegates = {};
+        for (var evt in events) {
+          delegates[evt] = this.element.getEventHandler(this, this, events[evt]);
+        }
+        this.delegates = delegates;
+        this.inited = true;
+        if (this.target) {
+          this.updateDelegates(this.target, true);
+        } else {
+          this.target = this.parentNode;
+        }
+      },
+      detached: function () {
+        if (this._target) {
+          this.updateDelegates(this._target, false);
+          // 因为Chrome原生支持Object.observe，
+          // Chrome会再次调用targetChanged，其他浏览器不会。
+          this._target = this.target = null;
+        }
+      },
+      targetChanged: function () {
+        this._target && this.updateDelegates(this._target, false);
+        this.target && this.updateDelegates(this.target, true);
+        this._target = this.target;
+      },
+      updateDelegates: function (target, addOrRemove) {
+        if (!this.delegates) return;
+        var delegates = this.delegates;
+        var func = addOrRemove ? Polymer.addEventListener : Polymer.removeEventListener;
+        for (var evt in delegates) {
+          func(target, evt, delegates[evt]);
+        }
+      }
+    });
+  </script>
+</polymer-element>

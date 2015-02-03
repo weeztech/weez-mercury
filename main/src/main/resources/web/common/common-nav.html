@@ -7,13 +7,8 @@
         display: block;
         position: relative;
       }
-      [section-client] {
-        height: 100%;
-      }
     </style>
-    <div section-client>
-      <content></content>
-    </div>
+    <content></content>
     <div fit fade hidden?="{{!loading}}" vertical layout center-center>
       <paper-spinner active></paper-spinner>
     </div>
@@ -25,40 +20,42 @@
         'common-nav-push': 'navAction',
         'common-nav-pop': 'navAction'
       },
-      created: function () {
-        this._navAction = this.element.getEventHandler(this, this, 'navAction');
-      },
       navAction: function (e, detail) {
         e.stopPropagation();
         if (e.type == 'common-nav-push') {
-          detail.type = 'push';
+          this.goto(detail.element, true, detail.imports);
         } else if (e.type == 'common-nav-pop') {
-          detail.type = 'pop';
+          this.pop();
+        } else {
+          this.goto(detail.element, false, detail.imports);
         }
-        this.goto(detail);
       },
-      goto: function (args) {
-        var arr = args.imports;
+      pop: function () {
+        this.lastElementChild.remove();
+        if (!this.lastElementChild) throw 'no element';
+      },
+      goto: function (element, stack, imports) {
         var self = this;
 
         function load() {
           self.loading = false;
-          var el = typeof args.element == 'string' ?
-            document.createElement(args.element) :
-            args.element;
-          el.navArgs = args;
-          if (args.stacked) {
-            self.appendChild(el);
+          var el = typeof element == 'string' ?
+            document.createElement(element) : element;
+          var div = document.createElement('div');
+          div.setAttribute('fit', '');
+          div.appendChild(el);
+          if (stacked) {
+            self.appendChild(div);
           } else {
             while (self.lastChild)
               self.removeChild(self.lastChild);
-            self.appendChild(el);
+            self.appendChild(div);
           }
         }
-        if (arr) {
-          if (!Array.isArray(arr)) arr = [arr];
+        if (imports) {
+          if (!Array.isArray(imports)) imports = [imports];
           this.loading = true;
-          Polymer.import(arr, load);
+          Polymer.import(imports, load);
         } else {
           load();
         }

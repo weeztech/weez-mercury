@@ -10,70 +10,60 @@
 
 <body unresolved fullbleed>
 
-  <link rel="import" href="../common/common-search-input.html">
+  <link rel="import" href="../common/common-action.html">
   <link rel="import" href="../common/common-pager.html">
-  <link rel="import" href="../common/common-selection.html">
-  <link rel="import" href="../common/common-search-selector.html">
 
-  <template id="tpl">
-    <style>
-      .item[selected] {
-        background: red;
-      }
-    </style>
-    <div class="item" selected?="{{selected}}" on-tap="{{selectAction}}">
-      <span>{{value.num}} {{value.text}}</span>
-    </div>
-  </template>
+  <app-test></app-test>
 
-  <template is="auto-binding">
-    <div style="height: 300px" vertical layout>
-      <div>
-        <input type="checkbox" checked="{{multi}}">multiple selection mode
+  <polymer-element name="app-test">
+    <template>
+      <template id="tpl">
+        <style>
+          .item[selected] {
+            background: red;
+          }
+        </style>
+        <div class="item" selected?="{{$selected}}">
+          <common-action action="common-select">
+            <span>{{num}} {{text}}</span>
+          </common-action>
+        </div>
+      </template>
+      <div style="height: 300px" vertical layout>
+        <div>
+          <input type="checkbox" checked="{{multi}}">multiple selection mode
+        </div>
+        <common-search-selector keyprop="num" items="{{items}}" selected="{{selected}}" multi?="{{multi}}" on-common-query="{{queryAction}}">
+          <template ref="tpl" repeat="{{items}}"></template>
+        </common-search-selector>
       </div>
-      <common-search-input value="{{keywords}}"></common-search-input>
-      <common-pager id="pager" keywords="{{keywords}}" on-common-query="{{queryAction}}" flex>
-        <template ref="tpl"></template>
-      </common-pager>
-      <common-selection selected="{{selected}}" multi?="{{multi}}">
-        <common-selector target="{{$.pager}}"></common-selector>
-      </common-selection>
-    </div>
-    <p>
-      following are selected:
-    </p>
-    <template if="{{multi}}" repeat="{{selected}}">
-      <span>{{num}} {{text}}</span>
+      <p>
+        following are selected:
+      </p>
+      <template if="{{multi}}" repeat="{{selected}}">
+        <span>{{num}} {{text}}</span>
+      </template>
+      <template if="{{!multi}}">
+        <span>{{selected.num}} {{selected.text}}</span>
+      </template>
     </template>
-    <template if="{{!multi}}">
-      <span>{{selected.num}} {{selected.text}}</span>
-    </template>
-
-    <common-search-selector on-common-query="{{queryAction}}">
-      <template ref="tpl"></template>
-    </common-search-selector>
-  </template>
-
-  <script>
-    var namegen = {
-      generateString: function (inLength) {
+    <script>
+      function generateString(inLength) {
         var s = '';
         for (var i = 0; i < inLength; i++) {
           s += String.fromCharCode(Math.floor(Math.random() * 26) + 97);
         }
         return s;
-      },
-
-      generateName: function (inMin, inMax) {
-        return this.generateString(Math.floor(Math.random() * (inMax - inMin + 1) + inMin));
       }
-    };
 
-    window.addEventListener('template-bound', function (e) {
+      function generateName(inMin, inMax) {
+        return generateString(Math.floor(Math.random() * (inMax - inMin + 1) + inMin));
+      }
+
       var data = [];
       for (var i = 0; i < 30; i++) {
         data.push({
-          text: namegen.generateName(3, 6)
+          text: generateName(3, 6)
         });
       }
       data.sort(function (a, b) {
@@ -84,34 +74,32 @@
       data.forEach(function (i, k) {
         i.num = k;
       });
-      var tpl = e.target;
-      tpl.selectAction = function (e) {
-        e.target.fire('common-select');
-      };
-      tpl.queryAction = function (e, detail) {
-        console.log('query with keywords: %s', detail.keywords);
-        detail.result = new Promise(function (resolve) {
-          window.setTimeout(function () {
-            var arr = data;
-            if (detail.keywords) {
-              arr = arr.filter(function (i) {
-                return i.text.indexOf(detail.keywords) >= 0;
+
+      Polymer({
+        queryAction: function (e, detail) {
+          console.log('query with keywords: %s', detail.keywords);
+          detail.result = new Promise(function (resolve) {
+            window.setTimeout(function () {
+              var arr = data;
+              if (detail.keywords) {
+                arr = arr.filter(function (i) {
+                  return i.text.indexOf(detail.keywords) >= 0;
+                });
+              }
+              var end = detail.start + 10;
+              var hasMore = end < arr.length;
+              arr = arr.slice(detail.start, end);
+              console.log('data from %d to %d', detail.start, end);
+              resolve({
+                items: arr,
+                hasMore: hasMore
               });
-            }
-            var end = detail.start + 10;
-            var hasMore = end < arr.length;
-            arr = arr.slice(detail.start, end);
-            console.log('data from %d to %d', detail.start, end);
-            resolve({
-              items: arr,
-              keyprop: 'num',
-              hasMore: hasMore
-            });
-          }, 1000);
-        });
-      };
-    });
-  </script>
+            }, 1000);
+          });
+        }
+      });
+    </script>
+  </polymer-element>
 </body>
 
 </html>

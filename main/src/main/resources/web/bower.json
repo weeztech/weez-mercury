@@ -17,7 +17,7 @@
   "license": "Apache 2.0",
   "private": true,
   "dependencies": {
-    "paper-elements": "polymer/paper-elements#~0.5.2",
-    "core-scroll-threshold": "polymer/core-scroll-threshold#~0.5.2"
+    "paper-elements": "polymer/paper-elements#latest",
+    "core-scroll-threshold": "polymer/core-scroll-threshold#latest"
   }
 }

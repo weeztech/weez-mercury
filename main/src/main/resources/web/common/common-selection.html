@@ -1,71 +1,64 @@
+<link rel="import" href="common-controller.html">
+
 <polymer-element name="common-selection" hidden>
   <script>
     Polymer({
       publish: {
+        items: null,
+        keyprop: '',
         selected: null,
-        selectedBox: null,
         multi: false
       },
+      itemsChanged: function () {
+        if (arguments.length == 1) {
+          var splices = arguments[0];
+          var arr = this.items;
+          for (var i = 0; i < splices.length; i++) {
+            var splice = splices[i];
+            this.packupAll(arr, splice.index, splice.index + splice.addedCount);
+          }
+        } else if (this.items) {
+          this.packupAll(this.items, 0, this.items.length);
+        }
+      },
+      selectedArrayChanged: function () {
+        this.selected = this._multi ? this.selectedArray : this.selectedArray[0];
+      },
       multiChanged: function () {
-        this.clear();
         this._multi = this.multi;
+        this.clear();
       },
-      getSelectedBox: function (key) {
-        var selbox = this.selectedBox;
-        if (selbox) {
-          return selbox[key];
+      packupAll: function (arr, start, end) {
+        for (var i = start; i < end; i++) {
+          this.packup(arr[i]);
         }
       },
-      packup: function (items, keyGetter) {
-        var boxes = [];
-        if (this._multi) {
-          var selbox = this.selectedBox || (this.selectedBox = {});
-          for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var key = keyGetter(item);
-            var box = selbox[key];
-            if (box) {
-              box.value = item;
-            } else {
-              box = {
-                key: key,
-                value: item,
-                selected: false
-              };
-            }
-            boxes.push(box);
-          }
-        } else {
-          var selkey = this.selectedBox && this.selectedBox.key;
-          for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var key = keyGetter(item);
-            var box = this.selectedBox;
-            if (box && box.key == key) {
-              box.value = item;
-            } else {
-              box = {
-                key: key,
-                value: item,
-                selected: false
-              };
-            }
-            boxes.push(box);
-          }
+      packup: function (obj) {
+        if (!this.keyprop) throw new Error('expect keyprop');
+        var map = this.selectedMap || (this.selectedMap = {});
+        var arr = this.selectedArray || (this.selectedArray = []);
+        var key = obj[this.keyprop];
+        if (!('$selected' in obj)) {
+          Object.defineProperty(obj, '$selected', {
+            enumerable: false,
+            writable: true,
+            value: false
+          });
         }
-        return boxes;
+        var old = map[key];
+        if (old) {
+          obj.$selected = true;
+          map[key] = obj;
+          arr[arr.indexOf(old)] = obj;
+        }
       },
       clear: function () {
-        if (this.selectedBox) {
-          if (this._multi) {
-            for (var key in this.selectedBox)
-              this.selectedBox[key].selected = false;
-          } else {
-            this.selectedBox.selected = false;
-          }
+        if (this.selectedMap) {
+          for (var key in this.selectedMap)
+            this.selectedMap[key].$selected = false;
+          this.selectedMap = {};
+          this.selectedArray = [];
         }
-        this.selectedBox = null;
-        this.selected = null;
       },
       select: function () {
         this._select(arguments, 1);
@@ -77,36 +70,34 @@
         this._select(arguments, 2);
       },
       _select: function (args, act) {
+        var map = this.selectedMap || (this.selectedMap = {});
+        var arr = this.selectedArray || (this.selectedArray = []);
         if (this._multi) {
-          var selbox = this.selectedBox || (this.selectedBox = {});
-          var sel = this.selected || (this.selected = []);
           for (var i = 0; i < args.length; i++) {
-            var box = args[i];
-            var toggle = !!(act ^ box.selected);
+            var item = args[i];
+            var toggle = !!(act ^ item.$selected);
             if (!toggle) continue;
-            if (box.selected) {
-              box.selected = false;
-              delete selbox[box.key];
-              sel.splice(sel.indexOf(box.value), 1);
+            if (item.$selected) {
+              item.$selected = false;
+              delete map[item[this.keyprop]];
+              arr.splice(arr.indexOf(item), 1);
             } else {
-              box.selected = true;
-              selbox[box.key] = box;
-              sel.push(box.value);
+              item.$selected = true;
+              map[item[this.keyprop]] = item;
+              arr.push(item);
             }
           }
         } else {
-          var box = args[0];
-          var toggle = !!(act ^ box.selected);
+          var item = args[0];
+          var toggle = !!(act ^ item.$selected);
           if (toggle) {
-            if (this.selectedBox) {
-              this.selectedBox.selected = false;
-              this.selectedBox = null;
-              this.selected = null;
-            }
-            if (!box.selected) {
-              box.selected = true;
-              this.selectedBox = box;
-              this.selected = box.value;
+            while (arr.length > 0)
+              arr.pop().$selected = false;
+            this.selectedMap = map = {};
+            if (!item.$selected) {
+              item.$selected = true;
+              map[item[this.keyprop]] = item;
+              arr.push(item);
             }
           }
         }
@@ -115,145 +106,67 @@
   </script>
 </polymer-element>
 
-<polymer-element name="common-selector">
+<polymer-element name="common-selector" extends="common-controller">
   <script>
-    (function () {
-      var events = makeEvents('common-query common-select common-deselect');
-
-      function makeEvents(s) {
-        var events = [];
-        var names = s.split(' ');
-        for (var i = 0; i < names.length; i++) {
-          var name = names[i];
-          var handler = name.replace(/-./, function (m) {
-            return m[1].toUpperCase();
-          }) + 'Action';
-          events.push({
-            name: name,
-            handler: handler
-          });
-        }
-        return events;
-      }
-
-      Polymer({
-        publish: {
-          target: null,
-          model: ''
-        },
-        created: function () {
-          for (var i = 0; i < events.length; i++) {
-            var name = events[i].handler;
-            this['_' + name] = this[name].bind(this);
-          }
-        },
-        domReady: function () {
-          var parent = this.parentNode;
-          if (!parent || parent.localName != 'common-selection')
-            throw new Error('do not use common-selector out of common-selection');
-        },
-        detached: function () {
-          if (this._target) {
-            this.updateListener(false);
-            this._target = null;
-          }
-        },
-        updateListener: function (addOrRemove) {
-          var func = Polymer[addOrRemove ? 'addEventListener' : 'removeEventListener'];
-          for (var i = 0; i < events.length; i++) {
-            var event = events[i];
-            func(this._target, event.name, this['_' + event.handler]);
-          }
-        },
-        targetChanged: function () {
-          if (this._target) this.updateListener(false);
-          this._target = this.target;
-          if (this._target) {
-            this.updateListener(true);
-            this.model = this._target.templateVarName;
-          }
-        },
-        commonQueryAction: function (e) {
-          var detail = e.detail;
-          if (detail.filter)
-            throw new Error('cannot hook multiple filters on one element');
-          var self = this;
-          detail.filter = function (p) {
-            return p.then(function (result) {
-              if (result instanceof Error) {
-                return result;
-              }
-              var keyprop = result.keyprop,
-                keyGetter;
-              switch (typeof keyprop) {
-              case 'string':
-                keyGetter = function (item) {
-                  return item[keyprop];
-                };
-                break;
-              case 'function':
-                keyGetter = keyprop;
-                break;
-              default:
-                throw new Error('invalid keyprop');
-              }
-              result.items = self.parentNode.packup(result.items, keyGetter);
-              return result;
-            });
-          };
-        },
-        boxOf: function (el) {
-          var box = el.templateInstance.model;
-          if (this.model) box = box[this.model];
-          return box;
-        },
-        commonSelectAction: function (e) {
-          var el = e.path[0];
-          while (!el.templateInstance_)
-            el = el.parentNode;
-          if (this.parentNode.multi) {
-            var modifiers = e.detail.modifiers;
-            if (modifiers == 0) {
-              var box = this.boxOf(el);
-              this.parentNode.toggle(box);
-              this.lastState = box.selected;
-            } else if (modifiers == 8) { // shift
-              var boxes = [],
-                fromEl = this.lastTap || el.parentNode.firstElementChild,
-                toEl = el;
-              // not support cross level selection
-              if (fromEl.parentNode !== toEl.parentNode) return;
-              if (fromEl.compareDocumentPosition(toEl) & Node.DOCUMENT_POSITION_PRECEDING) {
-                toEl = fromEl;
-                fromEl = el;
-              }
-              toEl = toEl.nextElementSibling;
-              var boxes = [],
-                lastBox;
-              for (var itemEl = fromEl; itemEl != toEl; itemEl = itemEl.nextElementSibling) {
-                var box = this.boxOf(itemEl);
-                if (box !== lastBox) {
-                  boxes.push(box);
-                  lastBox = box;
-                }
-              }
-              var func = this.lastState ? this.parentNode.select : this.parentNode.deselect;
-              func.apply(this.parentNode, boxes);
+    Polymer({
+      publish: {
+        target: null,
+        model: ''
+      },
+      targetDelegates: {
+        'common-select': 'commonSelectAction',
+        'common-deselect': 'commonDeselectAction'
+      },
+      itemOf: function (el) {
+        var m = el.templateInstance.model;
+        if (this.model) m = m[this.model];
+        return m;
+      },
+      commonSelectAction: function (e) {
+        var el = e.path[0];
+        while (!el.templateInstance_)
+          el = el.parentNode;
+        if (this.parentNode._multi) {
+          var modifiers = e.detail.modifiers;
+          if (modifiers == 0) {
+            var item = this.itemOf(el);
+            this.parentNode.toggle(item);
+            this.lastState = item.$selected;
+          } else if (modifiers == 8) { // shift
+            var fromEl = this.lastTap || el.parentNode.firstElementChild,
+              toEl = el;
+            // not support cross level selection
+            if (fromEl.parentNode !== toEl.parentNode) return;
+            if (fromEl.compareDocumentPosition(toEl) & Node.DOCUMENT_POSITION_PRECEDING) {
+              toEl = fromEl;
+              fromEl = el;
             }
-            this.lastTap = el;
-          } else {
-            var box = this.boxOf(el);
-            this.parentNode.select(box);
+            toEl = toEl.nextElementSibling;
+            var items = [],
+              lastItem;
+            for (var itemEl = fromEl; itemEl != toEl; itemEl = itemEl.nextElementSibling) {
+              var item = this.itemOf(itemEl);
+              if (item !== lastItem) {
+                items.push(item);
+                lastItem = item;
+              }
+            }
+            var func = this.lastState ? this.parentNode.select : this.parentNode.deselect;
+            func.apply(this.parentNode, items);
           }
-        },
-        commonDeselectAction: function (e) {
-          var el = e.path[0];
-          while (!el.templateInstance_)
-            el = el.parentNode;
-          var box = this.boxOf(el);
-          this.parentNode.deselect(box);
+          this.lastTap = el;
+        } else {
+          var item = this.itemOf(el);
+          this.parentNode.select(item);
         }
-      });
-    })();
+      },
+      commonDeselectAction: function (e) {
+        var el = e.path[0];
+        while (!el.templateInstance_)
+          el = el.parentNode;
+        var item = this.itemOf(el);
+        this.parentNode.deselect(item);
+      }
+    });
   </script>
 </polymer-element>
