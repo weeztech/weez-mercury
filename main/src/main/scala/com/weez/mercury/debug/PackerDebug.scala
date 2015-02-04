@@ -157,8 +157,12 @@ object PackerDebug {
     }
 
     private def tupleEnd(len: Int) = {
+      if (stack.isEmpty) {
+        println("eee")
+      }
       require(stack.top._3 == "Tuple")
       sb.append(")")
+      firstInTuple = false
       offset += len
       indent -= 1
       tokenEnd()

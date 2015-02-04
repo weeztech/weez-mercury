@@ -51,9 +51,9 @@ object HttpServer {
 
     def route: Receive = runRoute {
       post {
-        cookie(PEER_NAME) { peer =>
+        withPeer { peer =>
           path("service" / Rest) { api =>
-            postRequest(peer.value, api)
+            postRequest(peer, api)
           } ~
             path("resource" / Rest) { resourceid =>
               ???
@@ -74,12 +74,10 @@ object HttpServer {
 
             pathSingleSlash {
               withPeer { peer =>
-                setCookie(HttpCookie(PEER_NAME, peer)) {
-                  staticRoot match {
-                    case Resource(x) => getFromResource(x + "/index.html")
-                    case File(x) => getFromFile(normalize(x + "/index.html"))
-                    case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
-                  }
+                staticRoot match {
+                  case Resource(x) => getFromResource(x + "/index.html")
+                  case File(x) => getFromFile(normalize(x + "/index.html"))
+                  case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
                 }
               }
             } ~ {
@@ -96,9 +94,14 @@ object HttpServer {
     def withPeer = new Directive[String :: HNil] {
       def happly(f: String :: HNil => Route) = ctx => {
         val sessionManager = app.sessionManager
-        val peer = sessionManager.createPeer(
-          ctx.request.cookies.find(_.name == PEER_NAME).map(_.content))
-        f(peer :: HNil)(ctx)
+        val cookiePeer = ctx.request.cookies.find(_.name == PEER_NAME).map(_.content)
+        val peer = sessionManager.ensurePeer(cookiePeer)
+        if (cookiePeer.contains(peer))
+          f(peer :: HNil)(ctx)
+        else
+          setCookie(HttpCookie(PEER_NAME, peer)) {
+            f(peer :: HNil)
+          }(ctx)
       }
     }
 
@@ -107,7 +110,7 @@ object HttpServer {
       val startTime = System.nanoTime
       val p = Promise[JsValue]()
       val req = ctx.request.entity.asString.parseJson.asJsObject()
-      app.serviceManager.postRequest(api, req).onComplete {
+      app.serviceManager.postRequest(peer, api, req).onComplete {
         case Success(out) =>
           import akka.event.Logging._
           val costTime = (System.nanoTime - startTime) / 1000000 // ms

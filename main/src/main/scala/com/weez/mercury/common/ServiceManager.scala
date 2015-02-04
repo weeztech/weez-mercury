@@ -74,16 +74,15 @@ class ServiceManager(app: Application, config: Config) {
     builder.result()
   }
 
-  def postRequest(api: String, req: ModelObject): Future[ModelObject] = {
-    import scala.util.control.NonFatal
+  def postRequest(peer: String, api: String, req: ModelObject): Future[ModelObject] = {
     import scala.util.Try
-    val rc = remoteCalls.getOrElse(api, ErrorCode.NotAcceptable.raise)
+    val rc = remoteCalls.getOrElse(api, ErrorCode.RemoteCallNotFound.raise)
     val wp =
       workerPools.find { wp =>
         wp.permitSessionState == rc.sessionState &&
           wp.permitDBQuery == rc.dbQuery &&
           wp.permitDBUpdate == rc.dbUpdate
-      }.getOrElse(ErrorCode.NotAcceptable.raise)
+      }.getOrElse(ErrorCode.WorkerPoolNotFound.raise)
     val sessionState =
       if (wp.permitSessionState) {
         new SessionStateImpl(app.sessionManager
@@ -93,6 +92,7 @@ class ServiceManager(app: Application, config: Config) {
     val p = Promise[ModelObject]()
     wp.post { c =>
       p.complete(Try {
+        c.peer = peer
         c.sessionState = sessionState
         c.request = req
         rc.f(c)

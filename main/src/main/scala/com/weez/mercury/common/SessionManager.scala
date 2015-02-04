@@ -33,7 +33,7 @@ class SessionManager(app: Application, config: Config) {
     }
   }
 
-  def createPeer(peerHint: Option[String] = None) = {
+  def ensurePeer(peerHint: Option[String] = None) = {
     sessions.synchronized {
       val peer = peerHint.getOrElse(sidGen.newId)
       val peerSessions = peers.getOrElse(peer, Nil)
