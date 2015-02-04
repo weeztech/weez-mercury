@@ -265,13 +265,13 @@ class PackerMacro(val c: whitebox.Context) extends MacroHelper {
           if (tp._3 == null) {
             CaseDef(tp._2, EmptyTree,
               Block(q"buf(offset) = TYPE_TUPLE" ::
-                q"val end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset)" ::
+                q"val end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset + 1)" ::
                 q"buf(end) = TYPE_END" :: Nil,
                 q"end + 1"))
           } else {
             CaseDef(Bind(TermName("x"), Typed(Ident(termNames.WILDCARD), tp._2)), EmptyTree,
               Block(q"buf(offset) = TYPE_TUPLE" ::
-                q"var end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset)" ::
+                q"var end = of[String].pack(${Literal(Constant(tp._1))}, buf, offset + 1)" ::
                 q"end = ${tp._3}.pack(x, buf, end)" ::
                 q"buf(end) = TYPE_END" :: Nil,
                 q"end + 1"))
