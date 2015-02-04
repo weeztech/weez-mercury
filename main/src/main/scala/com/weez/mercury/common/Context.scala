@@ -91,7 +91,9 @@ trait Ref[+T <: Entity] {
 trait Entity extends AnyRef {
   private[common] var _id: Long = 0
 
-  def id: Long = _id
+  @inline final def id: Long = _id
+
+  @inline final def id_=(id: Long) = _id = id
 
   def newRef() = RefSome[this.type](this.id)
 }
@@ -128,7 +130,7 @@ trait EntityCollection[V <: Entity] {
 
   def newEntityID()(implicit db: DBSessionUpdatable): Long
 
-  def fxFunc: Option[(V,DBSessionQueryable) => Seq[String]] = None
+  def fxFunc: Option[(V, DBSessionQueryable) => Seq[String]] = None
 
   def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V]
 

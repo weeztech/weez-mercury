@@ -57,7 +57,7 @@ object ProductModelCollection extends RootCollection[ProductModel] {
 case class Product(code: String,
                    title: String,
                    description: String,
-                   price: Double) extends Entity
+                   price: Double) extends MasterData
 
 object ProductCollection extends RootCollection[Product] {
   def name = "product"
@@ -77,7 +77,7 @@ object AssistantCollection extends RootCollection[Assistant] {
   def extendFrom = StaffCollection
 
   val byStaffName = defUniqueIndex("by-staff-name", _ => {
-    ???;
+    ???
     "???"
   })
 }
@@ -128,7 +128,7 @@ object RoomItemCollection extends RootCollection[RoomItem] {
 }
 
 @packable
-case class Room(title: String, price: Double, description: String) extends Entity
+case class Room(code: String,title: String, price: Double, description: String) extends MasterData
 
 object RoomCollection extends RootCollection[Room] {
   def name = "room"

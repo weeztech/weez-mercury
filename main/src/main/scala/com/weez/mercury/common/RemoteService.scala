@@ -4,10 +4,14 @@ import com.weez.mercury.collect
 
 @collect
 trait RemoteService {
+
+  type QueryCallContext = Context with SessionState with DBSessionQueryable
+  type PersistCallContext = Context with SessionState with DBSessionUpdatable
+  type SimpleCallContext = Context with SessionState
   type NoSessionCall = Context => Unit
-  type SimpleCall = Context with SessionState => Unit
-  type QueryCall = Context with SessionState with DBSessionQueryable => Unit
-  type PersistCall = Context with SessionState with DBSessionUpdatable => Unit
+  type SimpleCall = SimpleCallContext => Unit
+  type QueryCall = QueryCallContext => Unit
+  type PersistCall = PersistCallContext => Unit
 
   def completeWith(fields: (String, Any)*)(implicit c: Context) = {
     if (c.response == null)

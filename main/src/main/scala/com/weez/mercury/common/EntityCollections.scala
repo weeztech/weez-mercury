@@ -933,34 +933,4 @@ private object EntityCollections {
       }
     }
   }
-
 }
-
-@packable
-case class Ref1(name: String) extends Entity
-
-object Ref1Collection extends RootCollection[Ref1] {
-  def name = "test-ref1"
-}
-
-@packable
-case class Ref2(name: String, ref: Ref[Ref1]) extends Entity
-
-object Ref2Collection extends RootCollection[Ref2] {
-  def name = "test-ref2"
-}
-
-@packable
-case class Entity1(name: String, ref: Ref[Ref2]) extends Entity
-
-object Entity1Collection extends RootCollection[Entity1] {
-  def name = "test-entity1"
-
-  override def fxFunc: Option[(Entity1, DBSessionQueryable) => Seq[String]] = Some { (e, db) =>
-    implicit val dbi=db
-    val ref2 = e.ref()
-    val ref1 = ref2.ref()
-    Seq(e.name, ref1.name, ref2.name)
-  }
-}
-
