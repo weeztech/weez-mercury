@@ -34,18 +34,7 @@ class DBSessionFactory(dbSession: DBSession) {
 
   def create(trans: DBTransaction, log: LoggingAdapter): DBSessionUpdatable = new DBSessionImpl(trans, log)
 
-  def withTransaction[T](dbSession: DBSession, log: LoggingAdapter)(f: DBSessionUpdatable => T): T = {
-    val trans = dbSession.newTransaction(log)
-    try {
-      val ret = f(create(trans, log))
-      trans.commit()
-      ret
-    } finally {
-      trans.close()
-    }
-  }
-
-  private final class DBSessionImpl(trans: DBTransaction, log: LoggingAdapter) extends DBSessionUpdatable {
+  final class DBSessionImpl(trans: DBTransaction, log: LoggingAdapter) extends DBSessionUpdatable {
     def get[K, V](key: K)(implicit pk: Packer[K], pv: Packer[V]) = {
       val arr = trans.get(pk(key))
       if (arr == null) None else Some(pv.unapply(arr))

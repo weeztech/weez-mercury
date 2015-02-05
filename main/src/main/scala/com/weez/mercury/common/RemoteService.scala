@@ -1,7 +1,5 @@
 package com.weez.mercury.common
 
-import com.weez.mercury.collect
-
 @collect
 trait RemoteService {
 

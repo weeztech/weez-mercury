@@ -93,13 +93,13 @@ object Test {
     import scala.concurrent._
     import scala.concurrent.ExecutionContext.Implicits._
     val app = App.start(args)
-    showDB(app.serviceManager.database)
-    val serviceManager = app.serviceManager
+    // showDB(app.serviceManager.database)
+    val remoteCallManager = app.remoteCallManager
     val sessionManager = app.sessionManager
     val peer = sessionManager.ensurePeer(None)
     def call(api: String, args: (String, Any)*) = {
       try {
-        serviceManager.postRequest(peer, "com.weez.mercury." + api, ModelObject(args: _*))
+        remoteCallManager.postRequest(peer, "com.weez.mercury." + api, ModelObject(args: _*))
       } catch {
         case NonFatal(ex) => Future.failed(ex)
       }

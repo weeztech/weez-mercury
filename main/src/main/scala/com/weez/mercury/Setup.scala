@@ -42,10 +42,11 @@ object Setup {
         dbtypes.collectDBTypes(log)
         val dbSession = db.createSession()
         val dbFactory = new DBSessionFactory(dbSession)
-        dbFactory.withTransaction(dbSession, log) { implicit dbc =>
+
+        withTrans(dbSession, dbFactory) { implicit dbc =>
           dbc.put(dbFactory.KEY_OBJECT_ID_COUNTER, 0L)
         }
-        dbFactory.withTransaction(dbSession, log) { implicit dbc =>
+        withTrans(dbSession, dbFactory) { implicit dbc =>
           var counter = 10
 
           def newPrefix = {
@@ -65,6 +66,16 @@ object Setup {
           dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, newPrefix)
         }
         dbSession.close()
+    }
+
+    def withTrans(dbSession: DBSession, dbFactory: DBSessionFactory)(f: DBSessionUpdatable => Unit) = {
+      val trans = dbSession.newTransaction(log)
+      try {
+        f(dbFactory.create(trans, log))
+        trans.commit()
+      } finally {
+        trans.close()
+      }
     }
   }
 

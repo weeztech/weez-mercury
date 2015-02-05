@@ -1,7 +1,8 @@
-package com.weez.mercury
+package com.weez.mercury.common
 
 import java.io.File
 import java.util.jar.JarFile
+
 import akka.event.LoggingAdapter
 
 import scala.annotation.StaticAnnotation

@@ -6,7 +6,7 @@ object AkkaServer {
   import common._
   import scala.util.control.NonFatal
 
-  class ServerActor(app: Application) extends Actor with ActorLogging {
+  class ServerActor(app: ServiceManager) extends Actor with ActorLogging {
     def withPeer(f: String => Unit) = {
       sender().path.address.host match {
         case Some(x) =>
@@ -26,7 +26,7 @@ object AkkaServer {
           import scala.util._
           import context.dispatcher
           val remote = sender()
-          app.serviceManager.postRequest(peer, api, ModelObject(r: _*)).onComplete {
+          app.remoteCallManager.postRequest(peer, api, ModelObject(r: _*)).onComplete {
             case Success(x) => remote ! Response(x.underlaying.toArray)
             case Failure(ex) => remote ! Status.Failure(ex)
           }

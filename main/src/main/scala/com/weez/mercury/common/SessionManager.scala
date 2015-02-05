@@ -2,89 +2,64 @@ package com.weez.mercury.common
 
 import com.typesafe.config.Config
 
-class SessionManager(app: Application, config: Config) {
+class SessionManager(app: ServiceManager, config: Config) {
 
   import java.util.concurrent.TimeUnit
-  import scala.collection.mutable
   import scala.concurrent.duration._
 
-  val sessions = mutable.Map[String, Session]()
-  val peers = mutable.Map[String, List[Session]]()
-  val sidGen = new Util.RandomIdGenerator(12)
-  val sessionTimeout = config.getDuration("session-timeout", TimeUnit.NANOSECONDS)
-  val checkFreq = 5.seconds
+  private val timeout = config.getDuration("session-timeout", TimeUnit.NANOSECONDS)
+  private val peers = new TTLMap[String, Peer](timeout)
+  private val sessions = new TTLMap[String, Session](timeout)
+  private val sidGen = new Util.RandomIdGenerator(12)
+  private val ttlHandle = app.addTTLCleanEvent(_ => clean())
 
   def clean(): Unit = {
-    // check session timeout
-    val now = System.nanoTime()
-    val removes = mutable.ArrayBuffer[String]()
     sessions.synchronized {
-      sessions foreach { tp =>
-        val session = tp._2
-        if (session.inUse == 0 && now - session.activeTimestamp > sessionTimeout) {
-          removes.append(session.id)
-          peers(session.peer) match {
-            case Seq(x) => peers.remove(x.peer)
-            case arr => peers.put(session.peer, arr.filterNot(_ eq session))
-          }
-        }
-      }
-      removes foreach sessions.remove
+      peers.unlockAll(sessions.clean() map (_.peer))
+      peers.clean()
     }
   }
 
   def ensurePeer(peerHint: Option[String] = None) = {
     sessions.synchronized {
-      val peer = peerHint.getOrElse(sidGen.newId)
-      val peerSessions = peers.getOrElse(peer, Nil)
-      peerSessions.find(_.id == peer) match {
-        case Some(s) =>
-          s.activeTimestamp = System.nanoTime()
+      peerHint flatMap peers.values.get match {
+        case Some(x) =>
+          x.activeTimestamp = System.nanoTime()
+          x.id
         case None =>
-          // add a fake session to avoid 'clean'
-          val session = new Session(peer, peer)
+          val peer = new Peer(peerHint.getOrElse(sidGen.newId))
+          peers.values.put(peer.id, peer)
           if (app.devmode) {
+            val session = new Session(peer.id, peer.id)
             session.login(0L, "dev", "dev")
+            peer.sessions = session :: peer.sessions
           }
-          sessions.put(peer, session)
-          peers.put(peer, session :: peerSessions)
+          peer.id
       }
-      peer
     }
   }
 
-  def createSession(peer: String) = {
+  def createSession(peerId: String) = {
     sessions.synchronized {
-      val arr = peers.getOrElse(peer, ErrorCode.InvalidPeerID.raise)
+      val peer = peers.values.getOrElse(peerId, ErrorCode.InvalidPeerID.raise)
       val sid = sidGen.newId
-      val session = new Session(sid, peer)
-      sessions.put(sid, session)
-      peers.put(peer, arr :+ session)
+      val session = new Session(sid, peerId)
+      sessions.values.put(sid, session)
+      peer.sessions = session :: peer.sessions
       session
     }
   }
 
-  def getAndLockSession(sid: String) = {
-    sessions.synchronized {
-      sessions.get(sid).map { s =>
-        s.inUse += 1
-        s
-      }
-    }
-  }
+  @inline final def getAndLockSession(sid: String) = sessions.lock(sid)
 
-  def returnAndUnlockSession(session: Session) = {
-    sessions.synchronized {
-      session.inUse -= 1
-      if (session.inUse == 0)
-        session.activeTimestamp = System.nanoTime()
-    }
-  }
+  @inline final def returnAndUnlockSession(session: Session) = sessions.unlock(session)
 
-  def getSessionsByPeer(peer: String): Seq[Session] = {
+  @inline final def unlockSession(sid: String) = sessions.unlock(sid)
+
+  def getSessionsByPeer(peerId: String): List[Session] = {
     sessions.synchronized {
-      peers.get(peer) match {
-        case Some(x) => x
+      peers.values.get(peerId) match {
+        case Some(x) => x.sessions
         case None => Nil
       }
     }
@@ -92,19 +67,21 @@ class SessionManager(app: Application, config: Config) {
 
   def close() = {
     sessions.synchronized {
-      sessions.clear()
-      peers.clear()
+      ttlHandle.close()
+      sessions.values.clear()
+      peers.values.clear()
     }
   }
+
+  class Peer(val id: String) extends TTLBased[String] {
+    var sessions: List[Session] = Nil
+  }
+
 }
 
-class Session(val id: String, val peer: String) {
+class Session(val id: String, val peer: String) extends TTLBased[String] {
 
   import scala.collection.mutable
-
-  val createTimestamp = System.nanoTime()
-  private[common] var inUse = 0
-  private[common] var activeTimestamp = createTimestamp
 
   private var _loginState: Option[LoginState] = None
   private val map = mutable.Map[String, Any]()
@@ -123,3 +100,4 @@ class Session(val id: String, val peer: String) {
 }
 
 case class LoginState(userId: Long, username: String, name: String)
+

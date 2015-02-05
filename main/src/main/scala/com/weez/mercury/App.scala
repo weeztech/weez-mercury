@@ -1,10 +1,9 @@
 package com.weez.mercury
 
-import scala.reflect.runtime.{universe => ru}
-import akka.actor._
-import com.typesafe.config.Config
-
 object App {
+  import akka.actor._
+  import common._
+
   def main(args: Array[String]): Unit = {
     start(args)
   }
@@ -20,7 +19,7 @@ object App {
       }
     })
     val config = system.settings.config.getConfig("weez-mercury")
-    val app = new ApplicationImpl(system, config)
+    val app = new ServiceManager(system, config)
     if (app.config.getBoolean("http.enable")) {
       system.actorOf(Props(classOf[HttpServer.ServerActor], app, config.getConfig("http")), "http")
     }
@@ -30,34 +29,4 @@ object App {
     app.start()
     app
   }
-
-  import common._
-
-  class ApplicationImpl(val system: ActorSystem, val config: Config) extends Application {
-    val _devmode = config.getBoolean("devmode")
-    val _types = ClassFinder.collectTypes(system.log).map(tp => tp._1 -> tp._2.toSeq).toMap
-    val dbtypeCollector = new DBTypeCollector(types).collectDBTypes(system.log)
-
-    def devmode = _devmode
-
-    def types = _types
-
-    val sessionManager = new SessionManager(this, config)
-
-    val serviceManager = new ServiceManager(this, config)
-
-    def start() = {
-      dbtypeCollector.clear()
-    }
-
-    system.registerOnTermination {
-      serviceManager.close()
-      sessionManager.close()
-    }
-
-    override def close() = {
-      system.shutdown()
-    }
-  }
-
 }

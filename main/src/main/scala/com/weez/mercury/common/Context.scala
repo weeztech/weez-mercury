@@ -1,10 +1,8 @@
 package com.weez.mercury.common
 
-
+import akka.actor.Actor
 import akka.event.LoggingAdapter
-import com.weez.mercury.collect
-import com.weez.mercury.common._
-import com.weez.mercury.common.EntityCollections._
+import EntityCollections._
 
 trait Context extends RangeImplicits {
   implicit val context: this.type = this
@@ -19,7 +17,50 @@ trait Context extends RangeImplicits {
 
   def peer: String
 
+  def acceptUpload(receiver: => Actor): String
+
   private[common] def app: Application
+}
+
+trait UploadContext {
+  def id: String
+
+  def peer: String
+
+  def request: ModelObject
+
+  def sessionState: Option[SessionState]
+
+  def finish(response: ModelObject): Unit
+
+  def finishWith[C](f: C => Unit)(implicit evidence: ContextType[C]): Unit
+
+  def fail(ex: Throwable): Unit
+}
+
+case object UploadResume
+
+case class UploadData(buf: akka.util.ByteString, context: UploadContext)
+
+case class UploadEnd(context: UploadContext)
+
+sealed trait ContextType[C] {
+  def withSessionState: Boolean
+
+  def withDBQueryable: Boolean
+
+  def withDBUpdatable: Boolean
+}
+
+object ContextType {
+
+  class Evidence[C] private[ContextType](val withSessionState: Boolean, val withDBQueryable: Boolean, val withDBUpdatable: Boolean) extends ContextType[C]
+
+  implicit val pure = new Evidence[Context](withSessionState = false, withDBQueryable = false, withDBUpdatable = false)
+  implicit val withSession = new Evidence[Context with SessionState](withSessionState = true, withDBQueryable = false, withDBUpdatable = false)
+  implicit val withQuery = new Evidence[Context with DBSessionQueryable](withSessionState = false, withDBQueryable = true, withDBUpdatable = false)
+  implicit val withSessionAndQuery = new Evidence[Context with SessionState with DBSessionQueryable](withSessionState = true, withDBQueryable = true, withDBUpdatable = false)
+  implicit val withSessionAndUpdate = new Evidence[Context with SessionState with DBSessionUpdatable](withSessionState = true, withDBQueryable = true, withDBUpdatable = true)
 }
 
 trait SessionState {

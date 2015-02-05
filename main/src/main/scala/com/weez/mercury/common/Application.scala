@@ -13,11 +13,17 @@ trait GlobalSettings {
 }
 
 trait Application extends GlobalSettings {
+  import akka.event.LoggingAdapter
+
   def system: akka.actor.ActorSystem
 
-  def serviceManager: ServiceManager
+  def remoteCallManager: RemoteCallManager
 
   def sessionManager: SessionManager
+
+  def uploadManager: UploadManager
+
+  def addTTLCleanEvent(f: LoggingAdapter => Unit): AutoCloseable
 
   def close(): Unit
 }
