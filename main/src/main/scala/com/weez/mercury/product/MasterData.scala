@@ -12,22 +12,16 @@ trait MasterData extends Entity {
   val description: String
 }
 
-object MasterData {
+object MasterDataHelper {
 
-  implicit final class MasterData2ModelObject(private val self: MasterData) extends AnyVal {
-    def asSimpleMO: ModelObject = {
-      import self._
-      ModelObject(
-        "id" -> id,
-        "code" -> code,
-        "title" -> title
-      )
-    }
-  }
+  import DTOHelper._
 
-  implicit final class MasterDataRef2ModelObject(private val self: Ref[_ <: MasterData]) extends AnyVal {
-    def asSimpleMO(implicit db: DBSessionQueryable): ModelObject = {
-      if (self.isEmpty) null else self().asSimpleMO
+  implicit final class MasterDataHelper[E <: MasterData](private val self: Ref[E]) extends AnyVal {
+    @inline def codeTitleAsMO(implicit db: DBSessionQueryable): ModelObject = {
+      self.asMO { (mo, o) =>
+        mo.code = o.code
+        mo.title = o.title
+      }
     }
   }
 
@@ -45,14 +39,12 @@ trait MasterDataService[E <: MasterData] extends RemoteService {
   def queryByID(c: QueryCallContext): Unit = {
     import c._
     val mo = dataCollection(request.id: Long).map { e =>
-      import e._
-      ModelObject(
-        "id" -> id,
-        "code" -> code,
-        "title" -> title,
-        "description" -> description
-      )
+      val mo = new ModelObject(Map.empty)
+      mo.id = e.id.toString
+      mo.code = e.code
+      mo.title = e.title
+      mo
     }
-    completeWith("result" -> mo.orNull)
+    complete(mo.orNull)
   }
 }

@@ -1,5 +1,7 @@
 package com.weez.mercury.common
 
+import java.util.concurrent.atomic.AtomicReference
+
 import com.weez.mercury.common.DBType.IndexMeta
 
 import scala.collection.immutable.{TreeSet, TreeMap}
@@ -20,27 +22,53 @@ private object EntityCollections {
     this.getHost[V](collectionIDOf(id)).get1(id)
   }
 
-  def getHost[E <: Entity](collectionID: Int)(implicit db: DBSessionQueryable): HostCollectionImpl[E] = {
-    val host = dbObjs(collectionID)
-    if (host ne null) {
-      return host.asInstanceOf[HostCollectionImpl[E]]
-    }
-    hosts.synchronized {
-      if (hosts.size != bondHostCount) {
-        for (h <- hosts.values) {
-          h.getMeta
-        }
-      }
-    }
-    val host2 = dbObjs(collectionID)
-    if (host2 eq null) {
-      None.get
+  @inline final def getEntityO[V <: Entity](id: Long)(implicit db: DBSessionQueryable): Option[V] = {
+    if (id != 0) {
+      None
     } else {
-      host2.asInstanceOf[HostCollectionImpl[E]]
+      val host = this.findHost[V](collectionIDOf(id))
+      if (host eq null) {
+        None
+      } else {
+        host.get0(id)
+      }
     }
   }
 
-  @inline final def getDataView[K, V](dataViewID: Int)(implicit db: DBSessionQueryable): DataViewImpl[K, V] = {
+  def findHost[E <: Entity](collectionID: Int)(implicit db: DBSessionQueryable): HostCollectionImpl[E] = {
+    {
+      val host = dbObjs(collectionID)
+      if (host ne null) {
+        host
+      } else {
+        hosts.synchronized {
+          if (hosts.size != bondHostCount) {
+            for (h <- hosts.values) {
+              h.getMeta
+            }
+          }
+        }
+        dbObjs(collectionID)
+      }
+    }.asInstanceOf[HostCollectionImpl[E]]
+  }
+
+  @inline
+  final def getHostO[E <: Entity](collectionID: Int)(implicit db: DBSessionQueryable): Option[HostCollectionImpl[E]] = {
+    Option(findHost[E](collectionID))
+  }
+
+  @inline
+  final def getHost[E <: Entity](collectionID: Int)(implicit db: DBSessionQueryable): HostCollectionImpl[E] = {
+    val host = findHost[E](collectionID)
+    if (host eq null) {
+      None.get
+    }
+    host
+  }
+
+  @inline
+  final def getDataView[K, V](dataViewID: Int)(implicit db: DBSessionQueryable): DataViewImpl[K, V] = {
     if (dataViewID == FullTextSearchIndex.prefix) {
       return FullTextSearchIndex.asInstanceOf[DataViewImpl[K, V]]
     }
@@ -78,12 +106,12 @@ private object EntityCollections {
     }
   }
 
-  def newDataView[K: Packer, V: Packer](name: String): DataViewImpl[K, V] = {
+  def newDataView[K: Packer, V: Packer](name: String, merger: Merger[V]): DataViewImpl[K, V] = {
     dvs.synchronized {
       if (dvs.contains(name)) {
         throw new IllegalArgumentException( s"""DataView naming "$name" exist!""")
       }
-      val dv = new DataViewImpl[K, V](name, false)
+      val dv = new DataViewImpl[K, V](name, merger)
       dvs.put(name, dv)
       dv
     }
@@ -103,7 +131,7 @@ private object EntityCollections {
 
   def emptyListeners[V <: Entity] = _emptyListeners.asInstanceOf[Array[EntityCollectionListener[V]]]
 
-  class HostCollectionImpl[V <: Entity](val name: String, getFX: (V, DBSessionQueryable) => Seq[String])(implicit val valuePacker: Packer[V]) {
+  class HostCollectionImpl[V <: Entity](val name: String, val getFX: (V, DBSessionQueryable) => Seq[String])(implicit val valuePacker: Packer[V]) {
     host =>
 
     @volatile private var _meta: DBType.CollectionMeta = null
@@ -163,19 +191,14 @@ private object EntityCollections {
       RefReverseIndex.update(entityID, getRefs(oldEntity, emptyLongSet), getRefs(newEntity, emptyLongSet))
     }
 
-    var extractors: DVExtractor[V, _, _] = null
+    val extractors = new AtomicReference[OuterEntityExtractor[V, _, _]]
 
-    val ftsExtractor = {
-      if (getFX ne null)
-        new Extractor[V, String, Boolean](FullTextSearchIndex, this, (v: V, db: DBSessionQueryable) => FullTextSearch.split2(getFX(v, db): _*))
-      else
-        null
-    }
+    val ftsExtractor = if (getFX eq null) null else new FullTextEntityExtractor(this)
 
     def updateDataView(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-      var e = extractors
+      var e = extractors.get
       while (e ne null) {
-        e.update(entityID, oldEntity, newEntity)
+        e.update(entityID, entityID, oldEntity, newEntity)
         e = e.nextInHost
       }
       if (oldEntity ne null) {
@@ -186,7 +209,7 @@ private object EntityCollections {
         }
       }
       if (ftsExtractor ne null) {
-        ftsExtractor.update(entityID, oldEntity, newEntity)
+        ftsExtractor.update(entityID, entityID, oldEntity, newEntity)
       }
     }
 
@@ -542,14 +565,23 @@ private object EntityCollections {
     }
   }
 
-  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, refEntityID: Long, refEntity: Entity) extends DBSessionQueryable {
-    val refIDs = mutable.HashSet[Long]()
+  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, refEntityID: Long, oldRefEntity: Entity, newRefEntity: Entity) extends DBSessionQueryable {
+    val oldRefIDs = mutable.HashSet.empty[Long]
+    val newRefIDs = mutable.HashSet.empty[Long]
+    val oldRef = Option(oldRefEntity)
+    val newRef = Option(newRefEntity)
+    private var ref = oldRef
+    private var refIDs = oldRefIDs
 
-    @inline final def optionEntity(e: Entity): Option[Entity] = {
-      if (e == null) None else Some(e)
+    def use(asNew: Boolean): Unit = {
+      if (asNew) {
+        ref = newRef
+        refIDs = newRefIDs
+      } else {
+        ref = oldRef
+        refIDs = oldRefIDs
+      }
     }
-
-    val ref = optionEntity(refEntity)
 
     def get[K: Packer, V: Packer](key: K): Option[V] = key match {
       case `refEntityID` => ref.asInstanceOf[Option[V]]
@@ -569,85 +601,126 @@ private object EntityCollections {
   }
 
 
-  type Extract[E <: Entity, DK, DV] = (E, DBSessionQueryable) => collection.Map[DK, DV]
+  type Extract[S, DK, DV] = (S, DBSessionQueryable) => scala.collection.Map[DK, DV]
+  type Extract2[K, V, DK, DV] = (K, V, DBSessionQueryable) => scala.collection.Map[DK, DV]
 
-
-  class Extractor[E <: Entity, DK, DV](val dv: DataViewImpl[DK, DV], val host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) {
-    @inline final def update(rootEntityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
-      update(rootEntityID, rootEntityID, oldEntity, newEntity)
+  class DataViewExtractor[K, V, K2, V2](val from: DataViewImpl[K, V], to: DataViewImpl[K2, V2], extract: Extract2[K, V, K2, V2]) {
+    def update(k: K, oldV: Option[V], newV: Option[V], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      val emptyMap: scala.collection.Map[K2, V2] = Map.empty
+      tracer.use(asNew = false)
+      val oldKV = oldV.fold(emptyMap)(v => extract(k, v, tracer))
+      tracer.use(asNew = true)
+      val newKV = newV.fold(emptyMap)(v => extract(k, v, tracer))
+      to.updateDB(oldKV, newKV, tracer, 0)
     }
 
+    if (to.findExtractor(from) ne null) {
+      throw new IllegalArgumentException("dump extractor")
+    }
+    private var _nextInDV = to.dataViewExtractors.get()
+    while (!to.dataViewExtractors.compareAndSet(_nextInDV, this)) {
+      _nextInDV = to.dataViewExtractors.get()
+    }
+    private var _nextInTracing = from.tracingDataViewExtractors.get
+    while (!from.tracingDataViewExtractors.compareAndSet(_nextInTracing, this)) {
+      _nextInTracing = from.tracingDataViewExtractors.get()
+    }
+
+    @inline final def nextInDV = _nextInDV
+
+    @inline final def nextInTracing = _nextInTracing
+
+  }
+
+
+  class EntityExtractor[E <: Entity, DK, DV](val dv: DataViewImpl[DK, DV], val host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) {
     def update(rootEntityID: Long, refEntityID: Long, oldEntity: Entity, newEntity: Entity)(implicit db: DBSessionUpdatable): Unit = {
       val oldRoot: E = if (rootEntityID == refEntityID) oldEntity.asInstanceOf[E] else host.get1(rootEntityID)
       val newRoot: E = if (rootEntityID == refEntityID) newEntity.asInstanceOf[E] else oldRoot
-      val oldTracer = new RefTracer(db, rootEntityID, refEntityID, oldEntity)
-      val newTracer = new RefTracer(db, rootEntityID, refEntityID, newEntity)
-      val oldKV = if (oldRoot ne null) extract(oldRoot, db) else Map.empty[DK, DV]
-      val newKV = if (newRoot ne null) extract(newRoot, db) else Map.empty[DK, DV]
-      val dataViewID = dv.getDataViewID
-      for ((k, v) <- newKV) {
-        val oldV = oldKV.get(k)
-        if (oldV.isEmpty || oldV.get != v) {
-          if (dv.uniqueKey) {
-            db.put((dataViewID, k), (rootEntityID, v))(dv.ukPacker, dv.uvPacker)
-          } else {
-            db.put((dataViewID, k, rootEntityID), v)(dv.kPacker, dv.vPacker)
-          }
-        }
-      }
-      for (k <- oldKV.keys) {
-        if (!newKV.contains(k)) {
-          if (dv.uniqueKey) {
-            db.del((dataViewID, k))(dv.ukPacker)
-          } else {
-            db.del((dataViewID, k, rootEntityID))(dv.kPacker)
-          }
-        }
-      }
-      ExtractorIndex.update(dataViewID, rootEntityID, oldTracer.refIDs, newTracer.refIDs)
+      val tracer = new RefTracer(db, rootEntityID, refEntityID, oldEntity, newEntity)
+      val oldKV = if (oldRoot ne null) extract(oldRoot, tracer) else Map.empty[DK, DV]
+      tracer.use(asNew = true)
+      val newKV = if (newRoot ne null) extract(newRoot, tracer) else Map.empty[DK, DV]
+      dv.updateDB(oldKV, newKV, tracer, rootEntityID)
     }
   }
 
-  class DVExtractor[E <: Entity, DK, DV](dv: DataViewImpl[DK, DV], host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) extends Extractor[E, DK, DV](dv, host, extract) {
+  class OuterEntityExtractor[E <: Entity, DK, DV](dv: DataViewImpl[DK, DV],
+                                                  host: HostCollectionImpl[E],
+                                                  extract: Extract[E, DK, DV])
+    extends EntityExtractor[E, DK, DV](dv, host, extract) {
+
     if (dv.findExtractor(host) ne null) {
       throw new IllegalArgumentException("dump extractor")
     }
-    val nextInDV: DVExtractor[_, DK, DV] = dv.extractors
-    val nextInHost: DVExtractor[E, _, _] = host.extractors
-    dv.extractors = this
-    host.extractors = this
+    private var _nextInDV = dv.entityExtractors.get()
+    while (!dv.entityExtractors.compareAndSet(_nextInDV, this)) {
+      _nextInDV = dv.entityExtractors.get()
+    }
+    private var _nextInHost = host.extractors.get
+    while (!host.extractors.compareAndSet(_nextInHost, this)) {
+      _nextInHost = host.extractors.get()
+    }
+
+    @inline final def nextInDV = _nextInDV
+
+    @inline final def nextInHost = _nextInHost
   }
 
-  class DataViewImpl[DK: Packer, DV: Packer](val name: String, val uniqueKey: Boolean) {
+  class FullTextEntityExtractor[E <: Entity](host: HostCollectionImpl[E])
+    extends EntityExtractor[E, (String, Long), Boolean](FullTextSearchIndex, host,
+      (v, db) => FullTextSearch.splitInternal(v.id, host.getFX(v, db): _*))
 
-    val ukPacker = if (uniqueKey) Packer.of[(Int, DK)] else null
-    val kPacker = if (uniqueKey) null else Packer.of[(Int, DK, Long)]
-    val uvPacker = if (uniqueKey) Packer.of[(Long, DV)] else null
-    val vPacker = if (uniqueKey) null else Packer.of[DV]
+  class DataViewImpl[DK: Packer, DV: Packer](val name: String, val merger: Merger[DV])
+                                            (implicit val fullKeyPacker: Packer[(Int, DK)], val vPacker: Packer[DV]) {
 
-
-    var extractors: DVExtractor[_, DK, DV] = null
+    val entityExtractors = new AtomicReference[OuterEntityExtractor[_, DK, DV]](null)
 
     def defExtractor[E <: Entity](collection: EntityCollection[E], f: Extract[E, DK, DV]): Unit = {
       collection match {
         case r: RootCollection[E] =>
-          new DVExtractor(this, r.impl, f)
+          new OuterEntityExtractor(this, r.impl, f)
         case s: SubCollection[_, E] =>
           val ex = (sce: SCE[_, E], db: DBSessionQueryable) => f(sce.entity, db)
-          new DVExtractor(this, s.host, ex)
+          new OuterEntityExtractor(this, s.host, ex)
       }
-
     }
 
-    def findExtractor[E <: Entity](host: HostCollectionImpl[E]): Extractor[E, DK, DV] = {
-      var e = extractors
+    def findExtractor[E <: Entity](host: HostCollectionImpl[E]): EntityExtractor[E, DK, DV] = {
+      var e = entityExtractors.get()
       while (e ne null) {
         if (e.host eq host) {
-          return e.asInstanceOf[Extractor[E, DK, DV]]
+          return e.asInstanceOf[EntityExtractor[E, DK, DV]]
         }
         e = e.nextInDV
       }
       null
+    }
+
+    val dataViewExtractors = new AtomicReference[DataViewExtractor[_, _, DK, DV]](null)
+    val tracingDataViewExtractors = new AtomicReference[DataViewExtractor[DK, DV, _, _]](null)
+
+    def defExtractor[K, V](dataView: DataViewImpl[K, V], f: Extract2[K, V, DK, DV]): Unit = {
+      new DataViewExtractor(dataView, this, f)
+    }
+
+    def findExtractor[K, V](dataView: DataViewImpl[K, V]): DataViewExtractor[K, V, DK, DV] = {
+      var e = dataViewExtractors.get()
+      while (e ne null) {
+        if (e.from eq dataView) {
+          return e.asInstanceOf[DataViewExtractor[K, V, DK, DV]]
+        }
+        e = e.nextInDV
+      }
+      null
+    }
+
+    def update(k: DK, oldV: Option[DV], newV: Option[DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      var extractor = this.tracingDataViewExtractors.get
+      while (extractor ne null) {
+        extractor.update(k, oldV, newV, tracer)
+        extractor = extractor.nextInTracing
+      }
     }
 
     def update[E <: Entity](rootEntityID: Long, refEntityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
@@ -659,18 +732,66 @@ private object EntityCollections {
 
     def getDataViewID(implicit db: DBSessionQueryable): Int = ???
 
+    final def updateDB(oldKV: collection.Map[DK, DV], newKV: collection.Map[DK, DV], tracer: RefTracer, rootEntityID: Long)
+                      (implicit db: DBSessionUpdatable): Unit = {
+      val dataViewID = getDataViewID
+      def get(k: DK): Option[DV] = db.get((dataViewID, k))(fullKeyPacker, vPacker)
+      def put(k: DK, v: DV) = db.put((dataViewID, k), v)(fullKeyPacker, vPacker)
+      def del(k: DK) = db.del((dataViewID, k))(fullKeyPacker)
+
+      for ((k, v) <- newKV) {
+        val oldV = oldKV.get(k)
+        if (oldV.isEmpty || oldV.get != v) {
+          if (merger ne null) {
+            val m1 = merger.sub(v, oldV.get)
+            if (m1.isDefined) {
+              val org = get(k)
+              if (org.isEmpty) {
+                put(k, m1.get)
+              } else {
+                val m2 = merger.add(org.get, m1.get)
+                if (m2.isEmpty) {
+                  del(k)
+                } else {
+                  put(k, m2.get)
+                }
+              }
+            }
+          } else {
+            put(k, v)
+            update(k, oldV, Some(v), tracer)
+          }
+        }
+      }
+      for ((k, v) <- oldKV -- newKV.keys) {
+        if (merger ne null) {
+          val org = get(k)
+          if (org.isEmpty) {
+            put(k, v)
+          } else {
+            val m1 = merger.sub(org.get, v)
+            if (m1.isEmpty) {
+              del(k)
+            } else {
+              put(k, m1.get)
+            }
+          }
+        } else {
+          del(k)
+          update(k, Some(v), None, tracer)
+        }
+      }
+      if (rootEntityID != 0) {
+        ExtractorIndex.update(dataViewID, rootEntityID, tracer.oldRefIDs, tracer.newRefIDs)
+      }
+    }
+
     final def scan(dbRange: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[KeyValue[DK, DV]] = {
       new RawKVCursor[KeyValue[DK, DV]](dbRange, forward) {
         override def buildValue() = {
-          if (uniqueKey) {
-            val rk = ukPacker.unapply(rawKey)
-            val rv = uvPacker.unapply(rawValue)
-            KeyValue[DK, DV](rk._2, rv._2)
-          } else {
-            val rk = kPacker.unapply(rawKey)
-            val rv = vPacker.unapply(rawValue)
-            KeyValue[DK, DV](rk._2, rv)
-          }
+          val rk = fullKeyPacker.unapply(rawKey)
+          val rv = vPacker.unapply(rawValue)
+          KeyValue[DK, DV](rk._2, rv)
         }
       }
     }
@@ -802,26 +923,26 @@ private object EntityCollections {
     }
   }
 
-  object FullTextSearchIndex extends DataViewImpl[String, Boolean]("full-text-search", uniqueKey = false) {
+  object FullTextSearchIndex extends DataViewImpl[(String, Long), Boolean]("full-text-search", null) {
 
     final val prefix = Int.MaxValue - 2
 
     override def getDataViewID(implicit db: DBSessionQueryable) = prefix
 
-    override def findExtractor[E <: Entity](host: HostCollectionImpl[E]): Extractor[E, String, Boolean] = host.ftsExtractor
+    override def findExtractor[E <: Entity](host: HostCollectionImpl[E]) = host.ftsExtractor
 
 
     @inline final def scan[V <: Entity](word: String, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val r = if (host eq null) {
-        (getDataViewID, word, 0l) +-+(getDataViewID, word, Long.MaxValue)
+        (getDataViewID, (word, 0l)) +-+(getDataViewID, (word, Long.MaxValue))
       } else {
-        (getDataViewID, word, host.fixID(0)) +-+(getDataViewID, word, host.fixID(Long.MaxValue))
+        (getDataViewID, (word, host.fixID(0))) +-+(getDataViewID, (word, host.fixID(Long.MaxValue)))
       }
       new RawKVCursor[V](r, forward = true) {
         override def buildValue() = {
-          val rk = kPacker.unapply(rawKey)
-          getEntity[V](rk._3)
+          val fk = fullKeyPacker.unapply(rawKey)
+          getEntity[V](fk._2._2)
         }
       }
     }
@@ -933,4 +1054,5 @@ private object EntityCollections {
       }
     }
   }
+
 }

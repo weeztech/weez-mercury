@@ -2,62 +2,96 @@ package com.weez.mercury.product
 
 import com.weez.mercury.common._
 import com.github.nscala_time.time.Imports._
+import DTOHelper._
 
 /**
  * 租入
  */
 object RentInOrderService extends RemoteService {
-  def getByID(id: Long)(implicit db: DBSessionQueryable): Option[RentInOrder] = RentInOrderCollection(id)
+
+  import MasterDataHelper._
+
+
+  def toMO(rentInOrder: Option[RentInOrder])(implicit db: DBSessionQueryable): ModelObject = {
+    rentInOrder.asMO { (mo, o) =>
+      mo.id = o.id.toString
+      mo.datetime = o.datetime
+      mo.code = o.code
+      mo.warehouse = o.warehouse.codeTitleAsMO
+      mo.items = o.items.asMO { (mo, o) =>
+        mo.product = o.product.codeTitleAsMO
+        mo.quantity = o.quantity
+        mo.price = o.price
+        mo.serialNumbers = o.singleProducts.asMO { (mo, o) =>
+          mo.serialNumber = o.serialNumber
+          mo.remark = o.remark
+        }
+      }
+    }
+  }
+
+  def parseRentInOrder(mo: ModelObject)(implicit db: DBSessionQueryable): Option[RentInOrder] = {
+    if (mo eq null) {
+      return None
+    }
+    val rio = RentInOrder(
+      datetime = mo.dateTime,
+      code = mo.code,
+      provider = mo.refs.provider,
+      warehouse = mo.refs.warehouse,
+      items = mo.seqs.items.map { mo =>
+        RentInOrderItem(
+          product = mo.refs.product,
+          quantity = mo.quantity,
+          price = mo.price,
+          singleProducts = mo.seqs.singleProducts.map { mo =>
+            SingleProduct(
+              serialNumber = mo.serialNumber,
+              remark = mo.remark
+            )
+          }
+        )
+      }
+    )
+    rio.id = mo.id
+    Some(rio)
+  }
+
+  def validate(rio: Option[RentInOrder])(implicit db: DBSessionQueryable): Option[ModelObject] = {
+    ???
+  }
+
+  val put: PersistCall = { c =>
+    import c._
+    val rio = parseRentInOrder(c.request)
+    complete {
+      validate(rio).getOrElse {
+        RentInOrderCollection.update(rio.get)
+        toMO(rio)
+      }
+    }
+  }
 
   val get: QueryCall = { c =>
     import c._
-    complete(getByID(request.id).map(_.asModelObject).orNull)
+    complete(toMO(RentInOrderCollection(request.id: Long)))
   }
-  val put: PersistCall = { c=>
-    import c._
-  }
-  implicit final class ModelObject2Entity(private val self: ModelObject) extends AnyVal {
-    def asRentInOrder:RentInOrder = {
-???
-      //RentInOrder()
-    }
-  }
-  implicit final class RentInOrder2ModelObject(private val self: RentInOrder) extends AnyVal {
-    def asModelObject(implicit db: DBSessionQueryable): ModelObject = {
-      import self._
-      ModelObject(
-        "id" -> id,
-        "datetime" -> datetime,
-        "code" -> code,
-        "warehouse" -> warehouse.asSimpleMO,
-        "items" -> items.map(_.asModelObject)
-      )
-    }
-  }
-
-  implicit final class RentInOrderItem2ModelObject(private val self: RentInOrderItem) extends AnyVal {
-    def asModelObject(implicit db: DBSessionQueryable): ModelObject = {
-      import self._
-      ModelObject(
-        "product" -> product.asSimpleMO,
-        "quantity" -> quantity,
-        "serialNumbers" -> serialNumbers
-      )
-    }
-  }
-
 }
+
+@packable
+case class SingleProduct(serialNumber: String, remark: String)
 
 /**
  * 租入单子项
  * @param product 商品
  * @param quantity 数量
- * @param serialNumbers 物品唯一编号列表
+ * @param singleProducts 单品信息 serialNumber -> remark
  */
 @packable
 case class RentInOrderItem(product: Ref[Product],
                            quantity: Int,
-                           serialNumbers: Seq[String])
+                           price: Int,
+                           singleProducts: Seq[SingleProduct])
 
 /**
  * 租入单
@@ -67,9 +101,17 @@ case class RentInOrder(datetime: DateTime,
                        code: String,
                        provider: Ref[Provider],
                        warehouse: Ref[Warehouse],
-                       items: Seq[RentInOrderItem]) extends Entity {
-}
+                       items: Seq[RentInOrderItem]) extends Entity
 
 object RentInOrderCollection extends RootCollection[RentInOrder] {
   override def name: String = "rent-in-order"
+
+  /**
+   * 定义提取到库存流水表
+   */
+  StockAccount.defExtractor(this) { (r, db) =>
+    r.items.map { item =>
+      WAKey(r.warehouse, item.product, r.datetime, r.id) -> WAValue(item.quantity, item.price * item.quantity)
+    }.toMap
+  }
 }

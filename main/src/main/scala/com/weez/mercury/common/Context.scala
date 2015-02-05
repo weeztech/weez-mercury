@@ -180,7 +180,7 @@ trait EntityCollection[V <: Entity] {
 
 object Collections {
 
-  def entity(id: Long)(implicit db: DBSessionQueryable): Entity = getEntity[Entity](id)
+  def entity(id: Long)(implicit db: DBSessionQueryable): Option[Entity] = getEntityO[Entity](id)
 
   def scanFX(word: String)(implicit db: DBSessionQueryable): Cursor[Entity] = FullTextSearchIndex.scan(word, null.asInstanceOf[HostCollectionImpl[Entity]])
 
@@ -256,7 +256,13 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
   private[common] val impl = newHost[V](name, fxFunc)
 }
 
-case class KeyValue[K, V](key: K, value: V)
+final case class KeyValue[K, V](key: K, value: V)
+
+trait Merger[V] {
+  def add(v1: V, v2: V): Option[V]
+
+  def sub(v1: V, v2: V): Option[V]
+}
 
 abstract class DataView[K: Packer, V: Packer] {
   def name: String
@@ -268,7 +274,11 @@ abstract class DataView[K: Packer, V: Packer] {
 
   @inline final def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[KeyValue[K, V]] = impl(range, forward)
 
-  @inline final def defExtractor[E <: Entity](collection: EntityCollection[E], f: (E, DBSessionQueryable) => scala.collection.Map[K, V]) = impl.defExtractor(collection, f)
+  @inline final def defExtractor[E <: Entity](collection: EntityCollection[E])(f: (E, DBSessionQueryable) => scala.collection.Map[K, V]) = impl.defExtractor(collection, f)
 
-  private val impl = EntityCollections.newDataView[K, V](name)
+  @inline final def defExtractor[DK, DV](dataView: DataView[DK, DV])(f: (DK, DV, DBSessionQueryable) => scala.collection.Map[K, V]) = impl.defExtractor(dataView.impl, f)
+
+  protected def defMerger: Option[Merger[V]] = None
+
+  private val impl = EntityCollections.newDataView[K, V](name, defMerger.orNull)
 }
