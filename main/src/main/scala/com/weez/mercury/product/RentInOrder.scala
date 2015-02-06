@@ -27,28 +27,36 @@ case class RentInOrderItem(product: Ref[Product],
  */
 @packable
 case class RentInOrder(datetime: DateTime,
-                       code: String,
+                       number: String,
                        provider: Ref[Provider],
                        remark: String,
                        items: Seq[RentInOrderItem]) extends Entity
 
 object RentInOrder {
 
-  import MasterDataHelper._
-
   def toMO(rentInOrder: Option[RentInOrder])(implicit db: DBSessionQueryable): ModelObject = {
     rentInOrder.asMO { (mo, o) =>
       mo.id = o.id.toString
       mo.datetime = o.datetime
-      mo.code = o.code
+      mo.number = o.number
       mo.remark = o.remark
+      mo.provider = o.provider.asMO { (mo, o) =>
+        mo.title = o.title
+        mo.code = o.code
+      }
       mo.items = o.items.asMO { (mo, o) =>
-        mo.product = o.product.codeTitleAsMO
+        mo.product = o.product.asMO { (mo, o) =>
+          mo.title = o.title
+          mo.code = o.code
+        }
         mo.serialNumber = o.serialNumber
         mo.quantity = o.quantity
         mo.productsValue = o.productsValue
         mo.rentPrice = o.rentPrice
-        mo.warehouse = o.warehouse.codeTitleAsMO
+        mo.warehouse = o.warehouse.asMO { (mo, o) =>
+          mo.title = o.title
+          mo.code = o.code
+        }
         mo.remark = o.remark
       }
     }
@@ -60,19 +68,20 @@ object RentInOrder {
     }
     val rio = RentInOrder(
       datetime = mo.dateTime,
-      code = mo.code,
+      number = mo.number,
       provider = mo.refs.provider,
       remark = mo.remark,
-      items = mo.seqs.items.map { mo =>
-        RentInOrderItem(
-          product = mo.refs.product,
-          serialNumber = mo.serialNumber,
-          quantity = mo.quantity,
-          rentPrice = mo.rentPrice,
-          productsValue = mo.productsValue,
-          warehouse = mo.refs.warehouse,
-          remark = mo.remark
-        )
+      items = mo.seqs.items.map {
+        mo =>
+          RentInOrderItem(
+            product = mo.refs.product,
+            serialNumber = mo.serialNumber,
+            quantity = mo.quantity,
+            rentPrice = mo.rentPrice,
+            productsValue = mo.productsValue,
+            warehouse = mo.refs.warehouse,
+            remark = mo.remark
+          )
       }
     )
     rio.id = mo.id
@@ -80,14 +89,18 @@ object RentInOrder {
   }
 
   def get(c: RemoteService#QueryCallContext): Unit = {
+
     import c._
+
     complete(toMO(RentInOrderCollection(request.id: Long)))
   }
 
   def validate(rio: Option[RentInOrder]): Option[ModelObject] = ???
 
   def put(c: RemoteService#PersistCallContext): Unit = {
+
     import c._
+
     val rio = apply(c.request)
     complete {
       validate(rio).getOrElse {

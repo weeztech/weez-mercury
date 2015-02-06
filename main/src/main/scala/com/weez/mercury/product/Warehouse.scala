@@ -10,7 +10,7 @@ import com.weez.mercury.common.DTOHelper._
 @packable
 final case class Warehouse(code: String,
                            title: String,
-                           description: String) extends MasterData
+                           description: String)extends Entity
 
 object WarehouseCollection extends RootCollection[Warehouse] {
   override def name: String = "warehouse"
@@ -18,7 +18,7 @@ object WarehouseCollection extends RootCollection[Warehouse] {
 
 @packable
 case class Provider(code: String,
-                    title: String, description: String) extends MasterData
+                    title: String, description: String) extends Entity
 
 object ProviderCollection extends RootCollection[Provider] {
   override def name: String = "provider"

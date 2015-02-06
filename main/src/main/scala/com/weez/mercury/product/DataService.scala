@@ -56,7 +56,7 @@ object ProductModelCollection extends RootCollection[ProductModel] {
 case class Product(code: String,
                    title: String,
                    description: String,
-                   price: Double) extends MasterData
+                   price: Double) extends Entity
 
 object ProductCollection extends RootCollection[Product] {
   def name = "product"
@@ -127,7 +127,7 @@ object RoomItemCollection extends RootCollection[SaleOrder.RoomItem] {
 }
 
 @packable
-case class Room(code: String, title: String, price: Double, description: String) extends MasterData
+case class Room(code: String, title: String, price: Double, description: String) extends Entity
 
 object RoomCollection extends RootCollection[Room] {
   def name = "room"
