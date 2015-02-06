@@ -3,14 +3,20 @@ package com.weez.mercury.product
 import com.github.nscala_time.time.Imports._
 import com.weez.mercury.imports._
 
+import scala.reflect.internal.util.Statistics.Quantity
+
 object DataService extends RemoteService {
+
+  import com.weez.mercury.common.DTOHelper._
+
   def availableAssistants: QueryCall = c => {
     import c._
-    val items = AssistantCollection.byStaffName().map { a =>
-      ModelObject("id" -> a.id,
-        "name" -> a.staff().name,
-        "price" -> a.price,
-        "description" -> a.description)
+    val items = AssistantCollection().map { a =>
+      a.asMO { (mo, o) =>
+        mo.name = o.staff().name
+        mo.price = o.price
+        mo.description = o.description
+      }
     }
     completeWith("items" -> items)
   }
@@ -29,7 +35,7 @@ object DataService extends RemoteService {
   def availableDevices: QueryCall = c => {
     import c._
     val keyword: String = request.keywords
-    val items = ProductModelCollection.byTitle().filter(_.title.indexOf(keyword) >= 0)
+    val items = ProductCollection.byTitle().filter(_.title.indexOf(keyword) >= 0)
       .drop(request.start).take(request.count).map { pm =>
       ModelObject("id" -> pm.id,
         "title" -> pm.code,
@@ -38,18 +44,6 @@ object DataService extends RemoteService {
     }
     completeWith("items" -> items)
   }
-}
-
-@packable
-case class ProductModel(code: String,
-                        title: String,
-                        description: String) extends Entity
-
-object ProductModelCollection extends RootCollection[ProductModel] {
-  def name = "product-model"
-
-  val byCode = defUniqueIndex("by-code", _.code)
-  val byTitle = defUniqueIndex("by-Title", _.title)
 }
 
 @packable
@@ -66,19 +60,25 @@ object ProductCollection extends RootCollection[Product] {
 }
 
 @packable
-case class Assistant(price: Double,
-                     staff: Ref[Staff],
-                     description: String) extends Entity
+case class Room(code: String, title: String, price: Double, description: String) extends Entity
+
+object RoomCollection extends RootCollection[Room] {
+  def name = "room"
+
+  val byTitle = defUniqueIndex("by-code", _.title)
+}
+
+
+@packable
+case class Assistant(staff: Ref[Staff],
+                     description: String,
+                     price: Double) extends Entity
+
 
 object AssistantCollection extends RootCollection[Assistant] {
   def name = "assistant"
 
   def extendFrom = StaffCollection
-
-  val byStaffName = defUniqueIndex("by-staff-name", _ => {
-    ???
-    "???"
-  })
 }
 
 @packable
@@ -91,46 +91,40 @@ object CustomerCollection extends RootCollection[Customer] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class SaleOrder(code: String,
-                     time: DateTime,
-                     customer: Ref[Customer],
-                     ctime: DateTime) extends Entity {
-  lazy val rooms = new SaleOrderRoomItems(this)
-}
-
-object SaleOrder {
-
-  @packable
-  case class RoomItem(saleOrder: Ref[SaleOrder], seqID: Int, room: Ref[Room], startTime: DateTime, endTime: DateTime) extends Entity
-
-  implicit val packer = Packer.caseClass(SaleOrder.apply _)
-}
-
-class SaleOrderRoomItems(owner: SaleOrder) extends SubCollection[SaleOrder, SaleOrder.RoomItem](owner) {
-  def name = "sale-order-room-items"
-
-  lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)
-  lazy val byRoom = defUniqueIndex("byRoom", _.room)
-}
-
-object SaleOrderCollection extends RootCollection[SaleOrder] {
-  def name = "sale-order"
-
-  val byCode = defUniqueIndex("by-code", _.code)
-}
-
-object RoomItemCollection extends RootCollection[SaleOrder.RoomItem] {
-  def name = "sale-order-room-items"
-
-  //val bySeqID = defUniqueIndex[(Long, Int)]("bySeqID", v => (v.saleOrder.refID, v.seqID))
-  //val byRoomID = defUniqueIndex[(Long, Long)]("byRoom", v => (v.saleOrder.refID, v.room.refID))
-}
 
 @packable
-case class Room(code: String, title: String, price: Double, description: String) extends Entity
+case class RentOutRoomItem(room: Ref[Room],
+                           rantPrice: Int,
+                           startTime: DateTime,
+                           endTime: DateTime)
 
-object RoomCollection extends RootCollection[Room] {
-  def name = "room"
+@packable
+case class RentOutAssistantItem(assistant: Ref[Assistant],
+                                rantPrice: Int,
+                                startTime: DateTime,
+                                endTime: DateTime)
 
-  val byTitle = defUniqueIndex("by-code", _.title)
+@packable
+case class RentOutOrderProductItem(product: Ref[Product],
+                                   quantity: Int,
+                                   rantPrice: Int,
+                                   startTime: DateTime,
+                                   endTime: DateTime)
+
+@packable
+case class RentOutOrder(datetime: DateTime,
+                        number: String,
+                        customer: Ref[Customer],
+                        createTime: DateTime,
+                        rooms: Seq[RentOutRoomItem],
+                        assistants: Seq[RentOutAssistantItem],
+                        products: Seq[RentOutOrderProductItem]) extends Entity {
 }
+
+object RentOutOrderCollection extends RootCollection[RentOutOrder] {
+  def name = "rent-out-order"
+
+  val byNumber = defUniqueIndex("by-number", _.number)
+}
+
+

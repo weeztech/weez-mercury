@@ -314,8 +314,6 @@ private object EntityCollections {
 
     @inline final def fixID(id: Long)(implicit db: DBSessionQueryable): Long = entityIDOf(getCollectionID, id)
 
-    //@inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(fixID(id))
-
     @inline final def newEntityID()(implicit db: DBSessionUpdatable): Long = fixID(db.newEntityId())
 
     @inline final def checkID(id: Long)(implicit db: DBSessionQueryable): Long = {
