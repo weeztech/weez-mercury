@@ -4,26 +4,23 @@ import com.weez.mercury.imports._
 import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common.DTOHelper._
 
-@packable
-case class RentInOrderSingleProduct(serialNumber: String, remark: String)
-
 /**
  * 租入单子项
  * @param product 商品
+ * @param serialNumber 单品序号
  * @param quantity 数量
- * @param warehouse 存入仓库
  * @param productsValue 租入物品总价值
  * @param rentPrice 租金价格/每件日
- * @param singleProducts 单品信息
+ * @param warehouse 存入仓库
  */
 @packable
 case class RentInOrderItem(product: Ref[Product],
-                           warehouse: Ref[Warehouse],
+                           serialNumber: String,
                            quantity: Int,
                            productsValue: Int,
                            rentPrice: Int,
-                           remark: String,
-                           singleProducts: Seq[RentInOrderSingleProduct])
+                           warehouse: Ref[Warehouse],
+                           remark: String)
 
 /**
  * 租入单
@@ -47,15 +44,12 @@ object RentInOrder {
       mo.remark = o.remark
       mo.items = o.items.asMO { (mo, o) =>
         mo.product = o.product.codeTitleAsMO
-        mo.warehouse = o.warehouse.codeTitleAsMO
+        mo.serialNumber = o.serialNumber
         mo.quantity = o.quantity
         mo.productsValue = o.productsValue
         mo.rentPrice = o.rentPrice
+        mo.warehouse = o.warehouse.codeTitleAsMO
         mo.remark = o.remark
-        mo.serialNumbers = o.singleProducts.asMO { (mo, o) =>
-          mo.serialNumber = o.serialNumber
-          mo.remark = o.remark
-        }
       }
     }
   }
@@ -72,17 +66,12 @@ object RentInOrder {
       items = mo.seqs.items.map { mo =>
         RentInOrderItem(
           product = mo.refs.product,
-          warehouse = mo.refs.warehouse,
+          serialNumber = mo.serialNumber,
           quantity = mo.quantity,
           rentPrice = mo.rentPrice,
           productsValue = mo.productsValue,
-          remark = mo.remark,
-          singleProducts = mo.seqs.singleProducts.map { mo =>
-            RentInOrderSingleProduct(
-              serialNumber = mo.serialNumber,
-              remark = mo.remark
-            )
-          }
+          warehouse = mo.refs.warehouse,
+          remark = mo.remark
         )
       }
     )
@@ -107,9 +96,41 @@ object RentInOrder {
       }
     }
   }
-
 }
 
 object RentInOrderCollection extends RootCollection[RentInOrder] {
   override def name: String = "rent-in-order"
+}
+
+/**
+ * 租入归还单子项
+ * @param product 商品
+ * @param quantity 数量
+ * @param duration 租期
+ * @param warehouse 归还仓库
+ * @param productsValue 物品总价值
+ * @param rentPrice 租金价格/每件日
+ */
+@packable
+case class RentInReturnItem(product: Ref[Product],
+                            serialNumber: String,
+                            quantity: Int,
+                            productsValue: Int,
+                            rentPrice: Int,
+                            duration: Int,
+                            warehouse: Ref[Warehouse],
+                            remark: String)
+
+/**
+ * 租入归还单
+ */
+@packable
+case class RentInReturn(datetime: DateTime,
+                        number: String,
+                        provider: Ref[Provider],
+                        remark: String,
+                        items: Seq[RentInReturnItem]) extends Entity
+
+object RentInReturnCollection extends RootCollection[RentInReturn] {
+  override def name: String = "rent-in-return"
 }

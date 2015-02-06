@@ -67,34 +67,100 @@ object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
    * 租入
    */
   defExtractor(RentInOrderCollection) { (r, db) =>
-    r.items.map { item =>
+    r.items groupBy { item =>
       StockAccountKey(
         stockID = item.warehouse.id,
         productID = item.product.id,
         datetime = r.datetime,
         bizRefID = r.id
-      ) -> StockAccountValue(
-        quantity = item.quantity,
-        totalPrice = item.productsValue
       )
-    }.toMap
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty += x.quantity
+        value += x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
+  }
+
+  /**
+   * 租入归还
+   */
+  defExtractor(RentInReturnCollection) { (r, db) =>
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty -= x.quantity
+        value -= x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
   }
 
   /**
    * 采购
    */
   defExtractor(PurchaseOrderCollection) { (r, db) =>
-    r.items.map { item =>
+    r.items groupBy { item =>
       StockAccountKey(
         stockID = item.warehouse.id,
         productID = item.product.id,
         datetime = r.datetime,
         bizRefID = r.id
-      ) -> StockAccountValue(
-        quantity = item.quantity,
-        totalPrice = item.productsValue
       )
-    }.toMap
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty += x.quantity
+        value += x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
+  }
+
+  /**
+   * 采购退货
+   */
+  defExtractor(PurchaseReturnCollection) { (r, db) =>
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty -= x.quantity
+        value -= x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
   }
 }
 
