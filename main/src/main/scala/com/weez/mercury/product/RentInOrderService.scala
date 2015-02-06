@@ -105,13 +105,4 @@ case class RentInOrder(datetime: DateTime,
 
 object RentInOrderCollection extends RootCollection[RentInOrder] {
   override def name: String = "rent-in-order"
-
-  /**
-   * 定义提取到库存流水表
-   */
-  StockAccount.defExtractor(this) { (r, db) =>
-    r.items.map { item =>
-      WAKey(r.warehouse, item.product, r.datetime, r.id) -> WAValue(item.quantity, item.price * item.quantity)
-    }.toMap
-  }
 }

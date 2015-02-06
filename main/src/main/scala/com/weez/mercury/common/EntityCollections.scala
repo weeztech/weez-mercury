@@ -573,7 +573,8 @@ private object EntityCollections {
     private var ref = oldRef
     private var refIDs = oldRefIDs
 
-    def use(asNew: Boolean): Unit = {
+    @inline
+    final def use(asNew: Boolean): Unit = {
       if (asNew) {
         ref = newRef
         refIDs = newRefIDs
@@ -598,6 +599,7 @@ private object EntityCollections {
     def newCursor(): DBCursor = db.newCursor()
 
     def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): DBType.CollectionMeta = db.getRootCollectionMeta(name)
+
   }
 
 
@@ -606,12 +608,11 @@ private object EntityCollections {
 
   class DataViewExtractor[K, V, K2, V2](val from: DataViewImpl[K, V], to: DataViewImpl[K2, V2], extract: Extract2[K, V, K2, V2]) {
     def update(k: K, oldV: Option[V], newV: Option[V], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      val emptyMap: scala.collection.Map[K2, V2] = Map.empty
-      tracer.use(asNew = false)
-      val oldKV = oldV.fold(emptyMap)(v => extract(k, v, tracer))
-      tracer.use(asNew = true)
-      val newKV = newV.fold(emptyMap)(v => extract(k, v, tracer))
-      to.updateDB(oldKV, newKV, tracer, 0)
+      def ex(v: Option[V], asNew: Boolean) = {
+        tracer.use(asNew)
+        if (v.isEmpty) Map.empty.asInstanceOf[scala.collection.Map[K2, V2]] else extract(k, v.get, tracer)
+      }
+      to.updateDB(ex(oldV, asNew = false), ex(oldV, asNew = true), tracer, 0)
     }
 
     if (to.findExtractor(from) ne null) {
@@ -715,14 +716,6 @@ private object EntityCollections {
       null
     }
 
-    def update(k: DK, oldV: Option[DV], newV: Option[DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      var extractor = this.tracingDataViewExtractors.get
-      while (extractor ne null) {
-        extractor.update(k, oldV, newV, tracer)
-        extractor = extractor.nextInTracing
-      }
-    }
-
     def update[E <: Entity](rootEntityID: Long, refEntityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
       val extractor = findExtractor[E](getHost[E](collectionIDOf(rootEntityID)))
       if (extractor ne null) {
@@ -738,7 +731,16 @@ private object EntityCollections {
       def get(k: DK): Option[DV] = db.get((dataViewID, k))(fullKeyPacker, vPacker)
       def put(k: DK, v: DV) = db.put((dataViewID, k), v)(fullKeyPacker, vPacker)
       def del(k: DK) = db.del((dataViewID, k))(fullKeyPacker)
-
+      def update(k: DK, oldV: Option[DV], newV: Option[DV]): Unit = {
+        if (oldV.isEmpty && newV.isEmpty) {
+          return
+        }
+        var extractor = this.tracingDataViewExtractors.get
+        while (extractor ne null) {
+          extractor.update(k, oldV, newV, tracer)
+          extractor = extractor.nextInTracing
+        }
+      }
       for ((k, v) <- newKV) {
         val oldV = oldKV.get(k)
         if (oldV.isEmpty || oldV.get != v) {
@@ -748,6 +750,7 @@ private object EntityCollections {
               val org = get(k)
               if (org.isEmpty) {
                 put(k, m1.get)
+                update(k, org, m1)
               } else {
                 val m2 = merger.add(org.get, m1.get)
                 if (m2.isEmpty) {
@@ -755,11 +758,12 @@ private object EntityCollections {
                 } else {
                   put(k, m2.get)
                 }
+                update(k, org, m2)
               }
             }
           } else {
             put(k, v)
-            update(k, oldV, Some(v), tracer)
+            update(k, oldV, Some(v))
           }
         }
       }
@@ -768,6 +772,7 @@ private object EntityCollections {
           val org = get(k)
           if (org.isEmpty) {
             put(k, v)
+            update(k, org, Some(v))
           } else {
             val m1 = merger.sub(org.get, v)
             if (m1.isEmpty) {
@@ -775,10 +780,11 @@ private object EntityCollections {
             } else {
               put(k, m1.get)
             }
+            update(k, org, m1)
           }
         } else {
           del(k)
-          update(k, Some(v), None, tracer)
+          update(k, None, Some(v))
         }
       }
       if (rootEntityID != 0) {
