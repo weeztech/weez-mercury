@@ -173,8 +173,6 @@ trait EntityCollection[V <: Entity] {
 
   def newEntityID()(implicit db: DBSessionUpdatable): Long
 
-  def fxFunc: Option[(V, DBSessionQueryable) => Seq[String]] = None
-
   def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V]
 
   def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity]
@@ -255,7 +253,7 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
 
-  private[common] val impl = newHost[V](name, fxFunc)
+  private[common] val impl = newHost[V](name)
 }
 
 final case class KeyValue[K, V](key: K, value: V)

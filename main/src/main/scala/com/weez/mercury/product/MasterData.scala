@@ -26,25 +26,3 @@ object MasterDataHelper {
   }
 
 }
-
-abstract class MasterDataCollection[E <: MasterData : Packer] extends RootCollection[E] {
-  override def fxFunc: Option[(E, DBSessionQueryable) => Seq[String]] = Some { (e, db) =>
-    Seq(e.code, e.title, e.description)
-  }
-}
-
-trait MasterDataService[E <: MasterData] extends RemoteService {
-  def dataCollection: MasterDataCollection[E]
-
-  def queryByID(c: QueryCallContext): Unit = {
-    import c._
-    val mo = dataCollection(request.id: Long).map { e =>
-      val mo = new ModelObject(Map.empty)
-      mo.id = e.id.toString
-      mo.code = e.code
-      mo.title = e.title
-      mo
-    }
-    complete(mo.orNull)
-  }
-}
