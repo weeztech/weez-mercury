@@ -1,9 +1,8 @@
 package com.weez.mercury.product
 
-import com.github.nscala_time.time.Imports
-import com.weez.mercury.common._
 import com.github.nscala_time.time.Imports._
-import DTOHelper._
+import com.weez.mercury.imports._
+import com.weez.mercury.common.DTOHelper._
 
 final class WarehouseService extends MasterDataService[Warehouse] {
   override def dataCollection: MasterDataCollection[Warehouse] = WarehouseCollection

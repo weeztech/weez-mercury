@@ -1,6 +1,6 @@
 package com.weez.mercury
 
-object Imports {
+package object imports {
   type Application = common.Application
   type RemoteService = common.RemoteService
   type Context = common.Context
@@ -15,6 +15,11 @@ object Imports {
   type IndexBase[K, V] = common.IndexBase[K, V]
   type Index[K, V <: Entity] = common.Index[K, V]
   type UniqueIndex[K, V <: Entity] = common.UniqueIndex[K, V]
-  type Packer[T] = common.Packer[T]
+  type SubCollection[O <: Entity, V <: Entity] = common.SubCollection[O, V]
+  type Merger[V] = common.Merger[V]
+  type ModelObject = common.ModelObject
   type collect = common.collect
+
+  val ModelObject = common.ModelObject
+  val Packer = common.Packer
 }

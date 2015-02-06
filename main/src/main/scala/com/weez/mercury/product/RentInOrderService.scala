@@ -1,16 +1,14 @@
 package com.weez.mercury.product
 
-import com.weez.mercury.common._
+import com.weez.mercury.imports._
 import com.github.nscala_time.time.Imports._
-import DTOHelper._
+import com.weez.mercury.common.DTOHelper._
 
 /**
  * 租入
  */
 object RentInOrderService extends RemoteService {
-
   import MasterDataHelper._
-
 
   def toMO(rentInOrder: Option[RentInOrder])(implicit db: DBSessionQueryable): ModelObject = {
     rentInOrder.asMO { (mo, o) =>

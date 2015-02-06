@@ -1,8 +1,7 @@
 package com.weez.mercury.product
 
 import com.github.nscala_time.time.Imports._
-import com.weez.mercury.common._
-import com.weez.mercury.product.SaleOrder.RoomItem
+import com.weez.mercury.imports._
 
 object DataService extends RemoteService {
   def availableAssistants: QueryCall = c => {
@@ -107,7 +106,7 @@ object SaleOrder {
   implicit val packer = Packer.caseClass(SaleOrder.apply _)
 }
 
-class SaleOrderRoomItems(owner: SaleOrder) extends SubCollection[SaleOrder, RoomItem](owner) {
+class SaleOrderRoomItems(owner: SaleOrder) extends SubCollection[SaleOrder, SaleOrder.RoomItem](owner) {
   def name = "sale-order-room-items"
 
   lazy val bySeqID = defUniqueIndex("bySeqID", _.seqID)
@@ -120,7 +119,7 @@ object SaleOrderCollection extends RootCollection[SaleOrder] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-object RoomItemCollection extends RootCollection[RoomItem] {
+object RoomItemCollection extends RootCollection[SaleOrder.RoomItem] {
   def name = "sale-order-room-items"
 
   //val bySeqID = defUniqueIndex[(Long, Int)]("bySeqID", v => (v.saleOrder.refID, v.seqID))
@@ -128,7 +127,7 @@ object RoomItemCollection extends RootCollection[RoomItem] {
 }
 
 @packable
-case class Room(code: String,title: String, price: Double, description: String) extends MasterData
+case class Room(code: String, title: String, price: Double, description: String) extends MasterData
 
 object RoomCollection extends RootCollection[Room] {
   def name = "room"

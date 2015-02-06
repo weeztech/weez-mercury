@@ -2,6 +2,18 @@ package com.weez.mercury.common
 
 import com.typesafe.config.Config
 
+/**
+ * 管理客户端（peer）和会话（session）。
+ * == Overview ==
+ * peer: 客户端，通过peerId（String）识别一个客户端。
+ * HttpServer使用cookie做peerId，所以一个浏览器窗口是一个客户端。
+ * AkkaServer使用host:port做peerId，所以一个socket地址是一个客户端。
+ * session: 会话，用于跟踪一系列连续的业务操作。
+ * Web浏览器端采用单页面技术，通常一个页面只使用一个会话。
+ *
+ * @param app see [[com.weez.mercury.common.ServiceManager]]
+ * @param config 从config中读取选项
+ */
 class SessionManager(app: ServiceManager, config: Config) {
 
   import java.util.concurrent.TimeUnit

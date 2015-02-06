@@ -1,4 +1,4 @@
-package com.weez.mercury.common
+package com.weez.mercury.macros
 
 import scala.language.experimental.macros
 import scala.reflect.macros.blackbox

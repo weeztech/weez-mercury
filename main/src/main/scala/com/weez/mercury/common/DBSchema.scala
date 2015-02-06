@@ -1,7 +1,7 @@
 package com.weez.mercury.common
 
 import akka.event.LoggingAdapter
-import com.weez.mercury.common.DBType.CollectionMeta
+import com.weez.mercury.imports.packable
 
 sealed trait DBType
 

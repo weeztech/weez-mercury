@@ -1,5 +1,10 @@
 package com.weez.mercury.common
 
+/**
+ * 提供用户直接调用的业务操作接口。
+ * HttpServer/AkkaServer通过RemoteCallManager调用这些接口。
+ * @define pager [[com.weez.mercury.common.RemoteService.completeWithPager]]
+ */
 @collect
 trait RemoteService {
 
@@ -22,6 +27,18 @@ trait RemoteService {
     throw new ProcessException(ErrorCode.Fail, message)
   }
 
+  /**
+   * 支持分页请求，并返回分页结果。
+   * ==request==
+   * start: Int 起始序号 <br>
+   * count: Int 数量 <br>
+   * ==response==
+   * items: Seq <br>
+   * keyprop: String 主键属性名称 <br>
+   * hasMore: Boolean 是否有更多记录未读取 <br>
+   * @param cur 数据库游标
+   * @param keyprop 主键属性名称
+   */
   def completeWithPager[T](cur: Cursor[T], keyprop: String)(implicit c: Context): Unit = {
     import c._
     if (request.hasProperty("start")) {

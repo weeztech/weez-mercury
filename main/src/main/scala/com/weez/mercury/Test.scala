@@ -112,7 +112,7 @@ object Test {
       app.close()
       import scala.util._
       result match {
-        case Success(x) => println(ModelObject.toJson(x).prettyPrint)
+        case Success(x) => println(JsonModel.to(x).prettyPrint)
         case Failure(ex) => ex.printStackTrace()
       }
     }

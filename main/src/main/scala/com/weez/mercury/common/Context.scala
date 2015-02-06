@@ -19,7 +19,7 @@ trait Context extends RangeImplicits {
 
   def acceptUpload(receiver: => Actor): String
 
-  private[common] def app: Application
+  def app: Application
 }
 
 trait UploadContext {
@@ -88,6 +88,8 @@ trait DBSessionUpdatable extends DBSessionQueryable {
 }
 
 trait IndexBase[K, V] {
+
+  import com.weez.mercury.macros.TuplePrefixed
 
   def apply()(implicit db: DBSessionQueryable): Cursor[V]
 
@@ -265,6 +267,8 @@ trait Merger[V] {
 }
 
 abstract class DataView[K: Packer, V: Packer] {
+  import com.weez.mercury.macros.TuplePrefixed
+
   def name: String
 
   @inline final def apply()(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]] = apply(forward = true)

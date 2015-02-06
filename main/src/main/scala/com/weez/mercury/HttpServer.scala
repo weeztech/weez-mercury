@@ -1,7 +1,5 @@
 package com.weez.mercury
 
-import scala.util.control.NonFatal
-
 object HttpServer {
 
   import scala.concurrent._
@@ -68,7 +66,7 @@ object HttpServer {
               val log = implicitly[LoggingContext]
               val costTime = (System.nanoTime - startTime) / 1000000 // ms
               log.log(DebugLevel, "upload complete in {} ms - {}", costTime, id)
-              complete(ModelObject.toJson(out).toString())(ctx)
+              complete(JsonModel.to(out).toString())(ctx)
             case Failure(ex) => exceptionHandler(ex)(ctx)
           }
         } apply HttpRequest(uri = req.request.uri)
@@ -130,14 +128,23 @@ object HttpServer {
       import context.dispatcher
       val startTime = System.nanoTime
       val p = Promise[JsValue]()
-      val req = ctx.request.entity.asString.parseJson.asJsObject()
+      val req = parseJson(ctx.request.entity.asString)
       app.remoteCallManager.postRequest(peer, api, req).onComplete {
         case Success(out) =>
           import akka.event.Logging._
           val costTime = (System.nanoTime - startTime) / 1000000 // ms
           log.log(DebugLevel, "remote call complete in {} ms - {}", costTime, api)
-          complete(ModelObject.toJson(out).toString())(ctx)
+          complete(JsonModel.to(out).toString())(ctx)
         case Failure(ex) => exceptionHandler(ex)(ctx)
+      }
+    }
+
+    def parseJson(s: String) = {
+      import scala.util.control.NonFatal
+      try {
+        JsonModel.parse(s.parseJson.asJsObject())
+      } catch {
+        case NonFatal(ex) => ErrorCode.InvalidRequest.raise
       }
     }
   }

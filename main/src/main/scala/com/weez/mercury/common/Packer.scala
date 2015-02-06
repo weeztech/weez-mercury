@@ -25,6 +25,8 @@ trait Packer[T] {
   def unpackLength(buf: Array[Byte], offset: Int): Int
 }
 
+import com.weez.mercury.macros._
+
 @tuplePackers
 @caseClassPackers
 object Packer extends PackerMacros with CollectionPackers {

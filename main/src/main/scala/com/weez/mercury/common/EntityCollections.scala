@@ -1,12 +1,10 @@
 package com.weez.mercury.common
 
 import java.util.concurrent.atomic.AtomicReference
-
-import com.weez.mercury.common.DBType.IndexMeta
-
-import scala.collection.immutable.{TreeSet, TreeMap}
-import scala.collection.{immutable, mutable}
+import scala.collection.mutable
 import scala.reflect.runtime.universe._
+import com.weez.mercury.imports.packable
+import com.weez.mercury.macros.TuplePrefixed
 
 private object EntityCollections {
 
@@ -823,7 +821,7 @@ private object EntityCollections {
   trait AbstractIndexImpl[E <: Entity] {
     val host: HostCollectionImpl[E]
     val name: String
-    var _meta: IndexMeta = null
+    var _meta: DBType.IndexMeta = null
 
     @inline final def getIndexID(implicit db: DBSessionQueryable) = {
       if (_meta eq null) {

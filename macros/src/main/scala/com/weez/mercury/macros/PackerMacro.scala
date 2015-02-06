@@ -1,12 +1,8 @@
-package com.weez.mercury.common
+package com.weez.mercury.macros
 
 import scala.annotation.StaticAnnotation
 import scala.language.experimental.macros
 import scala.reflect.macros.whitebox
-
-class packable extends StaticAnnotation {
-  def macroTransform(annottees: Any*): Any = macro PackerMacro.packableImpl
-}
 
 class tuplePackers extends StaticAnnotation {
   def macroTransform(annottees: Any*): Any = macro PackerMacro.tupleImpl
