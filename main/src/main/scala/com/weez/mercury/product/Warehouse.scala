@@ -4,27 +4,44 @@ import com.github.nscala_time.time.Imports._
 import com.weez.mercury.imports._
 import com.weez.mercury.common.DTOHelper._
 
-final class WarehouseService extends MasterDataService[Warehouse] {
-  override def dataCollection: MasterDataCollection[Warehouse] = WarehouseCollection
-}
-
 /**
  * 仓库
  */
 @packable
 final case class Warehouse(code: String,
                            title: String,
-                           description: String) extends MasterData
+                           description: String)extends Entity
 
-object WarehouseCollection extends MasterDataCollection[Warehouse] {
+object WarehouseCollection extends RootCollection[Warehouse] {
   override def name: String = "warehouse"
 }
 
 @packable
-final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateTime, bizID: Long)
+case class Provider(code: String,
+                    title: String, description: String) extends Entity
 
+object ProviderCollection extends RootCollection[Provider] {
+  override def name: String = "provider"
+}
+
+/**
+ * 库存明细账－主键部分
+ * @param stockID 库ID，可能是仓库，或部门
+ * @param productID 物品ID
+ * @param datetime 发生时间
+ * @param bizRefID 业务参考ID，各种单据的ID
+ */
 @packable
-final case class StockAccountValue(quantity: Int, totalPrice: Int) {
+final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateTime, bizRefID: Long)
+
+/**
+ * 库存明晰帐－值部分
+ * @param quantity 数量
+ * @param totalPrice 价值
+ */
+@packable
+final case class StockAccountValue(quantity: Int,
+                                   totalPrice: Int) {
   @inline def +(that: StockAccountValue) = StockAccountValue(this.quantity + that.quantity, this.totalPrice + that.totalPrice)
 
   @inline def -(that: StockAccountValue) = StockAccountValue(this.quantity - that.quantity, this.totalPrice - that.totalPrice)
@@ -45,13 +62,105 @@ final case class StockAccountValue(quantity: Int, totalPrice: Int) {
 
 object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
   override def name: String = "stock-account"
+
   /**
-   * 定义提取到库存流水表
+   * 租入
    */
   defExtractor(RentInOrderCollection) { (r, db) =>
-    r.items.map { item =>
-      StockAccountKey(r.warehouse.id, item.product.id, r.datetime, r.id) -> StockAccountValue(item.quantity, item.price * item.quantity)
-    }.toMap
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty += x.quantity
+        value += x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
+  }
+
+  /**
+   * 租入归还
+   */
+  defExtractor(RentInReturnCollection) { (r, db) =>
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty -= x.quantity
+        value -= x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
+  }
+
+  /**
+   * 采购
+   */
+  defExtractor(PurchaseOrderCollection) { (r, db) =>
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty += x.quantity
+        value += x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
+  }
+
+  /**
+   * 采购退货
+   */
+  defExtractor(PurchaseReturnCollection) { (r, db) =>
+    r.items groupBy { item =>
+      StockAccountKey(
+        stockID = item.warehouse.id,
+        productID = item.product.id,
+        datetime = r.datetime,
+        bizRefID = r.id
+      )
+    } mapValues { items =>
+      var qty: Int = 0
+      var value: Int = 0
+      for (x <- items) {
+        qty -= x.quantity
+        value -= x.productsValue
+      }
+      StockAccountValue(
+        quantity = qty,
+        totalPrice = value
+      )
+    }
   }
 }
 

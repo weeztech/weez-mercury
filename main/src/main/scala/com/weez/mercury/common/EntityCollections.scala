@@ -83,8 +83,7 @@ private object EntityCollections {
       hosts.get(name) match {
         case Some(host: SubHostCollectionImpl[O, V]) => host
         case None =>
-          val fxFunc = pc.fxFunc.map(f => (sce: SCE[O, V], db: DBSessionQueryable) => f(sce.entity, db))
-          val host = new SubHostCollectionImpl[O, V](name, fxFunc.orNull)
+          val host = new SubHostCollectionImpl[O, V](name)
           hosts.put(name, host)
           host
         case _ =>
@@ -93,12 +92,12 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String, getFX: Option[(V, DBSessionQueryable) => Seq[String]]): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer](name: String): HostCollectionImpl[V] = {
     hosts.synchronized {
       if (hosts.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
       }
-      val host = new HostCollectionImpl[V](name, getFX.orNull)
+      val host = new HostCollectionImpl[V](name)
       hosts.put(name, host)
       host
     }
@@ -129,7 +128,7 @@ private object EntityCollections {
 
   def emptyListeners[V <: Entity] = _emptyListeners.asInstanceOf[Array[EntityCollectionListener[V]]]
 
-  class HostCollectionImpl[V <: Entity](val name: String, val getFX: (V, DBSessionQueryable) => Seq[String])(implicit val valuePacker: Packer[V]) {
+  class HostCollectionImpl[V <: Entity](val name: String)(implicit val valuePacker: Packer[V]) {
     host =>
 
     @volatile private var _meta: DBType.CollectionMeta = null
@@ -169,29 +168,36 @@ private object EntityCollections {
 
     @inline final def getCollectionID(implicit db: DBSessionQueryable) = getMeta.prefix
 
-    @inline final def hasRefDefine: Boolean = true //todo 采用Ref信息实现
+    @inline final def hasRefFields: Boolean = true
 
-    final def updateReverseIndex(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
-      //todo 采用Ref信息实现
+    @inline final def hasStringFields: Boolean = true
 
-      def getRefs(e: Any, rs: Set[Long]): Set[Long] = e match {
+    final def updateGlobalIndex(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+      val oldRefs = Set.newBuilder[Long]
+      val newRefs = Set.newBuilder[Long]
+      val oldTexts = Seq.newBuilder[String]
+      val newTexts = Seq.newBuilder[String]
+
+      def search(e: Any, isNew: Boolean): Unit = e match {
         case p: Product =>
-          var _rs = rs
           var i = p.productArity - 1
           while (i >= 0) {
-            _rs = getRefs(p.productElement(i), _rs)
+            search(p.productElement(i), isNew)
             i -= 1
           }
-          _rs
-        case r: Ref[_] => rs + r.id
-        case _ => rs
+        case p: Iterable[_] =>
+          p.foreach(e => search(e, isNew))
+        case r: Ref[_] => (if (isNew) newRefs else oldRefs) += r.id
+        case s: String => (if (isNew) newTexts else oldTexts) += s
+        case _ =>
       }
-      RefReverseIndex.update(entityID, getRefs(oldEntity, emptyLongSet), getRefs(newEntity, emptyLongSet))
+      search(oldEntity, isNew = false)
+      search(oldEntity, isNew = true)
+      FullTextSearchIndex.update(entityID, oldTexts.result(), newTexts.result())
+      RefReverseIndex.update(entityID, oldRefs.result(), newRefs.result())
     }
 
     val extractors = new AtomicReference[OuterEntityExtractor[V, _, _]]
-
-    val ftsExtractor = if (getFX eq null) null else new FullTextEntityExtractor(this)
 
     def updateDataView(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       var e = extractors.get
@@ -205,9 +211,6 @@ private object EntityCollections {
           val dataViewID = x._1
           getDataView(dataViewID).update(rootEntityID, entityID, oldEntity, newEntity)
         }
-      }
-      if (ftsExtractor ne null) {
-        ftsExtractor.update(entityID, entityID, oldEntity, newEntity)
       }
     }
 
@@ -271,7 +274,7 @@ private object EntityCollections {
         uls(i).onEntityUpdate(oldEntity, newEntity)
         i -= 1
       }
-      updateReverseIndex(oldEntity.id, oldEntity, newEntity)
+      updateGlobalIndex(oldEntity.id, oldEntity, newEntity)
       updateDataView(oldEntity.id, oldEntity, newEntity)
     }
 
@@ -284,14 +287,14 @@ private object EntityCollections {
         i -= 1
       }
       val oldEntity = null.asInstanceOf[V]
-      updateReverseIndex(newID, oldEntity, newEntity)
+      updateGlobalIndex(newID, oldEntity, newEntity)
       updateDataView(newID, oldEntity, newEntity)
     }
 
     @inline final def notifyDelete(id: Long)(implicit db: DBSessionUpdatable): Boolean = {
       val uls = insertListeners
       var i = uls.length - 1
-      if (i >= 0 || (getFX ne null) || hasRefDefine) {
+      if (i >= 0 || hasRefFields || hasStringFields) {
         val d = get0(id)
         if (d.isEmpty) {
           return false
@@ -302,7 +305,7 @@ private object EntityCollections {
           i -= 1
         }
         val newEntity = null.asInstanceOf[V]
-        updateReverseIndex(id, oldEntity, newEntity)
+        updateGlobalIndex(id, oldEntity, newEntity)
         updateDataView(id, oldEntity, newEntity)
       }
       true
@@ -310,8 +313,6 @@ private object EntityCollections {
 
 
     @inline final def fixID(id: Long)(implicit db: DBSessionQueryable): Long = entityIDOf(getCollectionID, id)
-
-    //@inline final def fixIDAndGet(id: Long)(implicit db: DBSessionQueryable): Option[V] = db.get(fixID(id))
 
     @inline final def newEntityID()(implicit db: DBSessionUpdatable): Long = fixID(db.newEntityId())
 
@@ -473,8 +474,8 @@ private object EntityCollections {
     this._id = entity.id
   }
 
-  class SubHostCollectionImpl[O <: Entity, V <: Entity : Packer](name: String, getFX: (SCE[O, V], DBSessionQueryable) => Seq[String])
-    extends HostCollectionImpl[SCE[O, V]](name, getFX) {
+  class SubHostCollectionImpl[O <: Entity, V <: Entity : Packer](name: String)
+    extends HostCollectionImpl[SCE[O, V]](name) {
     subHost =>
     @inline final def update(owner: Ref[O], value: V)(implicit db: DBSessionUpdatable): Unit = {
       if (value.id == 0) {
@@ -664,10 +665,6 @@ private object EntityCollections {
 
     @inline final def nextInHost = _nextInHost
   }
-
-  class FullTextEntityExtractor[E <: Entity](host: HostCollectionImpl[E])
-    extends EntityExtractor[E, (String, Long), Boolean](FullTextSearchIndex, host,
-      (v, db) => FullTextSearch.splitInternal(v.id, host.getFX(v, db): _*))
 
   class DataViewImpl[DK: Packer, DV: Packer](val name: String, val merger: Merger[DV])
                                             (implicit val fullKeyPacker: Packer[(Int, DK)], val vPacker: Packer[DV]) {
@@ -926,26 +923,39 @@ private object EntityCollections {
     }
   }
 
-  object FullTextSearchIndex extends DataViewImpl[(String, Long), Boolean]("full-text-search", null) {
+  object FullTextSearchIndex {
 
     final val prefix = Int.MaxValue - 2
 
-    override def getDataViewID(implicit db: DBSessionQueryable) = prefix
+    implicit val fullKeyPacker = Packer.of[(Int, String, Long)]
 
-    override def findExtractor[E <: Entity](host: HostCollectionImpl[E]) = host.ftsExtractor
+    @inline final def update(entityID: Long, oldTexts: Seq[String], newTexts: Seq[String])(implicit db: DBSessionUpdatable): Unit = {
+      val oldWords = FullTextSearch.split(oldTexts: _*)
+      val newWords = FullTextSearch.split(newTexts: _*)
+      for (w <- newWords) {
+        if (!oldWords.contains(w)) {
+          db.put((prefix, w, entityID), true)
+        }
+      }
+      for (w <- oldWords) {
+        if (!newWords.contains(w)) {
+          db.del((prefix, w, entityID))
+        }
+      }
+    }
 
 
     @inline final def scan[V <: Entity](word: String, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val r = if (host eq null) {
-        (getDataViewID, (word, 0l)) +-+(getDataViewID, (word, Long.MaxValue))
+        (prefix, word, 0l) +-+(prefix, word, Long.MaxValue)
       } else {
-        (getDataViewID, (word, host.fixID(0))) +-+(getDataViewID, (word, host.fixID(Long.MaxValue)))
+        (prefix, word, host.fixID(0)) +-+(prefix, word, host.fixID(Long.MaxValue))
       }
       new RawKVCursor[V](r, forward = true) {
         override def buildValue() = {
           val fk = fullKeyPacker.unapply(rawKey)
-          getEntity[V](fk._2._2)
+          getEntity[V](fk._3)
         }
       }
     }
