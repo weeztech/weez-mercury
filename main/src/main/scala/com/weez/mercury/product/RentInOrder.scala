@@ -9,18 +9,18 @@ import com.weez.mercury.common.DTOHelper._
  * @param product 商品
  * @param serialNumber 单品序号
  * @param quantity 数量
- * @param productsValue 租入物品总价值
+ * @param totalValue 租入物品总价值
  * @param rentPrice 租金价格/每件日
- * @param warehouse 存入仓库
+ * @param stock 存入仓库
  */
 @packable
 case class RentInOrderItem(product: Ref[Product],
                            serialNumber: String,
                            quantity: Int,
-                           productsValue: Int,
+                           totalValue: Int,
                            rentPrice: Int,
-                           warehouse: Ref[Warehouse],
-                           remark: String)
+                           stock: Ref[Warehouse],
+                           remark: String) extends ProductFlowEntry
 
 /**
  * 租入单
@@ -30,9 +30,11 @@ case class RentInOrder(datetime: DateTime,
                        number: String,
                        provider: Ref[Provider],
                        remark: String,
-                       items: Seq[RentInOrderItem]) extends Entity
+                       items: Seq[RentInOrderItem]) extends Entity with ProductFlow {
+  def peerStock = ProductFlowFromPeer(provider)
+}
 
-object RentInOrder {
+object RentInOrderHelper {
 
   def toMO(rentInOrder: Option[RentInOrder])(implicit db: DBSessionQueryable): ModelObject = {
     rentInOrder.asMO { (mo, o) =>
@@ -51,9 +53,9 @@ object RentInOrder {
         }
         mo.serialNumber = o.serialNumber
         mo.quantity = o.quantity
-        mo.productsValue = o.productsValue
+        mo.totalValue = o.totalValue
         mo.rentPrice = o.rentPrice
-        mo.warehouse = o.warehouse.asMO { (mo, o) =>
+        mo.stock = o.stock.asMO { (mo, o) =>
           mo.title = o.title
           mo.code = o.code
         }
@@ -78,8 +80,8 @@ object RentInOrder {
             serialNumber = mo.serialNumber,
             quantity = mo.quantity,
             rentPrice = mo.rentPrice,
-            productsValue = mo.productsValue,
-            warehouse = mo.refs.warehouse,
+            totalValue = mo.totalValue,
+            stock = mo.refs.stock,
             remark = mo.remark
           )
       }
@@ -120,19 +122,19 @@ object RentInOrderCollection extends RootCollection[RentInOrder] {
  * @param product 商品
  * @param quantity 数量
  * @param duration 租期
- * @param warehouse 归还仓库
- * @param productsValue 物品总价值
+ * @param stock 归还仓库
+ * @param totalValue 物品总价值
  * @param rentPrice 租金价格/每件日
  */
 @packable
 case class RentInReturnItem(product: Ref[Product],
                             serialNumber: String,
                             quantity: Int,
-                            productsValue: Int,
+                            totalValue: Int,
                             rentPrice: Int,
                             duration: Int,
-                            warehouse: Ref[Warehouse],
-                            remark: String)
+                            stock: Ref[Warehouse],
+                            remark: String) extends ProductFlowEntry
 
 /**
  * 租入归还单
@@ -142,7 +144,9 @@ case class RentInReturn(datetime: DateTime,
                         number: String,
                         provider: Ref[Provider],
                         remark: String,
-                        items: Seq[RentInReturnItem]) extends Entity
+                        items: Seq[RentInReturnItem]) extends Entity with ProductFlow {
+  def peerStock = ProductFlowToPeer(provider)
+}
 
 object RentInReturnCollection extends RootCollection[RentInReturn] {
   override def name: String = "rent-in-return"
