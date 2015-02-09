@@ -17,9 +17,24 @@ package object imports extends com.github.nscala_time.time.Imports {
   type UniqueIndex[K, V <: Entity] = common.UniqueIndex[K, V]
   type SubCollection[O <: Entity, V <: Entity] = common.SubCollection[O, V]
   type Merger[V] = common.Merger[V]
-  type ModelObject = common.ModelObject
   type collect = common.collect
-
+  type ModelObject = common.ModelObject
   val ModelObject = common.ModelObject
+  type Packer[T] = common.Packer[T]
   val Packer = common.Packer
+  type UploadContext = common.UploadContext
+  type UploadData = common.UploadData
+  val UploadData = common.UploadData
+  type UploadEnd = common.UploadEnd
+  val UploadEnd = common.UploadEnd
+  val UploadResume = common.UploadResume
+
+  type Actor = akka.actor.Actor
+  type ActorLogging = akka.actor.ActorLogging
+  type ActorRef = akka.actor.ActorRef
+  type Terminated = akka.actor.Terminated
+  val Terminated = akka.actor.Terminated
+  type ByteString = akka.util.ByteString
+  val ByteString = akka.util.ByteString
+  val ReceiveTimeout = akka.actor.ReceiveTimeout
 }
