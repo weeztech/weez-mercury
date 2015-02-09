@@ -1,6 +1,6 @@
 package com.weez.mercury
 
-package object imports {
+package object imports extends com.github.nscala_time.time.Imports {
   type Application = common.Application
   type RemoteService = common.RemoteService
   type Context = common.Context

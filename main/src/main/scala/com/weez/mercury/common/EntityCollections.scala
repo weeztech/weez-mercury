@@ -145,9 +145,9 @@ private object EntityCollections {
           if (_meta ne null) {
             return _meta
           }
-          _meta = db.getRootCollectionMeta(name)
-          if (_meta == null) {
-            throw new IllegalArgumentException( s"""no such HostCollection named $name""")
+          db.getMeta(name) match {
+            case x: DBType.CollectionMeta => _meta = x
+            case x => throw new IllegalStateException(s"expect collection meta, but found $x")
           }
         }
         hosts.synchronized {
@@ -596,8 +596,7 @@ private object EntityCollections {
 
     def newCursor(): DBCursor = db.newCursor()
 
-    def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): DBType.CollectionMeta = db.getRootCollectionMeta(name)
-
+    def getMeta(name: String)(implicit db: DBSessionQueryable) = db.getMeta(name)
   }
 
 

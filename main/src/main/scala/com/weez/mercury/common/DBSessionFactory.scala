@@ -4,7 +4,8 @@ class DBSessionFactory(dbSession: DBSession) {
 
   import akka.event.LoggingAdapter
 
-  private val metaCache = scala.collection.mutable.Map[String, DBType.CollectionMeta]() ++= DBMetas.metas
+  private val metaCache = scala.collection.mutable.Map[String, DBType.Meta]()
+  metaCache += DBMetas.metaCollectionMeta.name -> DBMetas.metaCollectionMeta
 
   val KEY_OBJECT_ID_COUNTER = "object-id-counter"
   val KEY_PREFIX_ID_COUNTER = "prefix-id-counter"
@@ -44,14 +45,14 @@ class DBSessionFactory(dbSession: DBSession) {
 
     @inline def newCursor() = trans.newCursor()
 
-    def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = {
-      metaCache.get(name) match {
-        case Some(x) => x
-        case None =>
-          CollectionMetaCollection.byName(name) match {
+    def getMeta(name: String)(implicit db: DBSessionQueryable) = {
+      metaCache.synchronized {
+        metaCache.getOrElseUpdate(name, {
+          MetaCollection.byName(name) match {
             case Some(x) => x
-            case None => throw new Error("meta of root-collection not found")
+            case None => throw new Error(s"meta not found: $name")
           }
+        })
       }
     }
 

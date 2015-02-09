@@ -50,8 +50,9 @@ object ClassFinder {
       var symbol: Symbol = null
       var tpe: Type = null
       if (scalaName.isModule) {
-        symbol = mirror.staticModule(scalaName.name)
-        tpe = symbol.typeSignature
+        val moduleSymbol = mirror.staticModule(scalaName.name)
+        symbol = moduleSymbol
+        tpe = moduleSymbol.moduleClass.asClass.toType
       } else {
         val c = mirror.staticClass(scalaName.name)
         symbol = c

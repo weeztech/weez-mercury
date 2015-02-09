@@ -84,6 +84,21 @@ trait Cursor[+V] extends AutoCloseable {
       def close() = self.close()
     }
 
+  def collect[B](pf: PartialFunction[V, B]): Cursor[B] =
+    new Cursor[B] {
+      def isValid = self.isValid
+
+      def value = pf(self.value)
+
+      def next() = {
+        self.next()
+        while (self.isValid && !pf.isDefinedAt(self.value))
+          self.next()
+      }
+
+      def close() = self.close()
+    }
+
   def filter(f: V => Boolean): Cursor[V] =
     new Cursor[V] {
       def next() = {

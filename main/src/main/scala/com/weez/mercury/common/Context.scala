@@ -76,7 +76,7 @@ trait DBSessionQueryable {
 
   def newCursor(): DBCursor
 
-  def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable): DBType.CollectionMeta
+  def getMeta(name: String)(implicit db: DBSessionQueryable): DBType.Meta
 }
 
 trait DBSessionUpdatable extends DBSessionQueryable {
@@ -266,6 +266,7 @@ trait Merger[V] {
   def sub(v1: V, v2: V): Option[V]
 }
 
+@collect
 abstract class DataView[K: Packer, V: Packer] {
   import com.weez.mercury.macros.TuplePrefixed
 

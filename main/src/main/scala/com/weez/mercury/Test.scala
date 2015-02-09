@@ -2,6 +2,7 @@ package com.weez.mercury
 
 import scala.util.control.NonFatal
 
+
 object Test {
 
   import akka.event._
@@ -106,7 +107,7 @@ object Test {
     }
     val futu = call("common.SessionService.init") flatMap { m =>
       //call("debug.DBDebugService.listCollectionMetas", "prefix" -> "")
-      call("debug.DBDebugService.listRootCollection", "sid" -> m.sid, "collectionName" -> CollectionMetaCollection.name)
+      call("debug.DBDebugService.listRootCollection", "sid" -> m.sid, "collectionName" -> MetaCollection.name)
     }
     futu.onComplete { result =>
       app.close()

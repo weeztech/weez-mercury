@@ -55,13 +55,15 @@ object Setup {
           }
 
           import DBType._
-          DBMetas.metas.values foreach CollectionMetaCollection.insert
-          dbtypes.resolvedMetas foreach {
-            case x: EntityMeta =>
-              EntityMetaCollection.insert(x)
+          MetaCollection.insert(DBMetas.metaCollectionMeta)
+          dbtypes.resolvedMetas.values foreach {
             case x: CollectionMeta =>
-              if (!DBMetas.metas.contains(x.name))
-                CollectionMetaCollection.insert(x.copy(prefix = newPrefix, indexes = x.indexes.map(_.copy(prefix = newPrefix))))
+              if (x.name != DBMetas.metaCollectionMeta.name)
+                MetaCollection.insert(x.copy(prefix = newPrefix, indexes = x.indexes.map(_.copy(prefix = newPrefix))))
+            case x: DataViewMeta =>
+              MetaCollection.insert(x.copy(prefix = newPrefix))
+            case x =>
+              MetaCollection.insert(x)
           }
           dbc.put(dbFactory.KEY_PREFIX_ID_COUNTER, newPrefix)
         }

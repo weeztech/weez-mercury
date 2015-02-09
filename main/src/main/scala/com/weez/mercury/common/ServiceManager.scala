@@ -110,7 +110,7 @@ final class ContextImpl(val app: ServiceManager) extends Context with SessionSta
 
   @inline def newCursor() = dbSessionQuery.newCursor()
 
-  @inline def getRootCollectionMeta(name: String)(implicit db: DBSessionQueryable) = dbSessionQuery.getRootCollectionMeta(name)
+  @inline def getMeta(name: String)(implicit db: DBSessionQueryable) = dbSessionQuery.getMeta(name)
 
   @inline def newEntityId() = dbSessionUpdate.newEntityId()
 

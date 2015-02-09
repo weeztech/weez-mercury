@@ -13,7 +13,7 @@ object DBType {
 
   implicit val typeRefPacker: Packer[DBTypeRef] = Packer.poly[DBTypeRef,
     String.type :: Int.type :: Long.type :: Double.type :: Boolean.type :: DateTime.type :: Raw.type ::
-      Coll :: Tuple :: Ref :: EntityRef :: EntityCollRef :: HNil].asInstanceOf[Packer[DBTypeRef]]
+      Coll :: Tuple :: Ref :: Struct :: HNil].asInstanceOf[Packer[DBTypeRef]]
 
   sealed abstract class SimpleType(val typeCode: Int, name: String) extends DBType with DBTypeRef {
     override def toString = name
@@ -55,69 +55,58 @@ object DBType {
   case class Ref(tpe: DBTypeRef) extends DBType with DBTypeRef
 
   @packable
-  case class EntityRef(name: String) extends DBTypeRef
+  case class Struct(name: String) extends DBTypeRef
 
-  @packable
-  case class EntityCollRef(name: String) extends DBTypeRef
-
-  sealed trait Named {
+  sealed trait Meta extends DBType with Entity {
     def name: String
   }
 
-  sealed trait Meta extends DBType with Named
+  object Meta {
+    implicit val packer: Packer[Meta] = Packer.poly[Meta,
+      StructMeta :: InterfaceMeta :: ValueMeta :: CollectionMeta :: DataViewMeta :: HNil].asInstanceOf[Packer[Meta]]
+  }
 
   @packable
-  case class ColumnMeta(name: String, tpe: DBTypeRef) extends Named
+  case class ColumnMeta(name: String, tpe: DBTypeRef)
 
   @packable
-  case class EntityMeta(name: String, columns: Seq[ColumnMeta], parents: Seq[String], isTopLevel: Boolean, isAbstract: Boolean) extends Meta with Entity
+  case class StructMeta(name: String, columns: Seq[ColumnMeta], interfaces: Seq[String], isEntity: Boolean) extends Meta
 
   @packable
-  case class IndexMeta(name: String, key: DBTypeRef, unique: Boolean, prefix: Int) extends Named
+  case class InterfaceMeta(name: String, isSealed: Boolean, subs: Seq[String], interfaces: Seq[String]) extends Meta
 
   @packable
-  case class CollectionMeta(name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends Meta with Entity {
+  case class ValueMeta(name: String, interfaces: Seq[String]) extends Meta
+
+  @packable
+  case class IndexMeta(name: String, key: DBTypeRef, unique: Boolean, prefix: Int)
+
+  @packable
+  case class CollectionMeta(name: String, valueType: DBTypeRef, indexes: Seq[IndexMeta], isRoot: Boolean, prefix: Int) extends Meta {
     def indexPrefixOf(name: String) = indexes.find(_.name == name).get.prefix
   }
 
+  @packable
+  case class DataViewMeta(name: String, prefix: Int) extends Meta
+
 }
 
-object EntityMetaCollection extends RootCollection[DBType.EntityMeta] {
-  def name = "entity-meta-collection"
+object MetaCollection extends RootCollection[DBType.Meta] {
+  def name = "meta-collection"
 
   val byName = defUniqueIndex("by-name", _.name)
   val prefix = 1
-}
-
-object CollectionMetaCollection extends RootCollection[DBType.CollectionMeta] {
-  def name = "collection-meta-collection"
-
-  val byName = defUniqueIndex("by-name", _.name)
-
-  //override def fxFunc: Option[(CollectionMeta, DBSessionQueryable) => Seq[String]] = Some((c,db)=>Seq(c.name))
-
-  val prefix = 2
 }
 
 object DBMetas {
 
   import DBType._
 
-  val entityMetaCollectionMeta = CollectionMeta(
-    EntityMetaCollection.name,
-    EntityRef("entity-meta"),
+  val metaCollectionMeta = CollectionMeta(
+    MetaCollection.name,
+    Struct("meta"),
     IndexMeta("by-name", String, unique = true, 1) :: Nil,
-    isRoot = true, EntityMetaCollection.prefix)
-  val collectionMetaCollectionMeta = CollectionMeta(
-    CollectionMetaCollection.name,
-    EntityRef("collection-meta"),
-    IndexMeta("by-name", String, unique = true, 2) :: Nil,
-    isRoot = true, CollectionMetaCollection.prefix)
-
-  val metas = (
-    entityMetaCollectionMeta ::
-      collectionMetaCollectionMeta ::
-      Nil).map(x => x.name -> x).toMap
+    isRoot = true, MetaCollection.prefix)
 }
 
 import scala.reflect.runtime.universe._
@@ -127,10 +116,10 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
   import scala.collection.mutable
   import org.joda.time.DateTime
 
-  val resolvedMetas = mutable.ArrayBuffer[DBType.Meta]()
-  val resolvedEntityTypes = mutable.Map[String, String]()
-  val unresolvedEntityTypes = mutable.Map[String, mutable.Set[String]]()
-  val delayResolvedEntityTypes = mutable.Map[String, Type]()
+  val resolvedMetas = mutable.Map[String, DBType.Meta]()
+  val resolvedStructTypes = mutable.Map[String, String]()
+  val unresolvedStructTypes = mutable.Map[String, mutable.Set[String]]()
+  val delayResolvedStructTypes = mutable.Set[Symbol]()
 
   val stringType = typeOf[String]
   val datetimeType = typeOf[DateTime]
@@ -146,9 +135,9 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
 
   def clear() = {
     resolvedMetas.clear()
-    resolvedEntityTypes.clear()
-    unresolvedEntityTypes.clear()
-    delayResolvedEntityTypes.clear()
+    resolvedStructTypes.clear()
+    unresolvedStructTypes.clear()
+    delayResolvedStructTypes.clear()
   }
 
   def collectDBTypes(log: LoggingAdapter) = {
@@ -158,31 +147,46 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
       nameMapping.put(dbtype.name, symbolName) match {
         case Some(x) => throw new Error(s"db-name conflict: $symbolName and $x")
         case None =>
-          resolvedMetas.append(dbtype)
-          resolvedEntityTypes.put(symbolName, dbtype.name)
-          unresolvedEntityTypes.remove(symbolName)
+          resolvedMetas.put(dbtype.name, dbtype)
+          resolvedStructTypes.put(symbolName, dbtype.name)
+          unresolvedStructTypes.remove(symbolName)
       }
       log.debug("found dbtype: {} -> {}", dbtype.name, symbolName)
     }
-    def resolveEntity(symbol: Symbol, tpe: Type, topLevel: Boolean) = {
-      val dbtype =
-        if (symbol.isAbstract) {
-          DBType.EntityMeta(fullName(symbol), Nil, Nil, isTopLevel = topLevel, isAbstract = true)
-        } else {
-          val ctor = tpe.decl(termNames.CONSTRUCTOR).asMethod
-          DBType.EntityMeta(fullName(symbol),
-            ctor.paramLists(0) map { p =>
-              DBType.ColumnMeta(localName(p), getTypeRef(p.typeSignature, p.fullName))
-            }, Nil, isTopLevel = topLevel, isAbstract = false)
-        }
-      resolve(dbtype, symbol.fullName)
+    def resolveStruct(symbol: Symbol): Unit = {
+      if (!resolvedStructTypes.contains(symbol.fullName)) {
+        if (symbol.isClass) {
+          val classSymbol = symbol.asClass
+          if (classSymbol.isModuleClass) {
+            resolveStruct(classSymbol.selfType.termSymbol)
+          } else if (classSymbol.isAbstract) {
+            if (classSymbol.isSealed) {
+              val subs = classSymbol.knownDirectSubclasses
+              subs foreach resolveStruct
+              val dbtype = DBType.InterfaceMeta(fullName(symbol), isSealed = true, (subs map fullName).toSeq, Nil)
+              resolve(dbtype, symbol.fullName)
+            } else {
+              val dbtype = DBType.InterfaceMeta(fullName(symbol), isSealed = false, Nil, Nil)
+              resolve(dbtype, symbol.fullName)
+            }
+          } else if (classSymbol.isCaseClass) {
+            val tpe = classSymbol.toType
+            val ctor = tpe.decl(termNames.CONSTRUCTOR).asMethod
+            val dbtype = DBType.StructMeta(fullName(symbol),
+              ctor.paramLists(0) map { p =>
+                DBType.ColumnMeta(localName(p), getTypeRef(p.typeSignature, p.fullName))
+              }, Nil, isEntity = tpe <:< entityType)
+            resolve(dbtype, symbol.fullName)
+          } else
+            throw new Error(s"expect case class: ${symbol.fullName}")
+        } else if (symbol.isModule) {
+          resolve(DBType.ValueMeta(fullName(symbol), Nil), symbol.fullName)
+        } else
+          throw new IllegalStateException()
+      }
     }
-    types(typeOf[Entity].typeSymbol.fullName) withFilter {
-      !_.isAbstract
-    } foreach { symbol =>
-      resolveEntity(symbol, symbol.asType.toType, true)
-    }
-    types(typeOf[EntityCollection[_]].typeSymbol.fullName) withFilter {
+    types(entityType.typeSymbol.fullName) foreach resolveStruct
+    types(collType.typeSymbol.fullName) withFilter {
       !_.isAbstract
     } foreach { symbol =>
       val classSymbol = if (symbol.isModule) symbol.asModule.moduleClass.asClass else symbol.asClass
@@ -204,14 +208,18 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
         builder.result(), tpe <:< rootCollType, 0)
       resolve(dbtype, symbol.fullName)
     }
-    delayResolvedEntityTypes.values foreach { tpe =>
-      resolveEntity(tpe.typeSymbol, tpe, false)
+    types(typeOf[DataView[_, _]].typeSymbol.fullName) withFilter {
+      !_.isAbstract
+    } foreach { symbol =>
+      val dbtype = DBType.DataViewMeta(fullName(symbol), 0)
+      resolve(dbtype, symbol.fullName)
     }
-    delayResolvedEntityTypes.clear()
-    if (unresolvedEntityTypes.nonEmpty) {
+    delayResolvedStructTypes foreach resolveStruct
+    delayResolvedStructTypes.clear()
+    if (unresolvedStructTypes.nonEmpty) {
       val sb = new StringBuilder
       sb.append("following types unresolved and used as dbtypes:\r\n")
-      unresolvedEntityTypes foreach {
+      unresolvedStructTypes foreach {
         case (symbolName, refs) =>
           sb.append(s"\t'$symbolName' used by\r\n")
           refs foreach { ref =>
@@ -241,20 +249,26 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
     } else if (tpe <:< traversableType) {
       val tType = tpe.baseType(traversableType.typeSymbol)
       DBType.Coll(getTypeRef(tType.typeArgs(0), tpe.typeSymbol.fullName))
-    } else if (tpe <:< entityType) {
-      resolvedEntityTypes.get(tpe.typeSymbol.fullName) match {
-        case Some(x) => DBType.EntityRef(x)
-        case None =>
-          unresolvedEntityTypes.getOrElseUpdate(tpe.typeSymbol.fullName, mutable.Set()).add(ref)
-          DBType.EntityRef(fullName(tpe.typeSymbol))
-      }
     } else if (tpe <:< refType) {
       DBType.Ref(getTypeRef(tpe.typeArgs.head, ref))
-    } else if (tpe <:< collType) {
-      DBType.EntityCollRef(fullName(tpe.typeSymbol))
     } else {
-      delayResolvedEntityTypes.put(tpe.typeSymbol.fullName, tpe)
-      DBType.EntityRef(fullName(tpe.typeSymbol))
+      resolvedStructTypes.get(tpe.typeSymbol.fullName) match {
+        case Some(x) =>
+          resolvedMetas(x) match {
+            case m: DBType.StructMeta => DBType.Struct(x)
+            case m: DBType.InterfaceMeta =>
+              if (!m.isSealed) throw new Error(s"expect sealed trait or case class: ${tpe.typeSymbol.fullName} referenced by $ref")
+              DBType.Struct(x)
+            case _ => throw new IllegalStateException()
+          }
+        case None =>
+          if (tpe <:< entityType)
+            unresolvedStructTypes.getOrElseUpdate(tpe.typeSymbol.fullName, mutable.Set()).add(ref)
+          else
+            delayResolvedStructTypes.add(tpe.typeSymbol)
+          DBType.Struct(fullName(tpe.typeSymbol))
+      }
+      DBType.Struct(fullName(tpe.typeSymbol))
     }
   }
 }
