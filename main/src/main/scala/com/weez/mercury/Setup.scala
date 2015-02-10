@@ -31,7 +31,7 @@ object Setup {
         }
         backend.delete(dbPath)
       case NewDB =>
-        db = backend.createNew(Util.resolvePath(dbPath))
+        db = backend.createNew(FileIO.resolvePathExp(dbPath))
       case CloseDB =>
         db.close()
       case Shutdown =>

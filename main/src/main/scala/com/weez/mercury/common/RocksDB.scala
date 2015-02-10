@@ -6,7 +6,7 @@ import org.rocksdb._
 class RocksDBDatabaseFactory(g: GlobalSettings) extends DatabaseFactory {
   def createNew(path: String): Database = {
     import java.nio.file._
-    val actualPath = Util.resolvePath(path)
+    val actualPath = FileIO.resolvePathExp(path)
     val p = Paths.get(actualPath)
     if (Files.exists(p, LinkOption.NOFOLLOW_LINKS))
       throw new Exception("already exists")
@@ -16,14 +16,14 @@ class RocksDBDatabaseFactory(g: GlobalSettings) extends DatabaseFactory {
 
   def open(path: String): Database = {
     import java.nio.file._
-    val p = Util.resolvePath(path)
+    val p = FileIO.resolvePathExp(path)
     if (!Files.isDirectory(Paths.get(p)))
       throw new Exception("not a database directory")
     new RocksDBDatabase(g, p)
   }
 
   def delete(path: String) =
-    Util.deleteDirectory(Util.resolvePath(path))
+    FileIO.deleteDirectory(FileIO.resolvePathExp(path))
 }
 
 private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database {

@@ -27,67 +27,6 @@ object Util {
     }
   }
 
-  def resolvePath(pathExp: String) = {
-    import scala.util.matching.Regex
-    val re = new Regex("^(~)|\\$([a-zA-Z0-9_]+)|\\$\\{([a-zA-Z0-9_]+)\\}")
-    re.replaceAllIn(pathExp, m => {
-      var exp: String = null
-      var i = 1
-      while (exp == null) {
-        exp = m.group(i)
-        i += 1
-      }
-      if (exp == "~") {
-        exp = if (System.getProperty("os.name").startsWith("Windows")) "USERPROFILE" else "HOME"
-      }
-      exp = System.getenv(exp)
-      val sep = java.io.File.separator
-      exp = if (exp.endsWith(sep)) exp.substring(0, exp.length - 1) else exp
-      if (sep != "/")
-        exp.replace("/", sep)
-      else
-        exp
-    })
-  }
-
-  def deleteDirectory(path: String): Unit = {
-    import java.nio.file._
-    val p = Paths.get(path)
-    if (Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
-      if (Files.isSymbolicLink(p)) {
-        Files.delete(p)
-      } else if (Files.isDirectory(p)) {
-        val dirs = scala.collection.mutable.Stack[Path]()
-        val emptyDirs = scala.collection.mutable.Stack[Path]()
-        dirs.push(p)
-        while (dirs.nonEmpty) {
-          val p = dirs.pop
-          emptyDirs.push(p)
-          val dir = Files.newDirectoryStream(p)
-          val toDelete = scala.collection.mutable.ListBuffer[Path]()
-          try {
-            val itor = dir.iterator()
-            while (itor.hasNext) {
-              val p = itor.next()
-              if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS))
-                dirs.push(p)
-              else
-                toDelete.append(p)
-            }
-            toDelete foreach Files.delete
-            toDelete.clear()
-          } finally {
-            dir.close()
-          }
-        }
-        while (emptyDirs.nonEmpty) {
-          Files.delete(emptyDirs.pop)
-        }
-      } else
-        throw new Exception("not a directory")
-    }
-  }
-
   def compareUInt8s(a: Array[Byte], b: Array[Byte]): Int = {
     compareUInt8s(a, 0, a.length, b, 0, b.length)
   }
