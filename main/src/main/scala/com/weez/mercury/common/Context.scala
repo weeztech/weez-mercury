@@ -167,9 +167,11 @@ trait EntityCollection[V <: Entity] {
 
   def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V]
 
+  def defUniqueIndexEx[K: Packer](name: String, getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V]
+
   def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V]
 
-  def defMIndex[K: Packer](name: String, getKeys: V => Seq[K]): Index[K, V]
+  def defIndexEx[K: Packer](name: String, getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V]
 
   def newEntityID()(implicit db: DBSessionUpdatable): Long
 
@@ -208,9 +210,11 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]
 
   @inline final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerRef, name, getKey)
 
+  @inline final def defUniqueIndexEx[K: Packer](name: String, getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V] = host.defUniqueIndexEx[K](ownerRef, name, getKey)
+
   @inline final def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerRef, name, getKey)
 
-  @inline final def defMIndex[K: Packer](name: String, getKeys: V => Seq[K]): Index[K, V] = host.defMKIndex[K](ownerRef, name, getKeys)
+  @inline final def defIndexEx[K: Packer](name: String, getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V] = host.defIndexEx[K](ownerRef, name, getKeys)
 
   @inline final def addListener(listener: EntityCollectionListener[SubEntityPair[O, V]]) = host.addListener(listener)
 
@@ -235,9 +239,11 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final def apply(id: Long)(implicit db: DBSessionQueryable): Option[V] = impl.get(id)
 
-  @inline final override def defUniqueIndex[K: Packer](name: String, getKey: (V) => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
+  @inline final override def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
 
-  @inline final override def defMIndex[K: Packer](name: String, getKeys: V => Seq[K]): Index[K, V] = impl.defMKIndex[K](name, getKeys)
+  @inline final override def defUniqueIndexEx[K: Packer](name: String, getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V] = impl.defUniqueIndexEx(name, getKey)
+
+  @inline final override def defIndexEx[K: Packer](name: String, getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V] = impl.defIndexEx[K](name, getKeys)
 
   @inline final override def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
 
@@ -266,6 +272,7 @@ trait Merger[V] {
 
 @collect
 abstract class DataView[K: Packer, V: Packer] {
+
   import com.weez.mercury.macros.TuplePrefixed
 
   def name: String

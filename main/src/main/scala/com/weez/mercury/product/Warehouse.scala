@@ -10,7 +10,7 @@ import com.weez.mercury.common.DTOHelper._
 @packable
 final case class Warehouse(code: String,
                            title: String,
-                           description: String)extends Entity
+                           description: String) extends Entity
 
 object WarehouseCollection extends RootCollection[Warehouse] {
   override def name: String = "warehouse"
@@ -22,6 +22,36 @@ case class Provider(code: String,
 
 object ProviderCollection extends RootCollection[Provider] {
   override def name: String = "provider"
+}
+
+trait ProductFlowEntry {
+  def product: Ref[Product]
+
+  def serialNumber: String
+
+  def stock: Ref[Entity]
+
+  def quantity: Int
+
+  def totalValue: Int
+}
+
+
+sealed trait ProductFlowPeer {
+  def stock: Ref[Entity]
+}
+
+final case class ProductFlowFromPeer(stock: Ref[Entity]) extends ProductFlowPeer
+
+final case class ProductFlowToPeer(stock: Ref[Entity]) extends ProductFlowPeer
+
+trait ProductFlow extends Entity {
+
+  def peerStock: ProductFlowPeer
+
+  def datetime: DateTime
+
+  def items: Seq[ProductFlowEntry]
 }
 
 /**
@@ -37,16 +67,21 @@ final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateT
 /**
  * 库存明晰帐－值部分
  * @param quantity 数量
- * @param totalPrice 价值
+ * @param totalValue 价值
  */
 @packable
 final case class StockAccountValue(quantity: Int,
-                                   totalPrice: Int) {
-  @inline def +(that: StockAccountValue) = StockAccountValue(this.quantity + that.quantity, this.totalPrice + that.totalPrice)
+                                   totalValue: Int) {
 
-  @inline def -(that: StockAccountValue) = StockAccountValue(this.quantity - that.quantity, this.totalPrice - that.totalPrice)
+  @inline def +(that: StockAccountValue) = StockAccountValue(this.quantity + that.quantity, this.totalValue + that.totalValue)
 
-  @inline def isEmpty = quantity == 0 && totalPrice == 0
+  @inline def +(that: ProductFlowEntry) = StockAccountValue(this.quantity + that.quantity, this.totalValue + that.totalValue)
+
+  @inline def -(that: StockAccountValue) = StockAccountValue(this.quantity - that.quantity, this.totalValue - that.totalValue)
+
+  @inline def -(that: ProductFlowEntry) = StockAccountValue(this.quantity - that.quantity, this.totalValue - that.totalValue)
+
+  @inline def isEmpty = quantity == 0 && totalValue == 0
 
   @inline def isDefined = !isEmpty
 
@@ -54,114 +89,60 @@ final case class StockAccountValue(quantity: Int,
 
   @inline def asStockSummaryAccountValue() = {
     if (quantity > 0)
-      StockSummaryAccountValue(quantity, totalPrice, 0, 0)
+      StockSummaryAccountValue(quantity, totalValue, 0, 0)
     else
-      StockSummaryAccountValue(0, 0, quantity, totalPrice)
+      StockSummaryAccountValue(0, 0, quantity, totalValue)
   }
 }
+
 
 object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
   override def name: String = "stock-account"
 
-  /**
-   * 租入
-   */
-  defExtractor(RentInOrderCollection) { (r, db) =>
-    r.items groupBy { item =>
-      StockAccountKey(
-        stockID = item.warehouse.id,
-        productID = item.product.id,
-        datetime = r.datetime,
-        bizRefID = r.id
-      )
-    } mapValues { items =>
-      var qty: Int = 0
-      var value: Int = 0
-      for (x <- items) {
-        qty += x.quantity
-        value += x.productsValue
+  private def defExtractors(): Unit = {
+    def extractor(flow: ProductFlow, db: DBSessionQueryable) = {
+      val peer = flow.peerStock
+      var result = Map.empty[StockAccountKey, StockAccountValue]
+      for (x <- flow.items) {
+        val k = StockAccountKey(
+          stockID = x.stock.id,
+          productID = x.product.id,
+          datetime = flow.datetime,
+          bizRefID = flow.id
+        )
+        val exist = result.get(k)
+        val v = if (exist.isEmpty) {
+          peer match {
+            case _: ProductFlowFromPeer =>
+              StockAccountValue(x.quantity, x.totalValue)
+            case _: ProductFlowToPeer =>
+              StockAccountValue(-x.quantity, -x.totalValue)
+          }
+        } else {
+          val ev = exist.get
+          peer match {
+            case _: ProductFlowFromPeer =>
+              ev + x
+            case _: ProductFlowToPeer =>
+              ev - x
+          }
+        }
+        result = result.updated(k, v)
       }
-      StockAccountValue(
-        quantity = qty,
-        totalPrice = value
-      )
+      result
+    }
+    val sources = Seq(
+      RentInOrderCollection, //租入
+      RentInReturnCollection, //租入归还
+      PurchaseOrderCollection, //采购
+      PurchaseReturnCollection //采购退货
+    )
+    for (s <- sources) {
+      defExtractor(s)(extractor)
     }
   }
 
-  /**
-   * 租入归还
-   */
-  defExtractor(RentInReturnCollection) { (r, db) =>
-    r.items groupBy { item =>
-      StockAccountKey(
-        stockID = item.warehouse.id,
-        productID = item.product.id,
-        datetime = r.datetime,
-        bizRefID = r.id
-      )
-    } mapValues { items =>
-      var qty: Int = 0
-      var value: Int = 0
-      for (x <- items) {
-        qty -= x.quantity
-        value -= x.productsValue
-      }
-      StockAccountValue(
-        quantity = qty,
-        totalPrice = value
-      )
-    }
-  }
-
-  /**
-   * 采购
-   */
-  defExtractor(PurchaseOrderCollection) { (r, db) =>
-    r.items groupBy { item =>
-      StockAccountKey(
-        stockID = item.warehouse.id,
-        productID = item.product.id,
-        datetime = r.datetime,
-        bizRefID = r.id
-      )
-    } mapValues { items =>
-      var qty: Int = 0
-      var value: Int = 0
-      for (x <- items) {
-        qty += x.quantity
-        value += x.productsValue
-      }
-      StockAccountValue(
-        quantity = qty,
-        totalPrice = value
-      )
-    }
-  }
-
-  /**
-   * 采购退货
-   */
-  defExtractor(PurchaseReturnCollection) { (r, db) =>
-    r.items groupBy { item =>
-      StockAccountKey(
-        stockID = item.warehouse.id,
-        productID = item.product.id,
-        datetime = r.datetime,
-        bizRefID = r.id
-      )
-    } mapValues { items =>
-      var qty: Int = 0
-      var value: Int = 0
-      for (x <- items) {
-        qty -= x.quantity
-        value -= x.productsValue
-      }
-      StockAccountValue(
-        quantity = qty,
-        totalPrice = value
-      )
-    }
-  }
+  defExtractors()
 }
 
 @packable
@@ -214,4 +195,48 @@ object StockYearlyAccount extends StockSummaryAccount {
   def name: String = "stock-account-yearly"
 
   def dateFold(datetime: DateTime) = datetime.yearFloor
+}
+
+@packable
+case class ProductSNTraceKey(serialNumber: String, datetime: DateTime, bizRefID: Long)
+
+@packable
+case class ProductSNTraceValue(productID: Long, fromStockID: Long, toStockID: Long)
+
+object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
+  override def name: String = "product-sn-trace"
+
+  private def defExtractors(): Unit = {
+    def extractor(flow: ProductFlow, db: DBSessionQueryable) = {
+      val peer = flow.peerStock
+      var result = Map.empty[ProductSNTraceKey, ProductSNTraceValue]
+      for (x <- flow.items) {
+        val k = ProductSNTraceKey(
+          serialNumber = x.serialNumber,
+          datetime = flow.datetime,
+          bizRefID = flow.id
+        )
+        if (!result.contains(k)) {
+          val v = peer match {
+            case p: ProductFlowFromPeer => ProductSNTraceValue(x.product.id, p.stock.id, x.stock.id)
+            case p: ProductFlowToPeer => ProductSNTraceValue(x.product.id, x.stock.id, p.stock.id)
+          }
+          result = result.updated(k, v)
+        }
+      }
+      result
+    }
+    val sources = Seq(
+      RentInOrderCollection, //租入
+      RentInReturnCollection, //租入归还
+      PurchaseOrderCollection, //采购
+      PurchaseReturnCollection //采购退货
+    )
+    for (s <- sources) {
+      defExtractor(s)(extractor)
+    }
+  }
+
+  defExtractors()
+
 }
