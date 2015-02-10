@@ -56,15 +56,6 @@ private object EntityCollections {
     host
   }
 
-  @inline
-  private final def getDataView[K, V](dataViewID: Int)(implicit db: DBSessionQueryable): DataViewImpl[K, V] = {
-    val dv = findDBObject(dataViewID).asInstanceOf[DataViewImpl[K, V]]
-    if (dv ne null) {
-      return dv
-    }
-    None.get
-  }
-
   def forSubCollection[O <: Entity, V <: Entity : Packer](pc: SubCollection[O, V]): SubHostCollectionImpl[O, V] = {
     val name = pc.name
     dbObjectsByName synchronized {
@@ -188,15 +179,18 @@ private object EntityCollections {
 
     @inline final def hasStringFields: Boolean = true
 
-    val extractors = new AtomicReference[OuterEntityExtractor[V, _, _]]
+    val extractors = new AtomicReference[EntityExtractor[V, _, _]]
 
-    @inline
+    private var hasReverseExtracts = 0
+
+    @inline final def setHasReverseExtracts() = hasReverseExtracts = 1
+
     private final def updateInternals(entityID: Long, oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       //全文检索和反向索引
-      val oldRefs = Set.newBuilder[Long]
-      val newRefs = Set.newBuilder[Long]
-      val oldTexts = Seq.newBuilder[String]
-      val newTexts = Seq.newBuilder[String]
+      var oldRefs = Set.empty[Long]
+      var newRefs = Set.empty[Long]
+      var oldTexts = List.empty[String]
+      var newTexts = List.empty[String]
 
       def search(e: Any, isNew: Boolean): Unit = e match {
         case p: Product =>
@@ -207,31 +201,45 @@ private object EntityCollections {
           }
         case p: Iterable[_] =>
           p.foreach(e => search(e, isNew))
-        case r: Ref[_] => (if (isNew) newRefs else oldRefs) += r.id
-        case s: String => (if (isNew) newTexts else oldTexts) += s
+        case r: Ref[_] => if (isNew) newRefs += r.id else oldRefs += r.id
+        case s: String => if (isNew) newTexts ::= s else oldTexts ::= s
         case _ =>
       }
       search(oldEntity, isNew = false)
       search(oldEntity, isNew = true)
-      FullTextSearchIndex.update(entityID, oldTexts.result(), newTexts.result())
-      RefReverseIndex.update(entityID, oldRefs.result(), newRefs.result())
+      FullTextSearchIndex.update(entityID, oldTexts, newTexts)
+      RefReverseIndex.update(entityID, oldRefs, newRefs)
       //索引
       var idx = indexes.get
       while (idx ne null) {
         idx.update(entityID, oldEntity, newEntity)
         idx = idx.nextInHost
       }
-      //视图
+      //视图extractor
       var e = extractors.get
       while (e ne null) {
-        e.update(entityID, entityID, oldEntity, newEntity)
+        e.update(entityID, oldEntity, newEntity)
         e = e.nextInHost
       }
-      if (oldEntity ne null) {
-        for (x <- ExtractorIndex.scan(entityID)) {
-          val rootEntityID = x._2
-          val dataViewID = x._1
-          getDataView(dataViewID).update(rootEntityID, entityID, oldEntity, newEntity)
+      if (hasReverseExtracts == 0) {
+        if (ExtractorReverseIndex.hasReverseExtracts(getCollectionID)) {
+          hasReverseExtracts = 1
+        } else {
+          hasReverseExtracts = -1
+        }
+      }
+      if (hasReverseExtracts > 0) {
+        val cursor = ExtractorReverseIndex.scan(entityID)
+        try {
+          for (x <- cursor) {
+            findDBObject(x.extractID) match {
+              case dv: DataViewImpl[_, _] => dv.update(x.rootEntityID, entityID, oldEntity, newEntity)
+              case idx: AbstractIndexImpl[_, _] => idx.update(x.rootEntityID, entityID, oldEntity, newEntity)
+              case _ => throw new IllegalStateException(s"extractor missing! id: ${x.extractID}")
+            }
+          }
+        } finally {
+          cursor.close()
         }
       }
     }
@@ -283,13 +291,16 @@ private object EntityCollections {
       }
     }
 
-    @inline final def addListener(listener: EntityCollectionListener[V]) =
+    @inline
+    final def addListener(listener: EntityCollectionListener[V]) =
       this.regListener(listener, None, reg = true)
 
-    @inline final def removeListener(listener: EntityCollectionListener[V]) =
+    @inline
+    final def removeListener(listener: EntityCollectionListener[V]) =
       this.regListener(listener, None, reg = false)
 
-    @inline final def notifyUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+    @inline
+    final def notifyUpdate(oldEntity: V, newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       val uls = updateListeners
       var i = uls.length - 1
       while (i >= 0) {
@@ -299,7 +310,8 @@ private object EntityCollections {
       updateInternals(oldEntity.id, oldEntity, newEntity)
     }
 
-    @inline final def notifyInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
+    @inline
+    final def notifyInsert(newEntity: V)(implicit db: DBSessionUpdatable): Unit = {
       val newID = newEntity.id
       val uls = insertListeners
       var i = uls.length - 1
@@ -310,7 +322,8 @@ private object EntityCollections {
       updateInternals(newID, null.asInstanceOf[V], newEntity)
     }
 
-    @inline final def notifyDelete(id: Long)(implicit db: DBSessionUpdatable): Boolean = {
+    @inline
+    final def notifyDelete(id: Long)(implicit db: DBSessionUpdatable): Boolean = {
       val d = get0(id)
       if (d.isEmpty) {
         return false
@@ -597,30 +610,27 @@ private object EntityCollections {
     }
   }
 
-  class RefTracer(db: DBSessionQueryable, rootEntityID: Long, refEntityID: Long, oldRefEntity: Entity, newRefEntity: Entity) extends DBSessionQueryable {
-    val oldRefIDs = mutable.HashSet.empty[Long]
-    val newRefIDs = mutable.HashSet.empty[Long]
+  class RefTracer(db: DBSessionQueryable, val rootEntityID: Long, refEntityID: Long, oldRefEntity: Entity, newRefEntity: Entity) extends DBSessionQueryable {
+    var oldRefIDs = Set.empty[Long]
+    var newRefIDs = Set.empty[Long]
     val oldRef = Option(oldRefEntity)
     val newRef = Option(newRefEntity)
-    private var ref = oldRef
-    private var refIDs = oldRefIDs
+    var asNew: Boolean = false
 
     @inline
     final def use(asNew: Boolean): Unit = {
-      if (asNew) {
-        ref = newRef
-        refIDs = newRefIDs
-      } else {
-        ref = oldRef
-        refIDs = oldRefIDs
-      }
+      this.asNew = asNew
     }
 
     def get[K: Packer, V: Packer](key: K): Option[V] = key match {
-      case `refEntityID` => ref.asInstanceOf[Option[V]]
+      case `refEntityID` => (if (asNew) newRef else oldRef).asInstanceOf[Option[V]]
       case id: Long =>
         if (id != rootEntityID) {
-          refIDs += id
+          if (asNew) {
+            newRefIDs += id
+          } else {
+            oldRefIDs += id
+          }
         }
         db.get[Long, V](id)
       case _ => db.get[K, V](key)
@@ -643,7 +653,7 @@ private object EntityCollections {
         tracer.use(asNew)
         if (v.isEmpty) Map.empty.asInstanceOf[scala.collection.Map[K2, V2]] else extract(k, v.get, tracer)
       }
-      to.updateDB(ex(oldV, asNew = false), ex(oldV, asNew = true), tracer, 0)
+      to.updateDB(ex(oldV, asNew = false), ex(oldV, asNew = true), tracer)
     }
 
     if (to.findExtractor(from) ne null) {
@@ -666,21 +676,26 @@ private object EntityCollections {
 
 
   class EntityExtractor[E <: Entity, DK, DV](val dv: DataViewImpl[DK, DV], val host: HostCollectionImpl[E], extract: Extract[E, DK, DV]) {
-    def update(rootEntityID: Long, refEntityID: Long, oldEntity: Entity, newEntity: Entity)(implicit db: DBSessionUpdatable): Unit = {
-      val oldRoot: E = if (rootEntityID == refEntityID) oldEntity.asInstanceOf[E] else host.get1(rootEntityID)
-      val newRoot: E = if (rootEntityID == refEntityID) newEntity.asInstanceOf[E] else oldRoot
-      val tracer = new RefTracer(db, rootEntityID, refEntityID, oldEntity, newEntity)
-      val oldKV = if (oldRoot ne null) extract(oldRoot, tracer) else Map.empty[DK, DV]
+    def update(rootEntityID: Long, oldRootEntity: E, newRootEntity: E)(implicit db: DBSessionUpdatable): Unit = {
+      val tracer = new RefTracer(db, rootEntityID, rootEntityID, oldRootEntity, newRootEntity)
+      tracer.use(asNew = false)
+      val oldKV = if (oldRootEntity ne null) extract(oldRootEntity, tracer) else Map.empty[DK, DV]
       tracer.use(asNew = true)
-      val newKV = if (newRoot ne null) extract(newRoot, tracer) else Map.empty[DK, DV]
-      dv.updateDB(oldKV, newKV, tracer, rootEntityID)
+      val newKV = if (newRootEntity ne null) extract(newRootEntity, tracer) else Map.empty[DK, DV]
+      dv.updateDB(oldKV, newKV, tracer)
+      ExtractorReverseIndex.update(dv.getDataViewID, tracer)
     }
-  }
 
-  class OuterEntityExtractor[E <: Entity, DK, DV](dv: DataViewImpl[DK, DV],
-                                                  host: HostCollectionImpl[E],
-                                                  extract: Extract[E, DK, DV])
-    extends EntityExtractor[E, DK, DV](dv, host, extract) {
+    def update(rootEntityID: Long, refEntityID: Long, oldEntity: Entity, newEntity: Entity)(implicit db: DBSessionUpdatable): Unit = {
+      val rootEntity = host.get1(rootEntityID)
+      val tracer = new RefTracer(db, rootEntityID, refEntityID, oldEntity, newEntity)
+      tracer.use(asNew = false)
+      val oldKV = extract(rootEntity, tracer)
+      tracer.use(asNew = true)
+      val newKV = extract(rootEntity, tracer)
+      dv.updateDB(oldKV, newKV, tracer)
+      ExtractorReverseIndex.update(dv.getDataViewID, tracer)
+    }
 
     if (dv.findExtractor(host) ne null) {
       throw new IllegalArgumentException("dump extractor")
@@ -702,15 +717,15 @@ private object EntityCollections {
   class DataViewImpl[DK: Packer, DV: Packer](val name: String, val merger: Merger[DV])
                                             (implicit val fullKeyPacker: Packer[(Int, DK)], val vPacker: Packer[DV]) extends DBObject {
 
-    val entityExtractors = new AtomicReference[OuterEntityExtractor[_, DK, DV]](null)
+    val entityExtractors = new AtomicReference[EntityExtractor[_, DK, DV]](null)
 
     def defExtractor[E <: Entity](collection: EntityCollection[E], f: Extract[E, DK, DV]): Unit = {
       collection match {
         case r: RootCollection[E] =>
-          new OuterEntityExtractor(this, r.impl, f)
+          new EntityExtractor(this, r.impl, f)
         case s: SubCollection[_, E] =>
           val ex = (sce: SCE[_, E], db: DBSessionQueryable) => f(sce.entity, db)
-          new OuterEntityExtractor(this, s.host, ex)
+          new EntityExtractor(this, s.host, ex)
       }
     }
 
@@ -776,9 +791,9 @@ private object EntityCollections {
       _meta
     }
 
-    @inline private final def getDataViewID(implicit db: DBSessionQueryable): Int = getMeta.prefix
+    @inline final def getDataViewID(implicit db: DBSessionQueryable): Int = getMeta.prefix
 
-    final def updateDB(oldKV: collection.Map[DK, DV], newKV: collection.Map[DK, DV], tracer: RefTracer, rootEntityID: Long)
+    final def updateDB(oldKV: collection.Map[DK, DV], newKV: collection.Map[DK, DV], tracer: RefTracer)
                       (implicit db: DBSessionUpdatable): Unit = {
       val dataViewID = getDataViewID
       def get(k: DK): Option[DV] = db.get((dataViewID, k))(fullKeyPacker, vPacker)
@@ -840,9 +855,6 @@ private object EntityCollections {
           update(k, None, Some(v))
         }
       }
-      if (rootEntityID != 0) {
-        ExtractorIndex.update(dataViewID, rootEntityID, tracer.oldRefIDs, tracer.newRefIDs)
-      }
     }
 
     final def scan(dbRange: DBRange, forward: Boolean = true)(implicit db: DBSessionQueryable): Cursor[KeyValue[DK, DV]] = {
@@ -901,78 +913,97 @@ private object EntityCollections {
       _meta.prefix
     }
 
-    def update(entityID: Long, oldEntity: E, newEntity: E)(implicit db: DBSessionUpdatable): Unit = {
+    def doUpdate(oldEntity: E, newEntity: E, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
       val indexID = getIndexID
-      val newFK = if (newEntity ne null) v2fk(indexID, newEntity, db)
-      else {
-        for (k <- v2fk(indexID, oldEntity, db)) {
-          db.del(k)
-        }
-        return
-      }
-      val oldFK = if (oldEntity ne null) v2fk(indexID, oldEntity, db)
-      else {
+      val oldFK = if (oldEntity ne null) {
+        tracer.use(asNew = false)
+        v2fk(indexID, oldEntity, tracer)
+      } else {
+        tracer.use(asNew = true)
         for (k <- v2fk(indexID, newEntity, db)) {
           if (unique) {
-            db.put(k, entityID)
+            db.put(k, tracer.rootEntityID)
           } else {
             db.put(k, true)
           }
         }
         return
       }
-      for (fk <- newFK) {
-        if (!oldFK.contains(fk)) {
-          if (unique) {
-            db.put(fk, entityID)
-          } else {
-            db.put(fk, true)
-          }
+      val newFK = if (newEntity ne null) {
+        tracer.use(asNew = true)
+        v2fk(indexID, newEntity, tracer)
+      } else {
+        tracer.use(asNew = false)
+        for (k <- v2fk(indexID, oldEntity, db)) {
+          db.del(k)
+        }
+        return
+      }
+      for (fk <- newFK -- oldFK) {
+        if (unique) {
+          db.put(fk, tracer.rootEntityID)
+        } else {
+          db.put(fk, true)
         }
       }
-      for (fk <- oldFK) {
-        if (!newFK.contains(fk)) {
-          db.del(fk)
-        }
+      for (fk <- oldFK -- newFK) {
+        db.del(fk)
       }
+      ExtractorReverseIndex.update(indexID, tracer)
     }
 
-    @inline final def deleteByFullKey(fullKey: FK)(implicit db: DBSessionUpdatable): Unit = {
+    @inline
+    final def update[R <: Entity](rootEntityID: Long, refEntityID: Long, oldRefEntity: R, newRefEntity: R)(implicit db: DBSessionUpdatable): Unit = {
+      val root = host.get1(rootEntityID)
+      val tracer = new RefTracer(db, rootEntityID, refEntityID, oldRefEntity, newRefEntity)
+      doUpdate(root, root, tracer)
+    }
+
+    @inline
+    final def update(rootEntityID: Long, oldRootEntity: E, newRootEntity: E)(implicit db: DBSessionUpdatable): Unit = {
+      val tracer = new RefTracer(db, rootEntityID, rootEntityID, oldRootEntity, newRootEntity)
+      doUpdate(oldRootEntity, newRootEntity, tracer)
+    }
+
+    @inline
+    final def deleteByFullKey(fullKey: FK)(implicit db: DBSessionUpdatable): Unit = {
       val id = db.get[FK, Long](fullKey)
       if (id.isDefined) {
         host.delete(id.get)
       }
     }
 
-    @inline final def getByFullKey[V](fullKey: FK)(implicit db: DBSessionQueryable): Option[E] = {
+    @inline
+    final def getByFullKey[V](fullKey: FK)(implicit db: DBSessionQueryable): Option[E] = {
       val id = db.get[FK, Long](fullKey)
       if (id.isDefined) host.get0(id.get) else None
     }
   }
 
+  @packable
+  case class RRIKey(prefix: Int, refID: Long, byID: Long)
+
   object RefReverseIndex {
     final val prefix = Int.MaxValue - 1
-    implicit val fullKeyPacker = Packer.of[(Int, Long, Long)]
+    implicit val fullKeyPacker = Packer.of[RRIKey]
 
     @inline final def update(entityID: Long, oldRefs: Set[Long], newRefs: Set[Long])(implicit db: DBSessionUpdatable): Unit = {
       for (r <- newRefs) {
         if (!oldRefs.contains(r)) {
-          db.put((prefix, r, entityID), true)
+          db.put(RRIKey(prefix, r, entityID), true)
         }
       }
       for (r <- oldRefs) {
         if (!newRefs.contains(r)) {
-          db.del((prefix, r, entityID))
+          db.del(RRIKey(prefix, r, entityID))
         }
       }
     }
 
     @inline final def scanRefID(id: Long, cidFrom: Int, cidTo: Int)(implicit db: DBSessionQueryable): Cursor[Long] = {
       import Range._
-      new RawKVCursor[Long]((prefix, id, entityIDOf(cidFrom, 0)) +-+(prefix, id, entityIDOf(cidTo, Long.MaxValue)), forward = true) {
-        override def buildValue() = {
-          fullKeyPacker.unapply(rawKey)._3
-        }
+      new RawKVCursor[Long](RRIKey(prefix, id, entityIDOf(cidFrom, 0)) +-+ RRIKey(prefix, id, entityIDOf(cidTo, Long.MaxValue)), forward = true) {
+        override def buildValue() = fullKeyPacker.unapply(rawKey).byID
       }
     }
 
@@ -982,23 +1013,26 @@ private object EntityCollections {
     }
   }
 
+  @packable
+  case class FTSIKey(prefix: Int, word: String, entityID: Long)
+
   object FullTextSearchIndex {
 
     final val prefix = Int.MaxValue - 2
 
-    implicit val fullKeyPacker = Packer.of[(Int, String, Long)]
+    implicit val fullKeyPacker = Packer.of[FTSIKey]
 
     @inline final def update(entityID: Long, oldTexts: Seq[String], newTexts: Seq[String])(implicit db: DBSessionUpdatable): Unit = {
       val oldWords = FullTextSearch.split(oldTexts: _*)
       val newWords = FullTextSearch.split(newTexts: _*)
       for (w <- newWords) {
         if (!oldWords.contains(w)) {
-          db.put((prefix, w, entityID), true)
+          db.put(FTSIKey(prefix, w, entityID), true)
         }
       }
       for (w <- oldWords) {
         if (!newWords.contains(w)) {
-          db.del((prefix, w, entityID))
+          db.del(FTSIKey(prefix, w, entityID))
         }
       }
     }
@@ -1007,43 +1041,57 @@ private object EntityCollections {
     @inline final def scan[V <: Entity](word: String, host: HostCollectionImpl[V])(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val r = if (host eq null) {
-        (prefix, word, 0l) +-+(prefix, word, Long.MaxValue)
+        FTSIKey(prefix, word, 0l) +-+ FTSIKey(prefix, word, Long.MaxValue)
       } else {
-        (prefix, word, host.fixID(0)) +-+(prefix, word, host.fixID(Long.MaxValue))
+        FTSIKey(prefix, word, host.fixID(0)) +-+ FTSIKey(prefix, word, host.fixID(Long.MaxValue))
       }
       new RawKVCursor[V](r, forward = true) {
-        override def buildValue() = {
-          val fk = fullKeyPacker.unapply(rawKey)
-          getEntity[V](fk._3)
-        }
+        override def buildValue() = getEntity[V](fullKeyPacker.unapply(rawKey).entityID)
       }
     }
   }
 
-  object ExtractorIndex {
-    final val prefix = Int.MaxValue - 3
-    implicit val fullKeyPacker = Packer.of[(Int, Long, Int, Long)]
+  @packable
+  case class ERIKey(prefix: Int, refID: Long, extractID: Int, rootEntityID: Long)
 
-    def update(dataViewID: Int, rootEntityID: Long, oldRefIDs: collection.Set[Long], newRefIDs: collection.Set[Long])(implicit db: DBSessionUpdatable): Unit = {
-      for (rid <- newRefIDs) {
-        if (!oldRefIDs.contains(rid)) {
-          db.put((prefix, rid, dataViewID, rootEntityID), true)
+  object ExtractorReverseIndex {
+    final val prefix = Int.MaxValue - 3
+    implicit val fullKeyPacker = Packer.of[ERIKey]
+
+    def hasReverseExtracts(collectionID: Int)(implicit db: DBSessionUpdatable): Boolean = {
+      val k = ERIKey(prefix, entityIDOf(collectionID, 0), 0, 0L)
+      val c = db.newCursor()
+      try {
+        c.seek(fullKeyPacker(k))
+        if (c.isValid) {
+          val k2 = fullKeyPacker.unapply(c.key())
+          collectionIDOf(k2.refID) == collectionID
+        } else {
+          false
+        }
+      } finally {
+        c.close()
+      }
+    }
+
+    def update(extractID: Int, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for (rid <- tracer.newRefIDs) {
+        if (!tracer.oldRefIDs.contains(rid)) {
+          findDBObject(collectionIDOf(rid)).asInstanceOf[HostCollectionImpl[_]].setHasReverseExtracts()
+          db.put(ERIKey(prefix, rid, extractID, tracer.rootEntityID), true)
         }
       }
-      for (rid <- oldRefIDs) {
-        if (!newRefIDs.contains(rid)) {
-          db.del((prefix, rid, dataViewID, rootEntityID))
+      for (rid <- tracer.oldRefIDs) {
+        if (!tracer.newRefIDs.contains(rid)) {
+          db.del(ERIKey(prefix, rid, extractID, tracer.rootEntityID))
         }
       }
     }
 
-    @inline final def scan(refID: Long)(implicit db: DBSessionQueryable): Cursor[(Int, Long)] = {
+    @inline final def scan(refID: Long)(implicit db: DBSessionQueryable): Cursor[ERIKey] = {
       import Range._
-      new RawKVCursor[(Int, Long)]((prefix, refID, 0, 0L) +--(prefix, refID, Int.MaxValue, Long.MaxValue), forward = true) {
-        override def buildValue() = {
-          val rv = fullKeyPacker.unapply(rawKey)
-          (rv._3, rv._4)
-        }
+      new RawKVCursor[ERIKey](ERIKey(prefix, refID, 0, 0L) +-- ERIKey(prefix, refID, Int.MaxValue, Long.MaxValue), forward = true) {
+        override def buildValue() = fullKeyPacker.unapply(rawKey)
       }
     }
   }
