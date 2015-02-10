@@ -105,7 +105,7 @@ object DBMetas {
   val metaCollectionMeta = CollectionMeta(
     MetaCollection.name,
     Struct("meta"),
-    IndexMeta("by-name", String, unique = true, 1) :: Nil,
+    IndexMeta("by-name", String, unique = true, 2) :: Nil,
     isRoot = true, MetaCollection.prefix)
 }
 
