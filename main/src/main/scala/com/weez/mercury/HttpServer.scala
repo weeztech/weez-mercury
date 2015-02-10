@@ -2,7 +2,6 @@ package com.weez.mercury
 
 object HttpServer {
 
-  import scala.concurrent._
   import scala.util._
   import shapeless._
   import akka.actor._
@@ -66,7 +65,12 @@ object HttpServer {
               val log = implicitly[LoggingContext]
               val costTime = (System.nanoTime - startTime) / 1000000 // ms
               log.log(DebugLevel, "upload complete in {} ms - {}", costTime, id)
-              complete(JsonModel.to(out).toString())(ctx)
+              out match {
+                case ModelResponse(x) => complete(JsonModel.to(x).toString())(ctx)
+                case FileResponse(x) => (getFromFile(x): Route)(ctx)
+                case ResourceResponse(x) => (getFromResource(x): Route)(ctx)
+                case StreamResponse(x) => ???
+              }
             case Failure(ex) => exceptionHandler(ex)(ctx)
           }
         } apply HttpRequest(uri = req.request.uri)
@@ -93,12 +97,10 @@ object HttpServer {
           }
 
           pathSingleSlash {
-            withPeer { peer =>
-              staticRoot match {
-                case Resource(x) => getFromResource(x + "/index.html")
-                case File(x) => getFromFile(normalize(x + "/index.html"))
-                case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
-              }
+            staticRoot match {
+              case Resource(x) => getFromResource(x + "/index.html")
+              case File(x) => getFromFile(normalize(x + "/index.html"))
+              case _ => throw new ConfigException.BadValue(config.origin(), "root", "unsupported type")
             }
           } ~ {
             staticRoot match {
@@ -127,14 +129,18 @@ object HttpServer {
     def postRequest(peer: String, api: String)(implicit log: LoggingContext): Route = ctx => {
       import context.dispatcher
       val startTime = System.nanoTime
-      val p = Promise[JsValue]()
       val req = parseJson(ctx.request.entity.asString)
       app.remoteCallManager.postRequest(peer, api, req).onComplete {
         case Success(out) =>
           import akka.event.Logging._
           val costTime = (System.nanoTime - startTime) / 1000000 // ms
           log.log(DebugLevel, "remote call complete in {} ms - {}", costTime, api)
-          complete(JsonModel.to(out).toString())(ctx)
+          out match {
+            case ModelResponse(x) => complete(JsonModel.to(x).toString())(ctx)
+            case FileResponse(x) => (getFromFile(x): Route)(ctx)
+            case ResourceResponse(x) => (getFromResource(x): Route)(ctx)
+            case StreamResponse(x) => ???
+          }
         case Failure(ex) => exceptionHandler(ex)(ctx)
       }
     }
@@ -155,105 +161,153 @@ object HttpServer {
     import scala.concurrent.duration._
     import akka.util.ByteString
 
-    val waterMark = 200 * 1024
+    val highWaterMark = 200 * 1024
     val `multipart/form-data` = ContentTypeRange(MediaTypes.`multipart/form-data`)
     val disposeTimeout = 5.seconds
-
-    var buffer = ByteString.empty
-    var waiting = false
-    var first = true
-    var finish = false
+    val bufferQueue = new BufferQueue()
     var suspend = false
     var decoder: Decoder = EmptyDecoder
 
-    def push(buf: ByteString): Unit = {
-      if (buf.nonEmpty) {
-        if (first) {
-          uploadContext.uploadData(buf)
-          first = false
-        } else if (waiting) {
-          uploadContext.uploadData(buf)
-          waiting = false
-        } else {
-          buffer = buffer.concat(buf)
-          if (buffer.length > waterMark) {
+    def push(x: Try[ByteString]): Boolean = {
+      x match {
+        case Success(x) =>
+          if (bufferQueue.enqueue(x) > highWaterMark && !suspend) {
             tcp ! Tcp.SuspendReading
             suspend = true
           }
-        }
-      }
-    }
-
-    def push(res: Try[ByteString]): Unit = {
-      res match {
-        case Success(x) => push(x)
+          true
         case Failure(ex) =>
           uploadContext.fail(ex)
+          context.unwatch(uploadContext.receiver)
+          context.unwatch(tcp)
           context.stop(uploadContext.receiver)
           context.stop(self)
+          false
       }
     }
 
     override def preStart() = {
+      context.watch(tcp)
       context.watch(uploadContext.receiver)
+      self ! UploadResume
     }
 
-    def receive = {
+    def receive = receiveData orElse waitingUploadResume
+
+    def receiveData: Receive = {
+      case x: ChunkedRequestStart =>
+        x.request.header[HttpHeaders.`Content-Type`] match {
+          case Some(h) if `multipart/form-data`.matches(h.contentType) =>
+            decoder = new MultipartFormDataDecoder(h.contentType)
+        }
+        val buf = x.message.entity.data.toByteString
+        if (buf.nonEmpty) push(decoder.update(buf))
+      case x: MessageChunk =>
+        val buf = x.data.toByteString
+        if (buf.nonEmpty) push(decoder.update(buf))
+      case x: ChunkedMessageEnd =>
+        if (push(decoder.end())) {
+          bufferQueue.end()
+          context.unwatch(tcp)
+          context.become(waitingUploadResume)
+        }
+      case Terminated(x) if x == tcp =>
+        uploadContext.fail(ErrorCode.RequestTimeout.exception)
+        context.unwatch(uploadContext.receiver)
+        context.stop(uploadContext.receiver)
+        context.stop(self)
+    }
+
+    def waitingUploadResume: Receive = {
+      case UploadResume =>
+        bufferQueue.dequeue { buf =>
+          if (buf.isEmpty) {
+            uploadContext.receiver ! UploadEnd(uploadContext)
+            context.setReceiveTimeout(disposeTimeout)
+            context.become(waitingDispose)
+          } else {
+            uploadContext.receiver ! UploadData(buf, uploadContext)
+            if (bufferQueue.length < highWaterMark && suspend) {
+              tcp ! Tcp.ResumeReading
+              suspend = false
+            }
+          }
+        }
+      case Terminated(x) if x == uploadContext.receiver =>
+        if (!uploadContext.disposed) {
+          log.error(s"upload receiver crashed, from remote call: ${uploadContext.api}")
+          uploadContext.fail(throw new IllegalStateException("upload receiver crashed"))
+        }
+        context.become(dropRequest)
+    }
+
+    def waitingDispose: Receive = {
       case ReceiveTimeout =>
         log.error(s"upload receiver not disposed in $disposeTimeout, from remote call: ${uploadContext.api}")
         if (!uploadContext.disposed)
           uploadContext.fail(throw new IllegalStateException("UploadContext not finish"))
         context.unwatch(uploadContext.receiver)
         context.stop(self)
-      case _: Timedout =>
-        if (finish)
-          context.setReceiveTimeout(Duration.Undefined)
-        else {
-          uploadContext.fail(ErrorCode.RequestTimeout.exception)
-          context.unwatch(uploadContext.receiver)
-          context.stop(uploadContext.receiver)
-          context.stop(self)
-        }
-      case Terminated(_) =>
+      case Terminated(x) if x == uploadContext.receiver =>
         context.setReceiveTimeout(Duration.Undefined)
-        log.error(s"upload receiver crashed, from remote call: ${uploadContext.api}")
-        if (!uploadContext.disposed)
-          uploadContext.fail(throw new IllegalStateException("upload receiver crashed"))
+        if (!uploadContext.disposed) {
+          log.error(s"UploadContext not finish, from remote call: ${uploadContext.api}")
+          uploadContext.fail(throw new IllegalStateException("UploadContext not finish"))
+        }
         context.stop(self)
-      case UploadResume =>
-        if (finish) {
-          uploadContext.uploadEnd()
-          context.setReceiveTimeout(disposeTimeout)
-        } else if (buffer.isEmpty) {
-          waiting = true
+    }
+
+    def dropRequest: Receive = {
+      case Terminated(x) if x == tcp =>
+        context.stop(self)
+      case _: ChunkedMessageEnd =>
+        context.unwatch(tcp)
+        context.stop(self)
+      case _: HttpRequestPart => // drop
+    }
+  }
+
+  class BufferQueue() {
+
+    import akka.util.ByteString
+
+    private val builder = ByteString.newBuilder
+    private var receive: ByteString => Unit = null
+    private var isEnd = false
+
+    def length = builder.length
+
+    def dequeue(f: ByteString => Unit) = {
+      require(receive == null)
+      if (isEnd) {
+        f(ByteString.empty)
+      } else if (builder.length > 0) {
+        f(builder.result())
+        builder.clear()
+      } else
+        receive = f
+    }
+
+    def enqueue(buf: ByteString): Int = {
+      require(!isEnd)
+      if (buf.nonEmpty) {
+        if (receive != null) {
+          receive(buf)
+          receive = null
         } else {
-          uploadContext.uploadData(buffer)
-          buffer = ByteString.empty
-          if (suspend) {
-            tcp ! Tcp.ResumeReading
-            suspend = false
-          }
+          builder.append(buf)
         }
-      case x: ChunkedRequestStart =>
-        if (x.request.header[HttpHeaders.`Content-Type`].exists { h =>
-          `multipart/form-data`.matches(h.contentType)
-        }) {
-          decoder = new MultipartFormDataDecoder
-        }
-        val buf = x.message.entity.data.toByteString
-        if (buf.nonEmpty)
-          push(decoder.update(buf))
-      case x: MessageChunk =>
-        val buf = x.data.toByteString
-        if (buf.nonEmpty)
-          push(decoder.update(buf))
-      case x: ChunkedMessageEnd =>
-        push(decoder.end())
-        finish = true
-        if (waiting) {
-          uploadContext.uploadEnd()
-          context.setReceiveTimeout(disposeTimeout)
-        }
+      }
+      builder.length
+    }
+
+    def end(): Unit = {
+      require(!isEnd)
+      isEnd = true
+      if (receive != null) {
+        receive(ByteString.empty)
+        receive = null
+      }
     }
   }
 
@@ -275,7 +329,7 @@ object HttpServer {
     @inline final def end() = Success(ByteString.empty)
   }
 
-  class MultipartFormDataDecoder extends Decoder {
+  class MultipartFormDataDecoder(contentType: ContentType) extends Decoder {
 
     import akka.util.ByteString
     import spray.http._
@@ -289,10 +343,10 @@ object HttpServer {
     }
 
     def end() = {
-      val entity = HttpEntity(ContentType(MediaTypes.`multipart/form-data`), HttpData(buffer))
+      val entity = HttpEntity(contentType, HttpData(buffer))
       Deserializer.MultipartFormDataUnmarshaller(entity) match {
         case Right(x) =>
-          if (x.fields.length == 1)
+          if (x.fields.length != 1)
             Failure(ErrorCode.InvalidRequest.exception)
           else
             Success(x.fields.head.entity.data.toByteString)

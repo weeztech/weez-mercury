@@ -32,7 +32,7 @@ object Test {
       dbSession.close()
       println(sb.toString())
     }
-    
+
     import scala.concurrent._
     import scala.concurrent.ExecutionContext.Implicits._
     val app = App.start(args)
@@ -47,16 +47,19 @@ object Test {
         case NonFatal(ex) => Future.failed(ex)
       }
     }
-    val futu = call("product.SessionService.init") flatMap { m =>
-      //call("debug.DBDebugService.listCollectionMetas", "prefix" -> "")
-      call("debug.DBDebugService.listRootCollection", "sid" -> m.sid, "collectionName" -> MetaCollection.name)
+    val futu = call("product.SessionService.init") flatMap {
+      case ModelResponse(m) =>
+        //call("debug.DBDebugService.listCollectionMetas", "prefix" -> "")
+        call("debug.DBDebugService.listRootCollection", "sid" -> m.sid, "collectionName" -> MetaCollection.name)
+      case _ => ???
     }
     futu.onComplete { result =>
       app.close()
       import scala.util._
       result match {
-        case Success(x) => println(JsonModel.to(x).prettyPrint)
+        case Success(ModelResponse(x)) => println(JsonModel.to(x).prettyPrint)
         case Failure(ex) => ex.printStackTrace()
+        case _ => throw new IllegalStateException()
       }
     }
   }
@@ -66,13 +69,18 @@ object Test {
   object TestService extends RemoteService {
     val upload: SimpleCall = c => {
       import c._
-      acceptUpload(new Actor {
+      val id = acceptUpload(new Actor {
         def receive = {
           case UploadData(buf, uc) =>
+            println(s"receive ${buf.length} bytes")
+            sender ! UploadResume
           case UploadEnd(uc) =>
-
+            println("upload end")
+            uc.finish(ModelObject("finish" -> "done"))
+            context.stop(self)
         }
       })
+      modelWith("id" -> id)
     }
   }
 

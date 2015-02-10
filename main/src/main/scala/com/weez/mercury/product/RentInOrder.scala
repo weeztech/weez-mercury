@@ -1,5 +1,6 @@
 package com.weez.mercury.product
 
+import com.weez.mercury.common.ModelResponse
 import com.weez.mercury.imports._
 import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common.DTOHelper._
@@ -94,7 +95,7 @@ object RentInOrderHelper {
 
     import c._
 
-    complete(toMO(RentInOrderCollection(request.id: Long)))
+    complete(ModelResponse(toMO(RentInOrderCollection(request.id: Long))))
   }
 
   def validate(rio: Option[RentInOrder]): Option[ModelObject] = ???
@@ -104,12 +105,12 @@ object RentInOrderHelper {
     import c._
 
     val rio = apply(c.request)
-    complete {
+    complete(ModelResponse {
       validate(rio).getOrElse {
         RentInOrderCollection.update(rio.get)
         toMO(rio)
       }
-    }
+    })
   }
 }
 

@@ -27,7 +27,7 @@ object AkkaServer {
           import context.dispatcher
           val remote = sender()
           app.remoteCallManager.postRequest(peer, api, ModelObject(r: _*)).onComplete {
-            case Success(x) => remote ! Response(x.underlaying.toArray)
+            case Success(x) => ???
             case Failure(ex) => remote ! Status.Failure(ex)
           }
         }

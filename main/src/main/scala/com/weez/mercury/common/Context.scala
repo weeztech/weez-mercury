@@ -11,9 +11,9 @@ trait Context extends RangeImplicits {
 
   def request: ModelObject
 
-  def response: ModelObject
+  def response: Response
 
-  def complete(response: ModelObject): Unit
+  def complete(response: Response): Unit
 
   def peer: String
 
@@ -21,6 +21,16 @@ trait Context extends RangeImplicits {
 
   def app: Application
 }
+
+sealed trait Response
+
+case class FileResponse(path: String) extends Response
+
+case class ResourceResponse(url: String) extends Response
+
+case class ModelResponse(obj: ModelObject) extends Response
+
+case class StreamResponse(actor: () => Actor) extends Response
 
 trait UploadContext {
   def id: String

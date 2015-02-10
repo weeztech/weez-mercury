@@ -16,11 +16,32 @@ trait RemoteService {
   type QueryCall = QueryCallContext => Unit
   type PersistCall = PersistCallContext => Unit
 
-  def completeWith(fields: (String, Any)*)(implicit c: Context) = {
-    if (c.response == null)
-      c.complete(ModelObject(fields: _*))
-    else
-      c.response.update(fields: _*)
+  def modelWith(fields: (String, Any)*)(implicit c: Context): Unit = {
+    c.response match {
+      case null => c.complete(ModelResponse(ModelObject(fields: _*)))
+      case ModelResponse(x) => x.update(fields: _*)
+      case _ => throw new IllegalStateException()
+    }
+  }
+
+  def sendModel(model: ModelObject)(implicit c: Context): Unit = {
+    c.complete(ModelResponse(model))
+  }
+
+  def sendModel(fields: (String, Any)*)(implicit c: Context): Unit = {
+    c.complete(ModelResponse(ModelObject(fields: _*)))
+  }
+
+  def sendFile(path: String)(implicit c: Context) = {
+    c.complete(FileResponse(path))
+  }
+
+  def sendResource(url: String)(implicit c: Context) = {
+    c.complete(ResourceResponse(url))
+  }
+
+  def sendStream(actor: => akka.actor.Actor)(implicit c: Context) = {
+    c.complete(StreamResponse(() => actor))
   }
 
   def failWith(message: String) = {
@@ -34,12 +55,9 @@ trait RemoteService {
    * count: Int 数量 <br>
    * ==response==
    * items: Seq <br>
-   * keyprop: String 主键属性名称 <br>
    * hasMore: Boolean 是否有更多记录未读取 <br>
-   * @param cur 数据库游标
-   * @param keyprop 主键属性名称
    */
-  def completeWithPager[T](cur: Cursor[T], keyprop: String)(implicit c: Context): Unit = {
+  def pager[T](cur: Cursor[T])(implicit c: Context): Unit = {
     import c._
     if (request.hasProperty("start")) {
       val start: Int = request.start
@@ -47,10 +65,53 @@ trait RemoteService {
       var arr = cur.slice(start, start + count + 1).toSeq
       val hasMore = arr.length == count + 1
       if (hasMore) arr = arr.slice(0, count)
-      completeWith("items" -> arr, "keyprop" -> keyprop, "hasMore" -> hasMore)
+      modelWith("items" -> arr, "hasMore" -> hasMore)
     } else {
-      completeWith("items" -> cur.toSeq, "keyprop" -> keyprop, "hasMore" -> false)
+      modelWith("items" -> cur.toSeq, "hasMore" -> false)
     }
+    cur.close()
+  }
+
+  def saveUploadFile[C](path: String, overwrite: Boolean = false)(f: C => Unit)(implicit c: Context, evidence: ContextType[C]): String = {
+    import akka.actor._
+    import akka.util.ByteString
+
+    c.acceptUpload(new Actor {
+      var offset = 0L
+      var file: FileIO.File = null
+
+      def receive = {
+        case UploadData(buf, uc) =>
+          if (file == null) {
+            val p = FileIO.pathOf(path)
+            if (!overwrite && p.exists) {
+              uc.fail(new IllegalStateException("file exists"))
+              context.stop(self)
+            } else {
+              file = p.openFile(create = true, write = true, truncate = true)
+              write(buf, uc)
+            }
+          } else
+            write(buf, uc)
+        case UploadEnd(uc) =>
+          uc.finishWith(f)
+          context.stop(self)
+      }
+
+      def write(buf: ByteString, uc: UploadContext) = {
+        import scala.util._
+        import context.dispatcher
+        val ref = sender()
+        file.write(buf, offset).onComplete {
+          case Success(x) =>
+            offset = x
+            ref ! UploadResume
+          case Failure(ex) =>
+            uc.fail(ex)
+            context.stop(self)
+        }
+      }
+    })
   }
 }
 

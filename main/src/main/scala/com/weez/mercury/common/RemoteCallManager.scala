@@ -16,12 +16,12 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
         if (member.isPublic && member.isMethod) {
           val method = member.asMethod
           if (method.paramLists.isEmpty) {
-            val tpe = method.returnType.baseType(typeOf[Function1[_, _]].typeSymbol)
+            val tpe = method.returnType.baseType(typeOf[_ => _].typeSymbol)
             if (!(tpe =:= NoType)) {
               val paramType = tpe.typeArgs(0)
-              if (typeOf[ContextImpl] <:< paramType) {
+              if (typeOf[FullContext] <:< paramType) {
                 builder += method.fullName -> RemoteCall(
-                  instanceMirror.reflectMethod(method)().asInstanceOf[ContextImpl => Unit],
+                  instanceMirror.reflectMethod(method)().asInstanceOf[FullContext => Unit],
                   paramType <:< typeOf[SessionState],
                   paramType <:< typeOf[DBSessionQueryable],
                   paramType <:< typeOf[DBSessionUpdatable])
@@ -34,7 +34,6 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     app.types(symbolOf[RemoteService].fullName) withFilter {
       !_.isAbstract
     } foreach { symbol =>
-      var instance: Any = null
       if (symbol.isModule) {
         collectCalls(symbol.typeSignature, mirror.reflectModule(symbol.asModule).instance)
       } else {
@@ -50,7 +49,9 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     builder.result()
   }
 
-  case class RemoteCall(f: ContextImpl => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
+  type FullContext = Context with SessionState with DBSessionUpdatable
+
+  case class RemoteCall(f: FullContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
   val workerPools = {
     val builder = Seq.newBuilder[WorkerPool]
@@ -63,68 +64,53 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     builder.result()
   }
 
-  def postRequest(peer: String, api: String, req: ModelObject): Future[ModelObject] = {
-    import scala.util.Try
-    val rc = remoteCalls.getOrElse(api, ErrorCode.RemoteCallNotFound.raise)
-    val wp =
-      workerPools.find { wp =>
-        wp.permitSessionState == rc.sessionState &&
-          wp.permitDBQuery == rc.dbQuery &&
-          wp.permitDBUpdate == rc.dbUpdate
-      }.getOrElse(ErrorCode.WorkerPoolNotFound.raise)
-    val session =
-      if (wp.permitSessionState) {
+  def postRequest(peer: String, api: String, req: ModelObject): Future[Response] = {
+    import scala.util.control.NonFatal
+    try {
+      val rc = remoteCalls.getOrElse(api, ErrorCode.RemoteCallNotFound.raise)
+      val session = if (rc.sessionState) {
         app.sessionManager
           .getAndLockSession(req.sid)
           .getOrElse(ErrorCode.InvalidSessionID.raise)
       } else null
-    val p = Promise[ModelObject]()
-    wp.post(Task({ c =>
-      p.complete(Try {
+      val p = Promise[Response]()
+      internalCallback(p, rc.sessionState, rc.dbQuery, rc.dbUpdate) { c =>
+        c.api = api
         c.peer = peer
         if (session != null)
           c.setSession(session)
         c.request = req
-        rc.f(c)
+        try {
+          rc.f(new ContextProxy(c))
+        } finally {
+          if (session != null)
+            app.sessionManager.returnAndUnlockSession(session)
+        }
         if (c.response == null)
           throw new IllegalStateException("no response")
         c.response
-      })
-      if (session != null)
-        app.sessionManager.returnAndUnlockSession(session)
-    }))
-    p.future
+      }
+      p.future
+    } catch {
+      case NonFatal(ex) => Future.failed(ex)
+    }
   }
 
-  def internalCallback(promise: Promise[ModelObject],
-                       peer: String,
-                       sessionState: Option[SessionState],
-                       req: ModelObject,
-                       permitDBQuery: Boolean,
-                       permitDBUpdate: Boolean)(f: ContextImpl => Unit) = {
-    import scala.util.Try
+  def internalCallback[T](p: Promise[T],
+                          permitSession: Boolean,
+                          permitDBQuery: Boolean,
+                          permitDBUpdate: Boolean)(f: ContextImpl => T): Unit = {
     workerPools.find { wp =>
-      wp.permitSessionState == sessionState.isDefined &&
+      wp.permitSessionState == permitSession &&
         wp.permitDBQuery == permitDBQuery &&
         wp.permitDBUpdate == permitDBUpdate
     } match {
       case Some(wp) =>
-        wp.post(Task({ c =>
-          promise.complete(Try {
-            c.peer = peer
-            sessionState foreach {
-              c.sessionState = _
-            }
-            c.request = req
-            f(c)
-            if (c.response == null)
-              throw new IllegalStateException("no response")
-            c.response
-          })
-          if (sessionState.isDefined)
-            app.sessionManager.returnAndUnlockSession(sessionState.get.session)
+        wp.post(Task(c => {
+          import scala.util.Try
+          p.complete(Try(f(c)))
         }))
-      case None => promise.failure(ErrorCode.WorkerPoolNotFound.exception)
+      case None => p.failure(ErrorCode.WorkerPoolNotFound.exception)
     }
   }
 
@@ -184,7 +170,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
                 task.f(c)
                 trans.commit()
               } finally {
-                c.dispose()
+                c.unuse()
                 trans.close()
                 done(self)
               }
@@ -199,7 +185,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
                 c.log = log
                 task.f(c)
               } finally {
-                c.dispose()
+                c.unuse()
                 done(self)
               }
           }

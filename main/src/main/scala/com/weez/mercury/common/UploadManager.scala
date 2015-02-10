@@ -47,7 +47,6 @@ class UploadManager(app: ServiceManager, config: Config) {
 }
 
 import akka.actor.ActorRef
-import akka.util.ByteString
 
 class UploadContextImpl(val id: String, val receiver: ActorRef, app: ServiceManager, val api: String) extends TTLBased[String] with UploadContext {
 
@@ -56,11 +55,11 @@ class UploadContextImpl(val id: String, val receiver: ActorRef, app: ServiceMana
   var peer: String = _
   var request: ModelObject = _
   var sessionState: Option[SessionState] = None
-  val promise = Promise[ModelObject]()
+  val promise = Promise[Response]()
   var disposed = false
 
   def finish(response: ModelObject) = {
-    promise.success(response)
+    promise.success(ModelResponse(response))
     dispose()
   }
 
@@ -68,10 +67,20 @@ class UploadContextImpl(val id: String, val receiver: ActorRef, app: ServiceMana
     if (evidence.withSessionState)
       require(sessionState.nonEmpty, "session state not available")
     app.remoteCallManager.internalCallback(
-      promise, peer, sessionState, request,
+      promise,
+      evidence.withSessionState,
       evidence.withDBQueryable,
       evidence.withDBUpdatable) { c =>
+      c.api = api
+      c.peer = peer
+      sessionState foreach {
+        c.sessionState = _
+      }
+      c.request = request
       f(c.asInstanceOf[C])
+      if (c.response == null)
+        throw new IllegalStateException("no response")
+      c.response
     }
     dispose()
   }
@@ -85,15 +94,12 @@ class UploadContextImpl(val id: String, val receiver: ActorRef, app: ServiceMana
     disposed = true
     peer = null
     request = null
-    sessionState = None
-  }
-
-  def uploadData(buf: ByteString) = {
-    receiver ! UploadData(buf, this)
-  }
-
-  def uploadEnd() = {
-    receiver ! UploadEnd(this)
+    sessionState match {
+      case Some(x) =>
+        app.sessionManager.returnAndUnlockSession(x.session)
+        sessionState = None
+      case None =>
+    }
   }
 }
 

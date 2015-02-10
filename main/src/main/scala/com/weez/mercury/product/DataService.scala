@@ -1,9 +1,6 @@
 package com.weez.mercury.product
 
-import com.github.nscala_time.time.Imports._
 import com.weez.mercury.imports._
-
-import scala.reflect.internal.util.Statistics.Quantity
 
 object DataService extends RemoteService {
 
@@ -18,7 +15,7 @@ object DataService extends RemoteService {
         mo.description = o.description
       }
     }
-    completeWith("items" -> items)
+    modelWith("items" -> items)
   }
 
   def availableRooms: QueryCall = c => {
@@ -29,7 +26,7 @@ object DataService extends RemoteService {
         "price" -> r.price,
         "description" -> r.description)
     }
-    completeWith("items" -> items)
+    modelWith("items" -> items)
   }
 
   def availableDevices: QueryCall = c => {
@@ -42,7 +39,7 @@ object DataService extends RemoteService {
         "title" -> pm.title,
         "description" -> pm.description)
     }
-    completeWith("items" -> items)
+    modelWith("items" -> items)
   }
 }
 

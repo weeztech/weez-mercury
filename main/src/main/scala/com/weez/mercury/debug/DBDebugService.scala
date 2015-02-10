@@ -6,7 +6,7 @@ object DBDebugService extends RemoteService {
   val listStructMetas: QueryCall = c => {
     import c._
     val prefix: String = request.prefix
-    val cur =
+    pager {
       (if (prefix.length > 0) {
         MetaCollection.byName(prefix +-- prefix.prefixed)
       } else {
@@ -21,14 +21,13 @@ object DBDebugService extends RemoteService {
             },
             "interfaces" -> m.interfaces)
       }
-    completeWithPager(cur, "id")
-    cur.close()
+    }
   }
 
   val listCollectionMetas: QueryCall = c => {
     import c._
     val prefix: String = request.prefix
-    val cur =
+    pager {
       (if (prefix.length > 0) {
         MetaCollection.byName(prefix +-- prefix.prefixed)
       } else {
@@ -47,8 +46,7 @@ object DBDebugService extends RemoteService {
                 "prefix" -> i.prefix)
             })
       }
-    completeWithPager(cur, "id")
-    cur.close()
+    }
   }
 
   val listRootCollection: QueryCall = c => {
@@ -59,12 +57,12 @@ object DBDebugService extends RemoteService {
         if (x.isRoot) {
           val prefix = (x.prefix & 0xffffL) << 48
           val range = prefix +-+ (prefix | (-1L >>> 16))
-          val cur = new Cursor.RawCursor(range, true) map { buf =>
-            val (v, _) = unpack(buf, 0, x.valueType)
-            v.asInstanceOf[ModelObject]
+          pager {
+            new Cursor.RawCursor(range, true) map { buf =>
+              val (v, _) = unpack(buf, 0, x.valueType)
+              v.asInstanceOf[ModelObject]
+            }
           }
-          completeWithPager(cur, "id")
-          cur.close()
         } else {
           failWith("not root collection")
         }
