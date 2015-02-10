@@ -68,12 +68,15 @@ object JsonModel {
     }
   }
 
+  val ISO8601DateTimeFormatter = org.joda.time.format.ISODateTimeFormat.dateTime()
+
   private def jsObj2model(v: JsObject): Any = {
     v.fields.get("$tpe") match {
       case Some(JsString(x)) =>
         x match {
           case "Int" => v.str("value").toInt
           case "Long" => v.str("value").toLong
+          case "DateTime" => ISO8601DateTimeFormatter.parseDateTime(v.str("value"))
         }
       case _ =>
         new ModelObject(v.fields.map { tp => tp._1 -> js2model(tp._2)})
@@ -86,6 +89,7 @@ object JsonModel {
       case x: Int => num("Int", x.toString)
       case x: Long => num("Long", x.toString)
       case x: Double => num("Double", x.toString)
+      case x: org.joda.time.DateTime => num("DateTime", ISO8601DateTimeFormatter.print(x))
       case x: Boolean => JsBoolean(x)
       case x: String => JsString(x)
       case x: Array[_] => array(x)
