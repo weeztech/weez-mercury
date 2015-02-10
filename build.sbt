@@ -13,16 +13,12 @@ scalacOptions in ThisBuild ++= Seq(
   "-target:jvm-1.7"
 )
 
-resolvers += Resolver.sonatypeRepo("snapshots")
+resolvers in ThisBuild += Resolver.sonatypeRepo("snapshots")
 
-resolvers += Resolver.sonatypeRepo("releases")
+resolvers in ThisBuild += Resolver.sonatypeRepo("releases")
 
-crossScalaVersions := Seq("2.11.4", "2.11.5")
-
-addCompilerPlugin("org.scalamacros" % "paradise" % "2.0.1" cross CrossVersion.full)
+libraryDependencies in ThisBuild += compilerPlugin("org.scalamacros" % "paradise" % "2.0.1" cross CrossVersion.full)
 
 lazy val macros = project in file("macros")
 
 lazy val main = project in file("main") dependsOn macros
-
-
