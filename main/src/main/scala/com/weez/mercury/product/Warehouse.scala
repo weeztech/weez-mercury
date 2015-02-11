@@ -1,8 +1,11 @@
 package com.weez.mercury.product
 
 import com.github.nscala_time.time.Imports._
+import com.weez.mercury.common.RefSome
 import com.weez.mercury.imports._
 import com.weez.mercury.common.DTOHelper._
+
+import scala.util.Random
 
 /**
  * 仓库
@@ -14,6 +17,8 @@ final case class Warehouse(code: String,
 
 object WarehouseCollection extends RootCollection[Warehouse] {
   override def name: String = "warehouse"
+
+  val byCode = defUniqueIndex("by-code", _.code)
 }
 
 @packable
@@ -22,6 +27,8 @@ case class Provider(code: String,
 
 object ProviderCollection extends RootCollection[Provider] {
   override def name: String = "provider"
+
+  val byCode = defUniqueIndex("by-code", _.code)
 }
 
 trait ProductFlowEntry {
@@ -103,7 +110,7 @@ object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
     def extractor(flow: ProductFlow, db: DBSessionQueryable) = {
       val peer = flow.peerStock
       var result = Map.empty[StockAccountKey, StockAccountValue]
-      for (x <- flow.items) {
+      for (x <- flow.items if x.quantity > 0 && x.stock.isDefined && x.product.isDefined) {
         val k = StockAccountKey(
           stockID = x.stock.id,
           productID = x.product.id,
@@ -238,5 +245,190 @@ object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
   }
 
   defExtractors()
+}
+
+object TestService extends RemoteService {
+  lazy val productIDs = Array[Long](1000)
+  lazy val providerIDs = Array[Long](100)
+  lazy val warehouseIDs = Array[Long](5)
+  lazy val customerIDs = Array[Long](100)
+
+  def initCustomers(c: PersistCallContext) = {
+    import c._
+    val start = System.currentTimeMillis
+    val pc = CustomerCollection
+    var i = customerIDs.length - 1
+    while (i >= 0) {
+      val code = "customer-" + i
+      val exist = pc.byCode(code)
+      if (exist.isEmpty) {
+        val p = Customer(code, code, "Customer")
+        pc.insert(p)
+        customerIDs(i) = p.id
+      } else {
+        customerIDs(i) = exist.get.id
+      }
+      i -= 1
+    }
+    val cost = System.currentTimeMillis - start
+    println(s"init ${customerIDs.length} customer cost $cost ms")
+  }
+
+  def initProducts(c: PersistCallContext) = {
+    import c._
+    val start = System.currentTimeMillis
+    val pc = ProductCollection
+    var i = productIDs.length - 1
+    while (i >= 0) {
+      val code = "product-" + i
+      val exist = pc.byCode(code)
+      if (exist.isEmpty) {
+        val p = Product(code, code, "Product", randomPrice(), randomPrice())
+        pc.insert(p)
+        productIDs(i) = p.id
+      } else {
+        productIDs(i) = exist.get.id
+      }
+      i -= 1
+    }
+    val cost = System.currentTimeMillis - start
+    println(s"init ${productIDs.length} products cost $cost ms")
+  }
+
+  def initProviders(c: PersistCallContext) = {
+    import c._
+    val start = System.currentTimeMillis
+    val pc = ProviderCollection
+    var i = providerIDs.length - 1
+    while (i >= 0) {
+      val code = "provider-" + i
+      val exist = pc.byCode(code)
+      if (exist.isEmpty) {
+        val p = Provider(code, code, "Provider")
+        pc.insert(p)
+        providerIDs(i) = p.id
+      } else {
+        providerIDs(i) = exist.get.id
+      }
+      i -= 1
+    }
+    val cost = System.currentTimeMillis - start
+    println(s"init ${providerIDs.length} providers cost $cost ms")
+  }
+
+  def initWarehouses(c: PersistCallContext) = {
+    import c._
+    val start = System.currentTimeMillis
+    val pc = WarehouseCollection
+    var i = warehouseIDs.length - 1
+    while (i >= 0) {
+      val code = "warehouse-" + i
+      val exist = pc.byCode(code)
+      if (exist.isEmpty) {
+        val p = Warehouse(code, code, "Warehouse")
+        pc.insert(p)
+        warehouseIDs(i) = p.id
+      } else {
+        warehouseIDs(i) = exist.get.id
+      }
+      i -= 1
+    }
+    val cost = System.currentTimeMillis - start
+    println(s"init ${warehouseIDs.length} warehouse cost $cost ms")
+  }
+
+  val init: PersistCall = { c =>
+    initCustomers(c)
+    initProviders(c)
+    initProducts(c)
+    initWarehouses(c)
+  }
+
+  val r = new Random()
+
+  def randomProvider() = RefSome(r.nextInt(providerIDs.length))
+
+  def randomProduct() = RefSome(r.nextInt(productIDs.length))
+
+  def randomWarehouse() = RefSome(r.nextInt(warehouseIDs.length))
+
+  def randomSN() = r.nextLong().toString
+
+  def randomPrice() = r.nextInt() * 1000 + 10
+
+  def randomItems[T](f: => T): Seq[T] = {
+    var i = r.nextInt(10)
+    var rb = List.empty[T]
+    while (i >= 0) {
+      rb ::= f
+      i -= 1
+    }
+    rb
+  }
+
+
+  private var datetime = new DateTime()
+
+  def nextDt(): DateTime = {
+    datetime = datetime.plusSeconds(1)
+    datetime
+  }
+
+  def ensureStock(c: PersistCallContext, rentOutOrder: RentOutOrder): Unit = {
+    import c._
+    case class PInfo(dt: DateTime, product: Ref[Product], qty: Int, sn: String, totalValue: Int, warehouse: Ref[Warehouse])
+    rentOutOrder.products.flatMap { p =>
+      p.outs.map { out => (out.dateTime, PurchaseOrderItem(p.product, out.serialNumber, out.quantity, out.totalValue, out.from, "rent in"))}
+    }.groupBy { case (dt, poi) =>
+      dt
+    } foreach { case (dt, x) =>
+      val number = "n-" + r.nextInt()
+      val ri = r.nextDouble()
+      if (ri > 0.9) {
+        val p = PurchaseOrder(dt, number, randomProvider(), "invoice number", "remark", x.map { case (_, poi) => poi})
+        PurchaseOrderCollection.insert(p)
+      } else {
+        val p = RentInOrder(dt, number, randomProvider(), "remark",
+          randomItems {
+            RentInOrderItem(randomProduct(), randomSN(), 1, randomPrice(), randomPrice(), randomWarehouse(), "remark")
+          }
+        )
+        RentInOrderCollection.insert(p)
+      }
+    }
+  }
+
+  def tryOpenRentOut(c: PersistCallContext, dt: DateTime): Boolean = {
+    import c._
+    val bookingOrder = {
+      val cursor = RentOutOrderCollection.byNoneClosed((RentOutOrderState.Booking, new DateTime(0)) --+(RentOutOrderState.Booking, dt), forward = false)
+      try {
+        if (!cursor.isValid) {
+          return false
+        }
+        cursor.value
+      } finally {
+        cursor.close()
+      }
+    }
+    val openOrder = bookingOrder.copy(
+      state = RentOutOrderState.Open,
+      products = bookingOrder.products.map(
+        i => i.copy(
+          outs = {
+            val productPrice = i.product().price
+            for (x <- 1 to i.quantity) yield RentOutProduct(dt, 1, randomSN(), randomWarehouse(), productPrice, "rent out")
+          }
+        )
+      )
+    )
+    ensureStock(c, openOrder)
+    RentOutOrderCollection.update(openOrder)
+    true
+  }
+
+  def insertOrders(c: PersistCallContext) = {
+    import c._
+  }
 
 }

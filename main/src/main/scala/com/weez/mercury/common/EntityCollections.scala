@@ -201,8 +201,8 @@ private object EntityCollections {
           }
         case p: Iterable[_] =>
           p.foreach(e => search(e, isNew))
-        case r: Ref[_] => if (isNew) newRefs += r.id else oldRefs += r.id
-        case s: String => if (isNew) newTexts ::= s else oldTexts ::= s
+        case r: Ref[_] => if (r.isDefined) if (isNew) newRefs += r.id else oldRefs += r.id
+        case s: String => if (s.length > 0) if (isNew) newTexts ::= s else oldTexts ::= s
         case _ =>
       }
       search(oldEntity, isNew = false)
@@ -372,6 +372,14 @@ private object EntityCollections {
       get0(checkID(id))
     }
 
+    @inline final def contains(id: Long)(implicit db: DBSessionQueryable): Boolean = {
+      if (id == 0) {
+        false
+      } else {
+        db.exists(checkID(id))
+      }
+    }
+
     final def scan(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[V] = {
       import Range._
       val cid = getCollectionID
@@ -454,15 +462,19 @@ private object EntityCollections {
         }
         new AbstractIndexImpl[FullKey, V](indexName, this, unique = true, v2fk) with UniqueIndex[K, V] {
 
-          @inline override final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
+          override final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = {
             db.get[FullKey, Long](this.getIndexID, key).flatMap(db.get[Long, V])
           }
 
-          @inline override final def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
+          final def contains(key: K)(implicit db: DBSessionQueryable): Boolean = {
+            db.exists[FullKey](this.getIndexID, key)
+          }
+
+          override final def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
             db.get[FullKey, Long](this.getIndexID, key).foreach(host.delete)
           }
 
-          @inline override final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
+          override final def update(value: V)(implicit db: DBSessionUpdatable): Unit = {
             host.update(value)
           }
 
@@ -550,6 +562,10 @@ private object EntityCollections {
           subHost.update(SCE(owner, value))
         }
 
+        final def contains(key: K)(implicit db: DBSessionQueryable): Boolean = {
+          db.exists[FullKey](rawIndex.getIndexID, owner.id, key)
+        }
+
         override def delete(key: K)(implicit db: DBSessionUpdatable): Unit = {
           rawIndex.deleteByFullKey((rawIndex.getIndexID, owner.id, key))
         }
@@ -623,8 +639,10 @@ private object EntityCollections {
     }
 
     def get[K: Packer, V: Packer](key: K): Option[V] = key match {
-      case `refEntityID` => (if (asNew) newRef else oldRef).asInstanceOf[Option[V]]
       case id: Long =>
+        if (id == refEntityID) {
+          return (if (asNew) newRef else oldRef).asInstanceOf[Option[V]]
+        }
         if (id != rootEntityID) {
           if (asNew) {
             newRefIDs += id
@@ -871,6 +889,16 @@ private object EntityCollections {
       import Range._
       val prefix = Tuple1(getDataViewID)
       scan(prefix +-+ prefix, forward)
+    }
+
+    @inline final def apply(key: DK)(implicit db: DBSessionQueryable): Option[KeyValue[DK, DV]] = {
+      import Range._
+      val v = db.get(getDataViewID -> key)(fullKeyPacker, vPacker)
+      if (v.isEmpty) {
+        None
+      } else {
+        Some(KeyValue(key, v.get))
+      }
     }
 
     @inline final def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[DK, P]): Cursor[KeyValue[DK, DV]] = {

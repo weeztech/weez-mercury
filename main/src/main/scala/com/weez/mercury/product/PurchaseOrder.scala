@@ -14,8 +14,8 @@ case class PurchaseOrderItem(product: Ref[Product],
 
 @packable
 case class PurchaseOrder(datetime: DateTime,
-                         provider: Ref[Provider],
                          number: String,
+                         provider: Ref[Provider],
                          invoiceNumber: String,
                          remark: String,
                          items: Seq[PurchaseOrderItem]) extends Entity with ProductFlow {
