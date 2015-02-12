@@ -4,6 +4,10 @@ version := "0.0.1-SNAPSHOT"
 
 resolvers += "spray repo" at "http://repo.spray.io"
 
+scalaVersion in ThisBuild := "2.11.4"
+
+addCompilerPlugin("org.scalamacros" % "paradise" % "2.0.1" cross CrossVersion.full)
+
 libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.3.8" withSources() withJavadoc(),
   "io.spray" %% "spray-can" % "1.3.2" withSources() withJavadoc(),

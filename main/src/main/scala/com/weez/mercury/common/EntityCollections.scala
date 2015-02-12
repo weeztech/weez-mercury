@@ -6,6 +6,7 @@ import scala.collection.mutable
 import com.weez.mercury.imports.packable
 import com.weez.mercury.macros.TuplePrefixed
 
+
 private object EntityCollections {
 
 
@@ -56,8 +57,17 @@ private object EntityCollections {
     host
   }
 
-  def forSubCollection[O <: Entity, V <: Entity : Packer](pc: SubCollection[O, V]): SubHostCollectionImpl[O, V] = {
-    val name = pc.name
+  def getCollectionName(c: EntityCollection[_]): String = {
+    val sn = c.getClass.getSimpleName
+    var i = sn.length - 1
+    while (sn.charAt(i) == '$') {
+      i -= 1
+    }
+    Util.camelCase2seqStyle(sn.substring(0, i + 1))
+  }
+
+  def forSubCollection[O <: Entity, V <: Entity : Packer](sc: SubCollection[O, V]): SubHostCollectionImpl[O, V] = {
+    val name = getCollectionName(sc)
     dbObjectsByName synchronized {
       dbObjectsByName.get(name) match {
         case Some(host: SubHostCollectionImpl[O, V]) => host
@@ -71,7 +81,8 @@ private object EntityCollections {
     }
   }
 
-  def newHost[V <: Entity : Packer](name: String): HostCollectionImpl[V] = {
+  def newHost[V <: Entity : Packer](rc: RootCollection[V]): HostCollectionImpl[V] = {
+    val name = getCollectionName(rc)
     dbObjectsByName synchronized {
       if (dbObjectsByName.contains(name)) {
         throw new IllegalArgumentException( s"""HostCollection naming "$name" exist!""")
@@ -206,7 +217,7 @@ private object EntityCollections {
         case _ =>
       }
       search(oldEntity, isNew = false)
-      search(oldEntity, isNew = true)
+      search(newEntity, isNew = true)
       FullTextSearchIndex.update(entityID, oldTexts, newTexts)
       RefReverseIndex.update(entityID, oldRefs, newRefs)
       //索引
@@ -1091,12 +1102,7 @@ private object EntityCollections {
       val c = db.newCursor()
       try {
         c.seek(fullKeyPacker(k))
-        if (c.isValid) {
-          val k2 = fullKeyPacker.unapply(c.key())
-          collectionIDOf(k2.refID) == collectionID
-        } else {
-          false
-        }
+        c.isValid && Util.compareUInt8s(c.key(), fullKeyPacker(ERIKey(prefix, entityIDOf(collectionID, Long.MaxValue), 0, 0L))) < 0
       } finally {
         c.close()
       }

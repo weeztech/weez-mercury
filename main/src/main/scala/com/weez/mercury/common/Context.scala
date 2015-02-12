@@ -189,7 +189,7 @@ trait EntityCollectionListener[-V <: Entity] {
 
 @collect
 trait EntityCollection[V <: Entity] {
-  def name: String
+  //def name: String
 
   def insert(value: V)(implicit db: DBSessionUpdatable): Long
 
@@ -227,7 +227,9 @@ trait SubEntityPair[O <: Entity, V <: Entity] extends Entity {
   val entity: V
 }
 
-abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]) extends EntityCollection[V] {
+import scala.reflect.runtime.universe._
+
+abstract class SubCollection[O <: Entity: TypeTag, V <: Entity : Packer : TypeTag](ownerRef: Ref[O]) extends EntityCollection[V] {
   def this(owner: O) = this(owner.newRef())
 
   @inline final override def insert(value: V)(implicit db: DBSessionUpdatable): Long = host.insert(ownerRef, value)
@@ -254,10 +256,10 @@ abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = host.newEntityID()
 
-  private[common] lazy val host: SubHostCollectionImpl[O, V] = forSubCollection[O, V](this)
+  private[common] lazy val host: SubHostCollectionImpl[O, V] = forSubCollection(this)
 }
 
-abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] {
+abstract class RootCollection[V <: Entity : Packer : TypeTag] extends EntityCollection[V] {
 
   @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = impl.newEntityID()
 
@@ -293,7 +295,7 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
 
-  private[common] val impl = newHost[V](name)
+  private[common] val impl: HostCollectionImpl[V] = newHost(this)
 }
 
 final case class KeyValue[K, V](key: K, value: V)

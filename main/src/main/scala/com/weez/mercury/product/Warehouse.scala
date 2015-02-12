@@ -16,7 +16,6 @@ final case class Warehouse(code: String,
                            description: String) extends Entity
 
 object WarehouseCollection extends RootCollection[Warehouse] {
-  override def name: String = "warehouse"
 
   val byCode = defUniqueIndex("by-code", _.code)
 }
@@ -26,39 +25,30 @@ case class Provider(code: String,
                     title: String, description: String) extends Entity
 
 object ProviderCollection extends RootCollection[Provider] {
-  override def name: String = "provider"
-
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-trait ProductFlowEntry {
+trait ProductFlowBiz {
+  def productFlows(): Seq[ProductFlow]
+}
+
+trait ProductFlow {
+
+  def bizRef: Entity
+
+  def datetime: DateTime
+
+  def fromStock: Ref[Entity]
+
+  def toStock: Ref[Entity]
+
   def product: Ref[Product]
-
-  def serialNumber: String
-
-  def stock: Ref[Entity]
 
   def quantity: Int
 
   def totalValue: Int
-}
 
-
-sealed trait ProductFlowPeer {
-  def stock: Ref[Entity]
-}
-
-final case class ProductFlowFromPeer(stock: Ref[Entity]) extends ProductFlowPeer
-
-final case class ProductFlowToPeer(stock: Ref[Entity]) extends ProductFlowPeer
-
-trait ProductFlow extends Entity {
-
-  def peerStock: ProductFlowPeer
-
-  def datetime: DateTime
-
-  def items: Seq[ProductFlowEntry]
+  def serialNumber: String
 }
 
 /**
@@ -66,10 +56,13 @@ trait ProductFlow extends Entity {
  * @param stockID 库ID，可能是仓库，或部门
  * @param productID 物品ID
  * @param datetime 发生时间
+ * @param peerStockID 对应库ID
  * @param bizRefID 业务参考ID，各种单据的ID
  */
 @packable
-final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateTime, bizRefID: Long)
+final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateTime, peerStockID: Long, bizRefID: Long) {
+  def revert() = StockAccountKey(peerStockID, productID, datetime, stockID, bizRefID)
+}
 
 /**
  * 库存明晰帐－值部分
@@ -82,11 +75,7 @@ final case class StockAccountValue(quantity: Int,
 
   @inline def +(that: StockAccountValue) = StockAccountValue(this.quantity + that.quantity, this.totalValue + that.totalValue)
 
-  @inline def +(that: ProductFlowEntry) = StockAccountValue(this.quantity + that.quantity, this.totalValue + that.totalValue)
-
   @inline def -(that: StockAccountValue) = StockAccountValue(this.quantity - that.quantity, this.totalValue - that.totalValue)
-
-  @inline def -(that: ProductFlowEntry) = StockAccountValue(this.quantity - that.quantity, this.totalValue - that.totalValue)
 
   @inline def isEmpty = quantity == 0 && totalValue == 0
 
@@ -106,45 +95,34 @@ final case class StockAccountValue(quantity: Int,
 object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
   override def name: String = "stock-account"
 
+  val productFlowCollections = Seq(
+    RentInOrderCollection, //租入
+    RentInReturnCollection, //租入归还
+    PurchaseOrderCollection, //采购
+    PurchaseReturnCollection, //采购退货
+    RentOutOrderCollection //出租业务
+  )
+
   private def defExtractors(): Unit = {
-    def extractor(flow: ProductFlow, db: DBSessionQueryable) = {
-      val peer = flow.peerStock
+    def extractor(biz: ProductFlowBiz, db: DBSessionQueryable) = {
       var result = Map.empty[StockAccountKey, StockAccountValue]
-      for (x <- flow.items if x.quantity > 0 && x.stock.isDefined && x.product.isDefined) {
-        val k = StockAccountKey(
-          stockID = x.stock.id,
-          productID = x.product.id,
-          datetime = flow.datetime,
-          bizRefID = flow.id
-        )
-        val exist = result.get(k)
-        val v = if (exist.isEmpty) {
-          peer match {
-            case _: ProductFlowFromPeer =>
-              StockAccountValue(x.quantity, x.totalValue)
-            case _: ProductFlowToPeer =>
-              StockAccountValue(-x.quantity, -x.totalValue)
-          }
-        } else {
-          val ev = exist.get
-          peer match {
-            case _: ProductFlowFromPeer =>
-              ev + x
-            case _: ProductFlowToPeer =>
-              ev - x
-          }
+      var qty = 0
+      var totalValue = 0
+      biz.productFlows() groupBy { o =>
+        StockAccountKey(o.toStock.id, o.product.id, o.datetime, o.fromStock.id, o.bizRef.id)
+      } foreach { case (k, pfs) =>
+        qty = 0
+        totalValue = 0
+        pfs foreach { pf =>
+          qty += pf.quantity
+          totalValue += pf.totalValue
         }
-        result = result.updated(k, v)
+        result = result.updated(k, StockAccountValue(qty, totalValue))
+        result = result.updated(k.revert(), StockAccountValue(-qty, -totalValue))
       }
       result
     }
-    val sources = Seq(
-      RentInOrderCollection, //租入
-      RentInReturnCollection, //租入归还
-      PurchaseOrderCollection, //采购
-      PurchaseReturnCollection //采购退货
-    )
-    for (s <- sources) {
+    for (s <- productFlowCollections) {
       defExtractor(s)(extractor)
     }
   }
@@ -214,32 +192,19 @@ object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
   override def name: String = "product-sn-trace"
 
   private def defExtractors(): Unit = {
-    def extractor(flow: ProductFlow, db: DBSessionQueryable) = {
-      val peer = flow.peerStock
+    def extractor(biz: ProductFlowBiz, db: DBSessionQueryable) = {
       var result = Map.empty[ProductSNTraceKey, ProductSNTraceValue]
-      for (x <- flow.items) {
-        val k = ProductSNTraceKey(
-          serialNumber = x.serialNumber,
-          datetime = flow.datetime,
-          bizRefID = flow.id
-        )
-        if (!result.contains(k)) {
-          val v = peer match {
-            case p: ProductFlowFromPeer => ProductSNTraceValue(x.product.id, p.stock.id, x.stock.id)
-            case p: ProductFlowToPeer => ProductSNTraceValue(x.product.id, x.stock.id, p.stock.id)
-          }
+      for (x <- biz.productFlows()) {
+        val sn = x.serialNumber
+        if ((sn ne null) && !sn.isEmpty) {
+          val k = ProductSNTraceKey(x.serialNumber, x.datetime, x.bizRef.id)
+          val v = ProductSNTraceValue(x.product.id, x.fromStock.id, x.toStock.id)
           result = result.updated(k, v)
         }
       }
       result
     }
-    val sources = Seq(
-      RentInOrderCollection, //租入
-      RentInReturnCollection, //租入归还
-      PurchaseOrderCollection, //采购
-      PurchaseReturnCollection //采购退货
-    )
-    for (s <- sources) {
+    for (s <- StockAccount.productFlowCollections) {
       defExtractor(s)(extractor)
     }
   }
@@ -248,10 +213,10 @@ object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
 }
 
 object TestService extends RemoteService {
-  lazy val productIDs = Array[Long](1000)
-  lazy val providerIDs = Array[Long](100)
-  lazy val warehouseIDs = Array[Long](5)
-  lazy val customerIDs = Array[Long](100)
+  lazy val productIDs = new Array[Long](10000)
+  lazy val providerIDs = new Array[Long](100)
+  lazy val warehouseIDs = new Array[Long](5)
+  lazy val customerIDs = new Array[Long](1000)
 
   def initCustomers(c: PersistCallContext) = {
     import c._
@@ -276,9 +241,9 @@ object TestService extends RemoteService {
 
   def initProducts(c: PersistCallContext) = {
     import c._
-    val start = System.currentTimeMillis
     val pc = ProductCollection
     var i = productIDs.length - 1
+    val start = System.currentTimeMillis
     while (i >= 0) {
       val code = "product-" + i
       val exist = pc.byCode(code)
@@ -297,9 +262,9 @@ object TestService extends RemoteService {
 
   def initProviders(c: PersistCallContext) = {
     import c._
-    val start = System.currentTimeMillis
     val pc = ProviderCollection
     var i = providerIDs.length - 1
+    val start = System.currentTimeMillis
     while (i >= 0) {
       val code = "provider-" + i
       val exist = pc.byCode(code)
@@ -318,9 +283,9 @@ object TestService extends RemoteService {
 
   def initWarehouses(c: PersistCallContext) = {
     import c._
-    val start = System.currentTimeMillis
     val pc = WarehouseCollection
     var i = warehouseIDs.length - 1
+    val start = System.currentTimeMillis
     while (i >= 0) {
       val code = "warehouse-" + i
       val exist = pc.byCode(code)
@@ -338,10 +303,12 @@ object TestService extends RemoteService {
   }
 
   val init: PersistCall = { c =>
+    import c._
+    initWarehouses(c)
     initCustomers(c)
     initProviders(c)
     initProducts(c)
-    initWarehouses(c)
+    sendModel()
   }
 
   val r = new Random()
@@ -378,7 +345,7 @@ object TestService extends RemoteService {
     import c._
     case class PInfo(dt: DateTime, product: Ref[Product], qty: Int, sn: String, totalValue: Int, warehouse: Ref[Warehouse])
     rentOutOrder.products.flatMap { p =>
-      p.outs.map { out => (out.dateTime, PurchaseOrderItem(p.product, out.serialNumber, out.quantity, out.totalValue, out.from, "rent in"))}
+      p.outs.map { out => (out.datetime, PurchaseOrderItem(p.product, out.serialNumber, out.quantity, out.totalValue, out.from, "by in"))}
     }.groupBy { case (dt, poi) =>
       dt
     } foreach { case (dt, x) =>
@@ -388,11 +355,7 @@ object TestService extends RemoteService {
         val p = PurchaseOrder(dt, number, randomProvider(), "invoice number", "remark", x.map { case (_, poi) => poi})
         PurchaseOrderCollection.insert(p)
       } else {
-        val p = RentInOrder(dt, number, randomProvider(), "remark",
-          randomItems {
-            RentInOrderItem(randomProduct(), randomSN(), 1, randomPrice(), randomPrice(), randomWarehouse(), "remark")
-          }
-        )
+        val p = RentInOrder(dt, number, randomProvider(), "remark", x.map { case (_, poi) => RentInOrderItem(poi.product, poi.serialNumber, poi.quantity, poi.totalValue, randomPrice(), poi.stock, "rent in")})
         RentInOrderCollection.insert(p)
       }
     }
@@ -427,8 +390,41 @@ object TestService extends RemoteService {
     true
   }
 
+  def tryCloseRentOut(c: PersistCallContext, dt: DateTime): Boolean = {
+    import c._
+    val openOrder = {
+      val cursor = RentOutOrderCollection.byNoneClosed((RentOutOrderState.Open, new DateTime(0)) --+(RentOutOrderState.Open, dt.plusSeconds(-1000)), forward = false)
+      try {
+        if (!cursor.isValid) {
+          return false
+        }
+        cursor.value
+      } finally {
+        cursor.close()
+      }
+    }
+    val closeOrder = openOrder.copy(
+      state = RentOutOrderState.Closed,
+      products = openOrder.products.map(
+        i => i.copy(
+          returns = {
+            i.outs map { x =>
+              RentOutProductReturn(dt, x.quantity, x.serialNumber, x.from, x.totalValue, "rent return")
+            }
+          }
+        )
+      )
+    )
+    RentOutOrderCollection.update(openOrder)
+    true
+  }
+
   def insertOrders(c: PersistCallContext) = {
     import c._
+    val dt = nextDt()
+    if (!tryOpenRentOut(c, dt)) {
+      tryCloseRentOut(c, dt)
+    }
   }
 
 }

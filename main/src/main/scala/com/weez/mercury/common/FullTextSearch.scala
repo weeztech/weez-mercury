@@ -6,7 +6,7 @@ object FullTextSearch {
   private val kc = new JiebaSegmenter()
 
   def split(text: String*): scala.collection.Set[String] = {
-    if (text ne null) {
+    if ((text ne null) && text.nonEmpty) {
       val sb = new StringBuilder()
       for (s <- text) {
         sb.append(s).append(' ')
@@ -17,7 +17,10 @@ object FullTextSearch {
         if (i >= 0) {
           val words2 = scala.collection.mutable.Set[String]()
           do {
-            words2.add(words.get(i).getToken)
+            val s = words.get(i).getToken
+            if (s.length > 1) {
+              words2.add(s)
+            }
             i -= 1
           } while (i >= 0)
           return words2

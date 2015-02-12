@@ -51,19 +51,16 @@ case class Product(code: String,
                    rentPrice: Int) extends Entity
 
 object ProductCollection extends RootCollection[Product] {
-  def name = "product"
-
   val byCode = defUniqueIndex("by-code", _.code)
-  val byTitle = defUniqueIndex("by-code", _.title)
+  val byTitle = defUniqueIndex("by-title", _.title)
 }
 
 @packable
 case class Room(code: String, title: String, price: Double, description: String) extends Entity
 
 object RoomCollection extends RootCollection[Room] {
-  def name = "room"
-
-  val byTitle = defUniqueIndex("by-code", _.title)
+  val byCode = defUniqueIndex("by-code", _.title)
+  val byTitle = defUniqueIndex("by-title", _.title)
 }
 
 
@@ -85,8 +82,6 @@ case class Customer(code: String,
                     description: String) extends Entity
 
 object CustomerCollection extends RootCollection[Customer] {
-  def name = "customer"
-
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
@@ -105,7 +100,7 @@ case class RentOutAssistantItem(assistant: Ref[Assistant],
 
 
 @packable
-case class RentOutProduct(dateTime: DateTime,
+case class RentOutProduct(datetime: DateTime,
                           quantity: Int,
                           serialNumber: String,
                           from: Ref[Warehouse],
@@ -113,14 +108,15 @@ case class RentOutProduct(dateTime: DateTime,
                           remark: String)
 
 @packable
-case class RentOutProductReturn(dateTime: DateTime,
+case class RentOutProductReturn(datetime: DateTime,
                                 quantity: Int,
                                 serialNumber: String,
                                 to: Ref[Warehouse],
+                                totalValue: Int,
                                 remark: String)
 
 @packable
-case class RentOutProductDamage(dateTime: DateTime,
+case class RentOutProductDamage(datetime: DateTime,
                                 quantity: Int,
                                 serialNumber: String,
                                 totalValue: Int,
@@ -144,7 +140,49 @@ case class RentOutOrder(datetime: DateTime,
                         state: Int,
                         rooms: Seq[RentOutRoomItem],
                         assistants: Seq[RentOutAssistantItem],
-                        products: Seq[RentOutOrderProductItem]) extends Entity {
+                        products: Seq[RentOutOrderProductItem]) extends Entity with ProductFlowBiz {
+  def productFlows() = {
+    val self = this
+    products flatMap { item =>
+      (item.outs map { o =>
+        new ProductFlow {
+          def bizRef = self
+
+          def serialNumber = o.serialNumber
+
+          def toStock = self.customer
+
+          def datetime = o.datetime
+
+          def product = item.product
+
+          def fromStock = o.from
+
+          def totalValue = o.totalValue
+
+          def quantity = o.quantity
+        }
+      }) ++ (item.returns map { r =>
+        new ProductFlow {
+          def bizRef = self
+
+          def serialNumber = r.serialNumber
+
+          def toStock = r.to
+
+          def datetime = r.datetime
+
+          def product = item.product
+
+          def fromStock = self.customer
+
+          def totalValue = r.totalValue
+
+          def quantity = r.quantity
+        }
+      })
+    }
+  }
 }
 
 object RentOutOrderState {

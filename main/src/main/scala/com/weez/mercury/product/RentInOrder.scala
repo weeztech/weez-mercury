@@ -21,7 +21,7 @@ case class RentInOrderItem(product: Ref[Product],
                            totalValue: Int,
                            rentPrice: Int,
                            stock: Ref[Warehouse],
-                           remark: String) extends ProductFlowEntry
+                           remark: String)
 
 /**
  * 租入单
@@ -31,8 +31,29 @@ case class RentInOrder(datetime: DateTime,
                        number: String,
                        provider: Ref[Provider],
                        remark: String,
-                       items: Seq[RentInOrderItem]) extends Entity with ProductFlow {
-  def peerStock = ProductFlowFromPeer(provider)
+                       items: Seq[RentInOrderItem]) extends Entity with ProductFlowBiz {
+  def productFlows() = {
+    val self = this
+    items map { item =>
+      new ProductFlow {
+        def bizRef = self
+
+        def serialNumber = item.serialNumber
+
+        def toStock = item.stock
+
+        def datetime = self.datetime
+
+        def product = item.product
+
+        def fromStock = self.provider
+
+        def totalValue = item.totalValue
+
+        def quantity = item.quantity
+      }
+    }
+  }
 }
 
 object RentInOrderHelper {
@@ -114,9 +135,7 @@ object RentInOrderHelper {
   }
 }
 
-object RentInOrderCollection extends RootCollection[RentInOrder] {
-  override def name: String = "rent-in-order"
-}
+object RentInOrderCollection extends RootCollection[RentInOrder]
 
 /**
  * 租入归还单子项
@@ -135,7 +154,7 @@ case class RentInReturnItem(product: Ref[Product],
                             rentPrice: Int,
                             duration: Int,
                             stock: Ref[Warehouse],
-                            remark: String) extends ProductFlowEntry
+                            remark: String)
 
 /**
  * 租入归还单
@@ -145,10 +164,29 @@ case class RentInReturn(datetime: DateTime,
                         number: String,
                         provider: Ref[Provider],
                         remark: String,
-                        items: Seq[RentInReturnItem]) extends Entity with ProductFlow {
-  def peerStock = ProductFlowToPeer(provider)
+                        items: Seq[RentInReturnItem]) extends Entity with ProductFlowBiz {
+  def productFlows() = {
+    val self = this
+    items map { item =>
+      new ProductFlow {
+        def bizRef = self
+
+        def serialNumber = item.serialNumber
+
+        def toStock = self.provider
+
+        def datetime = self.datetime
+
+        def product = item.product
+
+        def fromStock = item.stock
+
+        def totalValue = item.totalValue
+
+        def quantity = item.quantity
+      }
+    }
+  }
 }
 
-object RentInReturnCollection extends RootCollection[RentInReturn] {
-  override def name: String = "rent-in-return"
-}
+object RentInReturnCollection extends RootCollection[RentInReturn]
