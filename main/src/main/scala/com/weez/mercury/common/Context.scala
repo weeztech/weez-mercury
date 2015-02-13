@@ -1,58 +1,81 @@
 package com.weez.mercury.common
 
+import scala.concurrent._
 import akka.actor.Actor
 import akka.event.LoggingAdapter
 import EntityCollections._
 
-trait Context extends RangeImplicits {
-  implicit val context: this.type = this
-
-  def log: LoggingAdapter
-
-  def request: ModelObject
+trait Context {
+  implicit val executor: ExecutionContext
 
   def response: Response
 
   def complete(response: Response): Unit
 
-  def peer: String
+  def acceptUpload(receiver: UploadContext => Unit): String
 
-  def acceptUpload(receiver: => Actor): String
+  def futureQuery[T](f: DBSessionQueryable => T): Future[T]
+
+  def futureUpdate[T](f: DBSessionUpdatable => T): Future[T]
 
   def app: Application
+
+  def tempDir: FileIO.Path
+}
+
+trait RemoteCallContext extends Context with RangeImplicits {
+  implicit val context: this.type = this
+
+  def api: String
+
+  def log: LoggingAdapter
+
+  def request: ModelObject
+
+  def peer: String
 }
 
 sealed trait Response
 
-case class FileResponse(path: String) extends Response
+sealed trait InstantResponse extends Response
 
-case class ResourceResponse(url: String) extends Response
+case class FileResponse(path: String) extends InstantResponse
 
-case class ModelResponse(obj: ModelObject) extends Response
+case class ResourceResponse(url: String) extends InstantResponse
 
-case class StreamResponse(actor: () => Actor) extends Response
+case class ModelResponse(obj: ModelObject) extends InstantResponse
 
-trait UploadContext {
+case class StreamResponse(actor: () => Actor) extends InstantResponse
+
+case class FutureResponse(x: Future[Response]) extends Response
+
+case class FailureResponse(ex: Throwable) extends InstantResponse
+
+
+trait UploadContext extends Context {
+
+  import akka.util.ByteString
+
   def id: String
 
-  def peer: String
-
-  def request: ModelObject
+  def queue: AsyncDequeue[ByteString]
 
   def sessionState: Option[SessionState]
-
-  def finish(response: ModelObject): Unit
-
-  def finishWith[C](f: C => Unit)(implicit evidence: ContextType[C]): Unit
-
-  def fail(ex: Throwable): Unit
 }
 
 case object UploadResume
 
-case class UploadData(buf: akka.util.ByteString, context: UploadContext)
+case object UploadCancelled
 
-case class UploadEnd(context: UploadContext)
+case class UploadData(buf: akka.util.ByteString)
+
+case object UploadEnd
+
+sealed trait UploadResult
+
+case class UploadSuccess(response: InstantResponse) extends UploadResult
+
+case class UploadFailure(ex: Throwable) extends UploadResult
 
 sealed trait ContextType[C] {
   def withSessionState: Boolean

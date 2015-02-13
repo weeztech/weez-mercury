@@ -2,7 +2,6 @@ package com.weez.mercury
 
 import scala.util.control.NonFatal
 
-
 object Test {
   def main(args: Array[String]): Unit = {
     test0(args)
@@ -61,26 +60,6 @@ object Test {
         case Failure(ex) => ex.printStackTrace()
         case _ => throw new IllegalStateException()
       }
-    }
-  }
-
-  import imports._
-
-  object TestService extends RemoteService {
-    val upload: SimpleCall = c => {
-      import c._
-      val id = acceptUpload(new Actor {
-        def receive = {
-          case UploadData(buf, uc) =>
-            println(s"receive ${buf.length} bytes")
-            sender ! UploadResume
-          case UploadEnd(uc) =>
-            println("upload end")
-            uc.finish(ModelObject("finish" -> "done"))
-            context.stop(self)
-        }
-      })
-      modelWith("id" -> id)
     }
   }
 

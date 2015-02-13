@@ -22,12 +22,14 @@ class SessionManager(app: ServiceManager, config: Config) {
   private val timeout = config.getDuration("session-timeout", TimeUnit.NANOSECONDS)
   private val peers = new TTLMap[String, Peer](timeout)
   private val sessions = new TTLMap[String, Session](timeout)
-  private val sidGen = new Util.RandomIdGenerator(12)
+  private val sidGen = new Util.SecureIdGenerator(12)
   private val ttlHandle = app.addTTLCleanEvent(_ => clean())
 
   def clean(): Unit = {
     sessions.synchronized {
-      peers.unlockAll(sessions.clean() map (_.peer))
+      val arr = sessions.clean()
+      arr foreach (_.dispose())
+      peers.unlockAll(arr map (_.peer))
       peers.clean()
     }
   }
@@ -97,19 +99,74 @@ class Session(val id: String, val peer: String) extends TTLBased[String] {
 
   private var _loginState: Option[LoginState] = None
   private val map = mutable.Map[String, Any]()
+  private val hooks = mutable.Set[Session => Unit]()
+  @volatile
+  private var disposed = false
 
-  def loginState = _loginState
-
-  def login(userId: Long, username: String, name: String): Unit = _loginState = Some(LoginState(userId, username, name))
-
-  def logout(): Unit = _loginState = None
-
-  def use[T](f: mutable.Map[String, Any] => T): Unit = {
-    map.synchronized {
-      f(map)
+  private lazy val tempUploads = {
+    val set = mutable.Set[FileIO.Path]()
+    addCleanUpHook { session =>
+      import scala.util.control.NonFatal
+      this.synchronized {
+        set foreach { p =>
+          try p.deleteIfExists() catch {
+            case NonFatal(_) =>
+          }
+        }
+      }
     }
+    set
+  }
+
+  @inline private def check() = require(!disposed)
+
+  def loginState = {
+    check()
+    _loginState
+  }
+
+  def login(userId: Long, username: String, name: String): Unit = {
+    check()
+    _loginState = Some(LoginState(userId, username, name))
+  }
+
+  def logout(): Unit = {
+    check()
+    _loginState = None
+  }
+
+  def status = {
+    check()
+    map
+  }
+
+  def tempUploadFiles = {
+    check()
+    tempUploads
+  }
+
+  def dispose() = {
+    if (!disposed) {
+      hooks.synchronized {
+        hooks foreach (_(this))
+        hooks.clear()
+      }
+      map.synchronized {
+        map.clear()
+      }
+      disposed = true
+    }
+  }
+
+  def addCleanUpHook(f: Session => Unit) = {
+    check()
+    hooks.add(f)
+  }
+
+  def removeCleanUpHook(f: Session => Unit) = {
+    check()
+    hooks.remove(f)
   }
 }
 
 case class LoginState(userId: Long, username: String, name: String)
-

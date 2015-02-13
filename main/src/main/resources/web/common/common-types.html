@@ -1,0 +1,99 @@
+<script>
+  (function (scope) {
+    var extendTypes = {};
+
+    var intMin = '-2147483648',
+      intMax = '2147483647';
+
+    function Int(val) {
+      this.set(val || 0);
+    }
+    Int.prototype.get = function () {
+      return this.numVal;
+    };
+    Int.prototype.set = function (val) {
+      if (typeof val == 'string' &&
+        /^-?[0-9]+$/.test(val) &&
+        (/^-/.test(val) ?
+          val.length < intMin.length ? true : val <= intMin :
+          val.length < intMax.length ? true : val <= intMax)) {
+        val = parseInt(val, 10);
+      }
+      if (typeof val != 'number' || isNaN(val) || n % 1 !== 0)
+        throw Error('invalid Int value');
+      this.numVal = val;
+    };
+    Int.prototype.is = function (n) {
+      return Number(n) === n && n % 1 === 0;
+    };
+    Int.prototype.toString = function () {
+      return this.numVal.toString();
+    };
+    Int.prototype.toJSON = function () {
+      return {
+        $tpe: 'Int',
+        value: this.toString()
+      };
+    };
+    Int.parseJSON = function (v) {
+      return new Int(v.value);
+    };
+    extendTypes.Int = Int;
+
+    var longMin = '-9223372036854775808',
+      longMax = '9223372036854775807';
+
+    function Long(val) {
+      this.set(val || 0);
+    }
+    Long.prototype.get = function () {
+      return this.numVal;
+    };
+    Long.prototype.set = function (val) {
+      if (typeof val == 'string' &&
+        /^-?[0-9]+$/.test(val) &&
+        (/^-/.test(val) ?
+          val.length < longMin.length ? true : val <= longMin :
+          val.length < longMax.length ? true : val <= longMax)) {
+        val = parseInt(val, 10);
+      }
+      if (typeof val != 'number' || isNaN(val) || n % 1 !== 0)
+        throw Error('invalid Int value');
+      this.numVal = val;
+    };
+    Long.prototype.is = function (n) {
+      return Number(n) === n && n % 1 === 0;
+    };
+    Long.prototype.toString = function () {
+      return this.numVal.toString();
+    };
+    Long.prototype.toJSON = function () {
+      return {
+        $tpe: 'Long',
+        value: this.toString()
+      };
+    };
+    Long.parseJSON = function (v) {
+      return new Long(v.value);
+    };
+    extendTypes.Long = Long;
+
+    function reviver(k, v) {
+      if (typeof v == 'object') {
+        if ('$tpe' in v) {
+          var tpe = extendTypes[v.$tpe];
+          if (!tpe) throw new Error('invalid type');
+          return tpe.parseJSON(v);
+        }
+        return v;
+      }
+    }
+
+    function jsonParse(s) {
+      return JSON.parse(s, reviver);
+    }
+
+    scope.Int = Int;
+    scope.Long = Long;
+  })(window);
+</script>

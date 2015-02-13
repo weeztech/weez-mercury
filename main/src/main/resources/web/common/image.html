@@ -1,7 +1,8 @@
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
-<link rel="import" href="common-resizable.html">
+<link rel="import" href="watcher.html">
+<link rel="import" href="remote.html">
 
-<polymer-element name="common-image">
+<polymer-element name="image-box">
   <template>
     <style>
       :host {
@@ -24,7 +25,7 @@
         background-color: rgba(255, 255, 255, 0.3);
       }
     </style>
-    <common-resizable on-common-resize="{{resizeAction}}"></common-resizable>
+    <watcher-resizable on-common-resize="{{resizeAction}}"></watcher-resizable>
     <div class="placeholder" hidden?="{{hasImage}}"></div>
     <div class="spinner" vertical layout center hidden?="{{!loading}}">
       <paper-spinner active></paper-spinner>
@@ -85,5 +86,21 @@
         }
       });
     })();
+  </script>
+</polymer-element>
+
+<polymer-element name="image-uploader">
+  <template>
+    <image-box on-tap="{{tapAction}}"></image-box>
+    <input id="file" type="file">
+  </template>
+  <script>
+    Polymer({
+      tapAction: function () {
+        var el = document.createElement('remote-call');
+        el.upload();
+        this.$.file.click();
+      }
+    });
   </script>
 </polymer-element>

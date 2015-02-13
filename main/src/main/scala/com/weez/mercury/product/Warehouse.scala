@@ -308,7 +308,7 @@ object TestService extends RemoteService {
     initCustomers(c)
     initProviders(c)
     initProducts(c)
-    sendModel()
+    complete(model())
   }
 
   val r = new Random()

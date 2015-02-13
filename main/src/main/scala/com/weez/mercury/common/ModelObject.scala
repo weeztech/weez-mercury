@@ -26,8 +26,6 @@ class ModelObject(private var map: Map[String, Any]) extends Dynamic {
 }
 
 object ModelObject {
-  val empty = new ModelObject(Map.empty)
-
   def apply(fields: (String, Any)*): ModelObject = new ModelObject(fields.toMap)
 }
 

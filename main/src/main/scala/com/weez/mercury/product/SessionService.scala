@@ -14,7 +14,7 @@ object SessionService extends RemoteService {
   def init: NoSessionCall = c => {
     import c._
     val session = app.sessionManager.createSession(peer)
-    sendModel("sid" -> session.id)
+    complete(model("sid" -> session.id))
   }
 
   /**
@@ -33,10 +33,10 @@ object SessionService extends RemoteService {
     UserCollection.byCode(request.username) match {
       case Some(user: User) =>
         if (!eqPassword(request.password, user.password))
-          failWith("用户名或密码错误")
+          complete(fail("用户名或密码错误"))
         session.login(user.id, user.name, user.staff().name)
-        sendModel("username" -> user.code, "name" -> user.name)
-      case None => failWith("用户名或密码错误")
+        complete(model("username" -> user.code, "name" -> user.name))
+      case None => complete(fail("用户名或密码错误"))
     }
   }
 
@@ -63,7 +63,7 @@ object SessionService extends RemoteService {
         case _ =>
       }
     }
-    sendModel("logins" -> builder.result().sortBy[String](_.name))
+    complete(model("logins" -> builder.result().sortBy[String](_.name)))
   }
 
   /**
@@ -85,8 +85,8 @@ object SessionService extends RemoteService {
     } match {
       case Some(x) =>
         session.login(x.userId, x.username, x.name)
-        sendModel("username" -> x.username, "name" -> x.name)
-      case None => failWith("用户登录无效")
+        complete(model("username" -> x.username, "name" -> x.name))
+      case None => complete(fail("用户登录无效"))
     }
   }
 
@@ -98,7 +98,7 @@ object SessionService extends RemoteService {
    */
   def getTime: SimpleCall = c => {
     import c._
-    sendModel("epoch" -> System.currentTimeMillis())
+    complete(model("epoch" -> System.currentTimeMillis()))
   }
 
   private val digest = new ThreadLocal[MessageDigest]() {

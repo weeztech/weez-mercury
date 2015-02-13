@@ -3,9 +3,11 @@ package com.weez.mercury.common
 import java.nio.file.{Path => JPath, Paths => JPaths, Files => JFiles, FileSystem => JFileSystem}
 
 object FileIO {
-  def pathOf(p: String) = new Path(JPaths.get(p))
+  val seperator = "/"
 
-  def pathOfExp(p: String) = new Path(JPaths.get(resolvePathExp(p)))
+  def pathOf(p: String) = make(concat(Nil, p), p.startsWith(seperator))
+
+  def pathOfExp(p: String) = pathOf(resolvePathExp(p))
 
   def resolvePathExp(pathExp: String) = {
     import scala.util.matching.Regex
@@ -67,79 +69,67 @@ object FileIO {
     }
   }
 
-  final class Path private[FileIO](protected val jpath: JPath) extends Iterable[Path] {
-    override def size = jpath.getNameCount
+  final class Path private[FileIO](private[Path] val parts: List[String], val isAbsolute: Boolean) {
+    private lazy val jpath = JPaths.get(java.io.File.separator)
 
-    override def iterator = new Iterator[Path] {
-      var i = 0
-      val c = jpath.getNameCount
+    def /(path: Path): Path = make(concat(parts, path.parts), isAbsolute)
 
-      def hasNext = i < c
+    def /(path: String): Path = make(concat(parts, path), isAbsolute)
 
-      def next() = {
-        val jp = jpath.getName(i)
-        i += 1
-        of(jp)
-      }
+    def sibling(path: Path): Path = {
+      require(parts.nonEmpty)
+      make(concat(parts.tail, path.parts), isAbsolute)
     }
 
-    def toJavaPath = jpath
+    def sibling(path: String): Path = {
+      require(parts.nonEmpty)
+      make(concat(parts.tail, path), isAbsolute)
+    }
 
-    private def of(path: String): Path = of(JPaths.get(path))
+    def relative(path: Path): Path = make(rel(parts, path.parts), isAbsolute)
 
-    private def of(path: JPath): Path = new Path(jpath)
+    def relative(path: String): Path = relative(pathOfExp(path))
 
-    def /(path: Path): Path =
-      if (path.isAbsolute) path
-      else
-        of(jpath.resolve(path.jpath).normalize())
+    def in(path: Path): Boolean = parts.endsWith(path.parts)
 
-    def /(path: String): Path = this / of(path)
+    def in(path: String): Boolean = this in pathOfExp(path)
 
-    def ~(path: Path): Path =
-      if (path.isAbsolute) path
-      else
-        of(jpath.resolveSibling(path.jpath).normalize())
+    def isEmpty = parts.isEmpty
 
-    def ~(path: String): Path = this ~ of(path)
+    def nonEmpty = parts.nonEmpty
 
-    def ^(path: Path): Path = of(jpath.relativize(path.jpath))
-
-    def ^(path: String): Path = this ^ of(path)
-
-    def in(path: Path): Boolean = jpath.startsWith(path.jpath)
-
-    def in(path: String): Boolean = this in of(path)
-
-    def endsWith(path: Path) = jpath.endsWith(path.jpath)
+    def isRoot = isEmpty && isAbsolute
 
     def parent = {
-      val p = jpath.getParent
-      if (p == null) None else Some(of(p))
+      if (parts.isEmpty) {
+        require(!isAbsolute, "invalid path")
+        new Path(".." :: parts, isAbsolute)
+      } else
+        new Path(parts.tail, isAbsolute)
     }
 
-    def root = {
-      val p = jpath.getRoot
-      if (p == null) None else Some(of(p))
+    def name = {
+      require(parts.nonEmpty)
+      parts.head
     }
 
     def ext: String = {
-      val name = jpath.getFileName.toString
-      val i = name.lastIndexOf(".")
-      if (i < 0) "" else name.substring(i + 1)
+      val n = name
+      val i = n.lastIndexOf(".")
+      if (i < 0) "" else n.substring(i + 1)
     }
 
     def withExt(ext: String): Path = {
-      val name = jpath.getFileName.toString
-      val i = name.lastIndexOf(".")
+      val n = name
+      val i = n.lastIndexOf('.')
       val newName =
         if (i < 0) name + "." + ext else name.substring(0, i + 1) + ext
-      this ~ newName
+      new Path(newName :: parts.tail, isAbsolute)
     }
 
-    def isAbsolute = jpath.isAbsolute
+    def toAbsolute = if (isAbsolute) this else new Path(parts, true)
 
-    def toAbsolute = if (isAbsolute) this else of(jpath.toAbsolutePath)
+    def foreach(f: String => Unit): Unit = departs(parts)(f)
 
     def isDirectory = JFiles.isDirectory(jpath)
 
@@ -166,7 +156,7 @@ object FileIO {
     }
 
     def moveTo(dest: String): Unit =
-      moveTo(of(dest))
+      moveTo(pathOfExp(dest))
 
     def moveOverwriteTo(dest: Path): Unit = {
       dest.deleteIfExists()
@@ -174,14 +164,14 @@ object FileIO {
     }
 
     def moveOverwriteTo(dest: String): Unit =
-      moveOverwriteTo(of(dest))
+      moveOverwriteTo(pathOfExp(dest))
 
     def copyTo(dest: Path): Unit = {
       JFiles.copy(jpath, dest.jpath)
     }
 
     def copyTo(dest: String): Unit =
-      copyTo(of(dest))
+      copyTo(pathOfExp(dest))
 
     def copyOverwriteTo(dest: Path): Unit = {
       dest.deleteIfExists()
@@ -189,31 +179,18 @@ object FileIO {
     }
 
     def copyOverwriteTo(dest: String): Unit =
-      copyOverwriteTo(of(dest))
+      copyOverwriteTo(pathOfExp(dest))
 
     def createDir(): Unit = {
-      if (!exists) {
+      if (!exists)
         JFiles.createDirectories(jpath)
-      }
     }
 
-    def createFile(): Unit = {
-      JFiles.createFile(jpath)
-    }
+    def createFile(): Unit = JFiles.createFile(jpath)
 
-    def streamRead() = JFiles.newInputStream(jpath)
+    def delete(): Unit = JFiles.delete(jpath)
 
-    def streamWrite() = JFiles.newOutputStream(jpath)
-
-    def open() = JFiles.newByteChannel(jpath)
-
-    def delete(): Unit = {
-      JFiles.delete(jpath)
-    }
-
-    def deleteIfExists(): Boolean = {
-      JFiles.deleteIfExists(jpath)
-    }
+    def deleteIfExists(): Boolean = JFiles.deleteIfExists(jpath)
 
     def openFile(read: Boolean = false,
                  write: Boolean = false,
@@ -238,21 +215,96 @@ object FileIO {
       if (sync) options = StandardOpenOption.SYNC :: options
       if (dsync) options = StandardOpenOption.DSYNC :: options
       if (sparse) options = StandardOpenOption.SPARSE :: options
-      new File(AsynchronousFileChannel.open(jpath, options: _*))
+      new File(this, AsynchronousFileChannel.open(jpath, options: _*))
     }
 
-    override def toString() = jpath.toString
+    def toSystemPathString() = toString(java.io.File.separator)
 
-    override def hashCode() = jpath.hashCode()
+    override def toString() = toString(seperator)
+
+    def toString(sep: String): String = {
+      if (parts.isEmpty)
+        if (isAbsolute) sep else "."
+      else {
+        val sb = new StringBuilder
+        if (isAbsolute)
+          foreach { x => sb.append(sep).append(x)}
+        else {
+          foreach { x => sb.append(x).append(sep)}
+          if (sb.length > 0)
+            sb.length -= sep.length
+        }
+        sb.toString()
+      }
+    }
+
+    override def hashCode() = parts.hashCode()
 
     override def equals(obj: Any) = {
       obj != null &&
-        obj.isInstanceOf[Path] &&
-        obj.asInstanceOf[Path].jpath.equals(jpath)
+        obj.isInstanceOf[Path] && {
+        val p = obj.asInstanceOf[Path]
+        p.isAbsolute == isAbsolute && p.parts == parts
+      }
     }
   }
 
-  class File(channel: java.nio.channels.AsynchronousFileChannel) {
+  private def make(parts: List[String], abs: Boolean) = {
+    require(!abs || !parts.headOption.contains(".."), "invalid path")
+    new Path(parts, abs)
+  }
+
+  private def concat(parts: List[String], s: String): List[String] = concat(parts, s.split(seperator))()
+
+  import scala.annotation.tailrec
+
+  @tailrec
+  private def concat(parts: List[String], arr: Array[String])(offset: Int = 0, end: Int = arr.length): List[String] = {
+    if (offset >= end)
+      parts
+    else
+      arr(offset) match {
+        case "" | "." => concat(Nil, arr)(offset + 1, end)
+        case ".." => concat(if (parts.isEmpty || parts.head == "..") ".." :: parts else parts.tail, arr)(offset + 1, end)
+        case x => concat(x :: parts, arr)(offset + 1, end)
+      }
+  }
+
+  private def concat(parts: List[String], p: List[String]): List[String] = {
+    var ps = parts
+    departs(p) {
+      case ".." => ps = if (ps.isEmpty || ps.head == "..") ".." :: ps else ps.tail
+      case "." | "" =>
+      case x => ps = x :: ps
+    }
+    ps
+  }
+
+  private def departs(parts: List[String])(f: String => Unit): Unit = {
+    parts match {
+      case x :: tail =>
+        departs(tail)(f)
+        f(x)
+      case Nil =>
+    }
+  }
+
+  private def rel(a: List[String], b: List[String]) = {
+    var a0 = a.reverse
+    var b0 = b.reverse
+    while (a0.nonEmpty && b0.nonEmpty && a0.head == b0.head) {
+      a0 = a0.tail
+      b0 = b0.tail
+    }
+    var c = List.empty[String]
+    while (b0.nonEmpty) {
+      c = ".." :: c
+      b0 = b0.tail
+    }
+    a.reverse_:::(c)
+  }
+
+  class File(val path: Path, channel: java.nio.channels.AsynchronousFileChannel) {
 
     import java.nio.channels._
     import java.nio.{ByteBuffer => JByteBuffer}
@@ -344,6 +396,10 @@ object FileIO {
       } else {
         callback(Success(offset))
       }
+    }
+
+    def close(): Unit = {
+      channel.close()
     }
   }
 

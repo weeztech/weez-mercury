@@ -1,0 +1,136 @@
+<polymer-element name="watcher-base">
+  <script>
+    (function () {
+      var flush = Polymer.flush;
+      var flushing = false;
+      var watchers = [];
+
+      Polymer.flush = function () {
+        flush();
+        if (!flushing) {
+          flushing = true;
+          Polymer.endOfMicrotask(function () {
+            flushing = false;
+            for (var i = 0; i < watchers.length; i++) {
+              watchers[i].checkpoint();
+            }
+          });
+        }
+      };
+
+      Polymer({
+        attached: function () {
+          watchers.push(this);
+        },
+        detached: function () {
+          watchers.splice(watchers.indexOf(this), 1);
+        },
+        checkpoint: function () {}
+      });
+    })();
+  </script>
+</polymer-element>
+
+<polymer-element name="watcher-resizable" extends="watcher-base" hidden>
+  <script>
+    Polymer({
+      publish: {
+        target: null,
+        bubbling: false
+      },
+      domReady: function () {
+        if (!this.target) {
+          this.target = this.parentNode;
+        }
+      },
+      targetChanged: function () {
+        if (this.target) {
+          this.targetWidth = this.target.offsetWidth;
+          this.targetHeight = this.target.offsetHeight;
+        }
+      },
+      checkpoint: function () {
+        if (!this.target) return;
+        var width = this.target.offsetWidth;
+        var height = this.target.offsetHeight;
+        var oldVisible = this.targetWidth > 0 && this.targetHeight > 0;
+        var newVisible = width > 0 && height > 0;
+        if (oldVisible != newVisible ||
+          newVisible && (width != this.targetWidth || height != this.targetHeight)) {
+          this.targetWidth = width;
+          this.targetHeight = height;
+          this.resized(width, height);
+        }
+      },
+      resized: function (width, height) {
+        this.fire('watcher-resize', {
+          target: this.target,
+          width: width,
+          height: height
+        }, this, this.bubbling);
+      }
+    });
+  </script>
+</polymer-element>
+
+<polymer-element name="watcher-capture" hidden>
+  <script>
+    (function () {
+      var activeCC = {};
+
+      Polymer.addEventListener(document, 'tap', updateCapture);
+      Polymer.addEventListener(document, 'focus', updateCapture, true);
+
+      function updateCapture(e) {
+        var obj = {};
+        for (var i = 0; i < e.path.length; i++) {
+          var el = e.path[i];
+          if (el.captureElement) {
+            var cc = el.captureElement;
+            cc.active = true;
+            obj[cc.captureId] = cc;
+          }
+        }
+        for (var id in activeCC) {
+          if (!(id in obj))
+            activeCC[id].active = false;
+        }
+        activeCC = obj;
+      }
+
+      var id = 0;
+
+      Polymer({
+        publish: {
+          target: null,
+          active: false
+        },
+        created: function () {
+          this.captureId = id++;
+        },
+        domReady: function () {
+          if (!this.target)
+            this.target = this.parentNode;
+        },
+        targetChanged: function () {
+          if (this._target)
+            delete this._target.captureElement;
+          this._target = this.target;
+          if (this._target)
+            this._target.captureElement = this;
+          this.clear();
+        },
+        detached: function () {
+          if (this._target) {
+            delete this._target.captureElement;
+            this._target = null;
+          }
+          this.clear();
+        },
+        clear: function () {
+          delete activeCC[this.captureId];
+        }
+      });
+    })();
+  </script>
+</polymer-element>

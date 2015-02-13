@@ -5,6 +5,7 @@ package object imports extends com.github.nscala_time.time.Imports {
   type RemoteService = common.RemoteService
   type Context = common.Context
   type SessionState = common.SessionState
+  type Session = common.Session
   type DBSessionQueryable = common.DBSessionQueryable
   type DBSessionUpdatable = common.DBSessionUpdatable
   type Entity = common.Entity
@@ -25,9 +26,21 @@ package object imports extends com.github.nscala_time.time.Imports {
   type UploadContext = common.UploadContext
   type UploadData = common.UploadData
   val UploadData = common.UploadData
-  type UploadEnd = common.UploadEnd
   val UploadEnd = common.UploadEnd
   val UploadResume = common.UploadResume
+  type Response = common.Response
+  type ModelResponse = common.ModelResponse
+  val ModelResponse = common.ModelResponse
+  type ResourceResponse = common.ResourceResponse
+  val ResourceResponse = common.ResourceResponse
+  type FileResponse = common.FileResponse
+  val FileResponse = common.FileResponse
+  type StreamResponse = common.StreamResponse
+  val StreamResponse = common.StreamResponse
+  type FutureResponse = common.FutureResponse
+  val FutureResponse = common.FutureResponse
+  type FailureResponse = common.FailureResponse
+  val FailureResponse = common.FailureResponse
 
   type Actor = akka.actor.Actor
   type ActorLogging = akka.actor.ActorLogging

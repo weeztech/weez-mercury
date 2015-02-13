@@ -21,8 +21,6 @@ trait Application extends GlobalSettings {
 
   def sessionManager: SessionManager
 
-  def uploadManager: UploadManager
-
   def addTTLCleanEvent(f: LoggingAdapter => Unit): AutoCloseable
 
   def close(): Unit

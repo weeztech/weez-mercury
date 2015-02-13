@@ -10,8 +10,8 @@
 
 <body unresolved fullbleed>
 
-  <link rel="import" href="../common/common-action.html">
-  <link rel="import" href="../common/common-pager.html">
+  <link rel="import" href="action.html">
+  <link rel="import" href="pager.html">
 
   <app-test></app-test>
 
@@ -24,18 +24,18 @@
           }
         </style>
         <div class="item" selected?="{{$selected}}">
-          <common-action action="common-select">
+          <action-box action="selection-select">
             <span>{{num}} {{text}}</span>
-          </common-action>
+          </action-box>
         </div>
       </template>
       <div style="height: 300px" vertical layout>
         <div>
           <input type="checkbox" checked="{{multi}}">multiple selection mode
         </div>
-        <common-search-selector keyprop="num" items="{{items}}" selected="{{selected}}" multi?="{{multi}}" on-common-query="{{queryAction}}">
+        <pager-search-selector keyprop="num" items="{{items}}" selected="{{selected}}" multi?="{{multi}}" on-pager-query="{{queryAction}}">
           <template ref="tpl" repeat="{{items}}"></template>
-        </common-search-selector>
+        </pager-search-selector>
       </div>
       <p>
         following are selected:

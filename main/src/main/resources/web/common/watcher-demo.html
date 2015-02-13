@@ -9,19 +9,19 @@
 </head>
 
 <body unresolved fullbleed>
-  <link rel="import" href="common-capture.html">
+  <link rel="import" href="watcher.html">
 
   <template is="auto-binding">
     <style>
-      common-capture {
+      watcher-capture {
         border: 1px solid blue;
       }
-      common-capture[captured] {
+      watcher-capture[captured] {
         border: 1px solid red;
       }
     </style>
-    <common-capture>
-      inside common-capture
+    <watcher-capture>
+      inside watcher-capture
       <div>
         input1:
         <input id="input1">
@@ -30,8 +30,8 @@
         input2:
         <input id="input2">
       </div>
-    </common-capture>
-    out of common-capture:
+    </watcher-capture>
+    out of watcher-capture:
     <input>
   </template>
 </body>

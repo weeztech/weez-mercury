@@ -1,5 +1,6 @@
 package com.weez.mercury.common
 
+import scala.concurrent._
 import com.typesafe.config.Config
 import akka.actor._
 import akka.event.LoggingAdapter
@@ -13,9 +14,9 @@ class ServiceManager(val system: ActorSystem, val config: Config) extends Applic
     val path = config.getString("database")
     new RocksDBDatabaseFactory(this).open(FileIO.resolvePathExp(path))
   }
+  val tempDir = FileIO.pathOfExp(config.getString("temp-directory"))
   val sessionManager = new SessionManager(this, config)
   val remoteCallManager = new RemoteCallManager(this, config)
-  val uploadManager = new UploadManager(this, config.getConfig("upload"))
 
   private val idAllocSession = database.createSession()
   val dbSessionFactory = new DBSessionFactory(idAllocSession)
@@ -33,7 +34,6 @@ class ServiceManager(val system: ActorSystem, val config: Config) extends Applic
   }
 
   system.registerOnTermination {
-    uploadManager.close()
     remoteCallManager.close()
     sessionManager.close()
   }
@@ -74,33 +74,52 @@ class TTLCleanerActor(config: Config) extends Actor with ActorLogging {
 
 }
 
-final class ContextImpl(val app: ServiceManager) extends Context with SessionState with DBSessionUpdatable {
-
-  import akka.event.LoggingAdapter
-  import akka.actor.Actor
-
-  var callId: Int = 0
+trait ContextImpl extends Context {
   var api: String = _
-  var request: ModelObject = _
   var response: Response = _
-  var log: LoggingAdapter = _
-  var peer: String = _
 
-  @inline def acceptUpload(receiver: => Actor) = app.uploadManager.openReceive(this, () => receiver)
+  def app: ServiceManager
 
   def complete(response: Response) = {
     if (this.response != null) throw new IllegalStateException("already responsed")
     this.response = response
   }
 
+  @inline def acceptUpload(receiver: UploadContext => Unit) = app.remoteCallManager.registerUpload(this, receiver)
+
+  def futureQuery[T](f: DBSessionQueryable => T) = app.remoteCallManager.internalFutureCall(permitUpdate = false, f)
+
+  def futureUpdate[T](f: DBSessionUpdatable => T) = app.remoteCallManager.internalFutureCall(permitUpdate = true, f)
+
+  @inline def tempDir = app.tempDir
+}
+
+final class RemoteCallContextImpl(val app: ServiceManager, val executor: ExecutionContext) extends ContextImpl with RemoteCallContext with SessionState with DBSessionUpdatable {
+
+  import akka.event.LoggingAdapter
+
+  var promise = Promise[InstantResponse]()
+  var callId: Int = 0
+  var request: ModelObject = _
+  var peer: String = _
+  var log: LoggingAdapter = _
   var sessionState: SessionState = _
+
+  var dbSessionQuery: DBSessionQueryable = _
+  var dbSessionUpdate: DBSessionUpdatable = _
+
+  def setSession(_session: Session) = {
+    sessionState = new SessionState {
+      def session = _session
+
+      @inline final def sessionsByPeer(peer: String) = app.sessionManager.getSessionsByPeer(peer)
+    }
+  }
 
   @inline def session = sessionState.session
 
   @inline def sessionsByPeer(peer: String) = sessionState.sessionsByPeer(peer)
 
-  var dbSessionQuery: DBSessionQueryable = _
-  var dbSessionUpdate: DBSessionUpdatable = _
 
   @inline def get[K: Packer, V: Packer](key: K) = dbSessionQuery.get[K, V](key)
 
@@ -116,65 +135,73 @@ final class ContextImpl(val app: ServiceManager) extends Context with SessionSta
 
   @inline def del[K: Packer](key: K) = dbSessionUpdate.del(key)
 
-  def setSession(_session: Session) = {
-    sessionState = new SessionState {
-      def session = _session
-
-      @inline final def sessionsByPeer(peer: String) = app.sessionManager.getSessionsByPeer(peer)
-    }
-  }
-
   def unuse(): Unit = {
+    promise = null
     api = null
     request = null
-    response = null
     peer = null
+    response = null
     log = null
-    sessionState = null
     dbSessionQuery = null
     dbSessionUpdate = null
+    sessionState = null
   }
 }
 
-final class ContextProxy(c: ContextImpl) extends Context with SessionState with DBSessionUpdatable {
-  val callId = c.callId
+class UploadContextImpl(val id: String,
+                        val app: ServiceManager,
+                        val executor: ExecutionContext,
+                        val receiver: UploadContext => Unit) extends ContextImpl with UploadContext {
+  var sessionState: Option[SessionState] = None
+  private var disposed = false
+  private val promise = Promise[InstantResponse]()
 
-  @inline private def check[T](f: => T): T = {
-    if (callId != c.callId)
-      throw new IllegalStateException("Context could not used in current call")
-    else
-      f
+  private def check(): Unit = require(!disposed)
+
+  def upstream = ???
+
+  def queue = ???
+
+  def isComplete = disposed
+
+  def setSession(sid: Option[String]) = {
+    sessionState = sid map { x =>
+      app.sessionManager.getAndLockSession(x) match {
+        case Some(s) =>
+          new SessionState {
+            def session = s
+
+            @inline final def sessionsByPeer(peer: String) = app.sessionManager.getSessionsByPeer(peer)
+          }
+        case None => ErrorCode.InvalidSessionID.raise
+      }
+    }
   }
 
-  def app = check(c.app)
+  def future = promise.future
 
-  def request = check(c.request)
+  def fail(ex: Throwable) = {
+    promise.failure(ex)
+    dispose()
+  }
 
-  def response = check(c.response)
+  def complete(result: UploadResult) = {
+    result match {
+      case UploadSuccess(x) => promise.success(x)
+      case UploadFailure(ex) => promise.failure(ex)
+    }
+    dispose()
+  }
 
-  def log = check(c.log)
-
-  def peer = check(c.peer)
-
-  def acceptUpload(receiver: => Actor) = check(c.acceptUpload(receiver))
-
-  def complete(response: Response) = check(c.complete(response))
-
-  def session = check(c.session)
-
-  def sessionsByPeer(peer: String) = check(c.sessionsByPeer(peer))
-
-  def get[K: Packer, V: Packer](key: K) = check(c.get[K, V](key))
-
-  def exists[K: Packer](key: K) = check(c.exists(key))
-
-  def newCursor() = check(c.newCursor())
-
-  def getMeta(name: String)(implicit db: DBSessionQueryable) = check(c.getMeta(name))
-
-  def newEntityId() = check(c.newEntityId())
-
-  def put[K: Packer, V: Packer](key: K, value: V) = check(c.put(key, value))
-
-  def del[K: Packer](key: K) = check(c.del(key))
+  private def dispose() = {
+    disposed = true
+    api = null
+    response = null
+    sessionState match {
+      case Some(x) =>
+        app.sessionManager.returnAndUnlockSession(x.session)
+        sessionState = None
+      case None =>
+    }
+  }
 }

@@ -1,0 +1,127 @@
+<polymer-element name="remote-call" hidden>
+  <script>
+    (function () {
+      var sessionDefer;
+
+      var apiBase;
+
+      function init() {
+        if (!sessionDefer) {
+          sessionDefer = new Promise(function (resolve) {
+            Polymer.whenReady(function () {
+              var el = document.createElement('remote-call');
+              apiBase = el.resolvePath('../');
+              request('product.SessionService.init', {}, function (resp) {
+                if (resp instanceof Error) {
+                  alert('发生故障，请刷新页面');
+                  throw new Error('failed to get session id');
+                }
+                resolve(resp.sid);
+              });
+            });
+          });
+        }
+        return sessionDefer;
+      }
+
+      function request(api, args, callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', apiBase + 'service/com.weez.mercury.' + api);
+        xhr.responseType = 'json';
+        prepareHandlers(xhr, callback)
+        xhr.send(JSON.stringify(args));
+        return xhr;
+      }
+
+      function prepareHandlers(xhr, callback) {
+        xhr.onload = function () {
+          var status = xhr.status || 0;
+          var success = !status || (status >= 200 && status < 300);
+          if (success) {
+            var resp = xhr.response;
+            resp.error && (resp = processError(resp.code, resp.error));
+            callback(resp);
+          } else {
+            callback(new Error(xhr.status + ' - ' + xhr.statusText));
+          }
+        };
+        xhr.onerror = callback;
+        xhr.ontimeout = function () {
+          callback(new Error('request timeout'));
+        };
+      }
+
+      function processError(code, msg) {
+        if (!msg) {
+          if (code >= 800 && code < 810) {
+            msg = '请求无效，请检查程序版本';
+          } else if (code >= 870 && code < 880) {
+            msg = '请求的服务不可用';
+          } else if (code == 880) {
+            msg = '服务器忙，请稍后重试';
+          } else if (code != 899) {
+            msg = '未知错误';
+          }
+        }
+        return new Error(code + ' - ' + msg);
+      }
+
+      Polymer({
+        publish: {
+          mode: 'concurrent'
+        },
+        request: function (api, args) {
+          return this['request_' + this.mode](api, args);
+        },
+        request_single: function (api, args) {
+          var msgId = this.msgId ? ++this.msgId : (this.msgId = 1);
+          var self = this;
+          if (this.activeRequest) {
+            this.activeRequest.abort();
+            this.activeRequest = null;
+          }
+          return new Promise(function (resolve) {
+            init().then(function (sid) {
+              args.sid = sid;
+              self.activeRequest = request(api, args, function (resp) {
+                if (msgId == self.msgId) {
+                  self.activeRequest = null;
+                  resolve(resp);
+                }
+              });
+            });
+          });
+        },
+        request_concurrent: function (api, args) {
+          return new Promise(function (resolve) {
+            init().then(function (sid) {
+              args.sid = sid;
+              request(api, args, resolve);
+            });
+          });
+        },
+        upload: function (api, args, file) {
+          return new Promise(function (resolve) {
+            init().then(function (sid) {
+              args.sid = sid;
+              request(api, args, function (resp) {
+                if (resp instanceof Error) {
+                  alert(resp.message);
+                } else {
+                  var formData = new FormData();
+                  formData.append("file", file);
+                  var xhr = new XMLHttpRequest();
+                  xhr.open('POST', apiBase + 'upload/' + resp.id);
+                  xhr.responseType = 'json';
+                  prepareHandlers(xhr, resolve);
+                  xhr.send(formData);
+                }
+              });
+            });
+          });
+        }
+      });
+    })();
+  </script>
+</polymer-element>
+

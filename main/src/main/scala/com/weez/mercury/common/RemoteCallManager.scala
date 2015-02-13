@@ -5,6 +5,7 @@ import com.typesafe.config.Config
 class RemoteCallManager(app: ServiceManager, config: Config) {
 
   import scala.concurrent._
+  import akka.actor._
 
   def remoteCalls: Map[String, RemoteCall] = {
     import scala.reflect.runtime.universe._
@@ -49,11 +50,11 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     builder.result()
   }
 
-  type FullContext = Context with SessionState with DBSessionUpdatable
+  type FullContext = RemoteCallContext with SessionState with DBSessionUpdatable
 
   case class RemoteCall(f: FullContext => Unit, sessionState: Boolean, dbQuery: Boolean, dbUpdate: Boolean)
 
-  val workerPools = {
+  private val workerPools = {
     val builder = Seq.newBuilder[WorkerPool]
     val workers = config.getConfig("workers")
     val itor = workers.root().keySet().iterator()
@@ -64,7 +65,12 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     builder.result()
   }
 
-  def postRequest(peer: String, api: String, req: ModelObject): Future[Response] = {
+  private val uploadIdGen = new Util.SecureIdGenerator(12)
+  private val uploads = new TTLMap[String, UploadRequest](
+    config.getDuration("upload-timeout", java.util.concurrent.TimeUnit.SECONDS))
+  private val uploadsClean = app.addTTLCleanEvent(_ => uploads.clean())
+
+  def postRequest(peer: String, api: String, req: ModelObject): Future[InstantResponse] = {
     import scala.util.control.NonFatal
     try {
       val rc = remoteCalls.getOrElse(api, ErrorCode.RemoteCallNotFound.raise)
@@ -73,48 +79,108 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
           .getAndLockSession(req.sid)
           .getOrElse(ErrorCode.InvalidSessionID.raise)
       } else null
-      val p = Promise[Response]()
-      internalCallback(p, rc.sessionState, rc.dbQuery, rc.dbUpdate) { c =>
-        c.api = api
-        c.peer = peer
-        if (session != null)
-          c.setSession(session)
-        c.request = req
-        try {
-          rc.f(new ContextProxy(c))
-        } finally {
-          if (session != null)
-            app.sessionManager.returnAndUnlockSession(session)
-        }
-        if (c.response == null)
-          throw new IllegalStateException("no response")
-        c.response
+      workerPools.find { wp =>
+        wp.permitContext &&
+          wp.permitSessionState == rc.sessionState &&
+          wp.permitDBQuery == rc.dbQuery &&
+          wp.permitDBUpdate == rc.dbUpdate
+      } match {
+        case Some(wp) =>
+          val p = Promise[InstantResponse]()
+          wp.post(RemoteCallTask { c =>
+            c.promise = p
+            c.api = api
+            c.peer = peer
+            if (session != null)
+              c.setSession(session)
+            c.request = req
+            try {
+              rc.f(c)
+            } finally {
+              if (session != null)
+                app.sessionManager.returnAndUnlockSession(session)
+              processResponse(c, c.response)
+            }
+          })
+          p.future
+        case None => Future.failed(ErrorCode.WorkerPoolNotFound.exception)
       }
-      p.future
     } catch {
       case NonFatal(ex) => Future.failed(ex)
     }
   }
 
-  def internalCallback[T](p: Promise[T],
-                          permitSession: Boolean,
-                          permitDBQuery: Boolean,
-                          permitDBUpdate: Boolean)(f: ContextImpl => T): Unit = {
-    workerPools.find { wp =>
-      wp.permitSessionState == permitSession &&
-        wp.permitDBQuery == permitDBQuery &&
-        wp.permitDBUpdate == permitDBUpdate
-    } match {
-      case Some(wp) =>
-        wp.post(Task(c => {
-          import scala.util.Try
-          p.complete(Try(f(c)))
-        }))
-      case None => p.failure(ErrorCode.WorkerPoolNotFound.exception)
+  private def processResponse(c: RemoteCallContextImpl, resp: Response): Unit = {
+    resp match {
+      case null => c.promise.failure(throw new IllegalStateException("no response"))
+      case x: InstantResponse => c.promise.success(x)
+      case FutureResponse(x) =>
+        import scala.util._
+        implicit val executor = internalFutureExecutor
+        x.onComplete {
+          case Success(r) => processResponse(c, r)
+          case Failure(ex) => c.promise.failure(ex)
+        }
     }
   }
 
-  def close() = ()
+  def registerUpload(c: ContextImpl, handler: UploadContext => Unit) = {
+    uploads.synchronized {
+      val id = uploadIdGen.newId
+      val sid = c match {
+        case x: RemoteCallContextImpl =>
+          if (x.sessionState == null) None else Some(x.sessionState.session.id)
+        case x: UploadContext =>
+          x.sessionState.map(_.session.id)
+        case _ => None
+      }
+      uploads.values.put(id, new UploadRequest(id, c.api, sid, handler))
+      id
+    }
+  }
+
+  def openUpload(id: String) = {
+    uploads.synchronized {
+      uploads.values.remove(id) match {
+        case Some(x) =>
+          val uc = new UploadContextImpl(x.id, app, internalFutureExecutor, x.handler)
+          uc.setSession(x.sid)
+          uc.api = x.api
+          uc
+        case None => ErrorCode.InvalidUploadID.raise
+      }
+    }
+  }
+
+  def close() = uploadsClean.close()
+
+  def internalFutureCall[T](permitUpdate: Boolean, f: RemoteCallContextImpl => T) = {
+    workerPools find { wp =>
+      wp.permitDBQuery && wp.permitDBUpdate == permitUpdate
+    } match {
+      case Some(wp) =>
+        val p = Promise[T]()
+        wp.post(RemoteCallTask(c => {
+          import scala.util.Try
+          p.complete(Try(f(c)))
+        }))
+        p.future
+      case None => Future.failed(ErrorCode.WorkerPoolNotFound.exception)
+    }
+  }
+
+  private val internalFutureExecutor = new ExecutionContext {
+    def execute(runnable: Runnable) = {
+      workerPools.find { wp =>
+        !wp.permitSessionState && !wp.permitDBQuery && !wp.permitDBUpdate
+      } match {
+        case Some(wp) => wp.post(InternalFutureTask(runnable))
+        case None => throw new IllegalStateException()
+      }
+    }
+
+    def reportFailure(cause: Throwable) = ()
+  }
 
   class WorkerPool(name: String, config: Config) {
 
@@ -125,13 +191,14 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     val minWorkerCount = config.getInt("worker-count-min")
     val requestCountLimit = config.getInt("request-count-limit")
     private var workerCount = 0
-    private val queue = scala.collection.mutable.Queue[Task]()
+    private val queue = scala.collection.mutable.Queue[AnyRef]()
     private val idle = scala.collection.mutable.Queue[ActorRef]()
+    val permitContext = config.getBoolean("context")
     val permitSessionState = config.getBoolean("session-state")
     val permitDBQuery = config.getBoolean("db-query")
     val permitDBUpdate = config.getBoolean("db-update")
 
-    def post(task: Task): Unit = {
+    def post(task: AnyRef): Unit = {
       this.synchronized {
         if (idle.nonEmpty) {
           val worker = idle.dequeue()
@@ -159,8 +226,8 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
           }
 
           override def receive = {
-            case task: Task =>
-              val c = new ContextImpl(app)
+            case task: RemoteCallTask =>
+              val c = new RemoteCallContextImpl(app, internalFutureExecutor)
               val trans = dbSession.newTransaction(log)
               try {
                 c.log = log
@@ -179,14 +246,22 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
       } else {
         new Actor with ActorLogging {
           override def receive = {
-            case task: Task =>
-              val c = new ContextImpl(app)
+            case task: RemoteCallTask =>
+              val c = new RemoteCallContextImpl(app, internalFutureExecutor)
               try {
                 c.log = log
                 task.f(c)
               } finally {
                 c.unuse()
                 done(self)
+              }
+            case InternalFutureTask(x) =>
+              import scala.util.control.NonFatal
+              try {
+                x.run()
+              } catch {
+                case NonFatal(ex) =>
+                  log.error(ex, "internal future exception")
               }
           }
         }
@@ -207,6 +282,10 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     }
   }
 
-  case class Task(f: ContextImpl => Unit)
+  case class RemoteCallTask(f: RemoteCallContextImpl => Unit)
+
+  case class InternalFutureTask(run: Runnable)
+
+  class UploadRequest(val id: String, val api: String, val sid: Option[String], val handler: UploadContext => Unit) extends TTLBased[String]
 
 }

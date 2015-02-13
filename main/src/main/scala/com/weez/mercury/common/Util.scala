@@ -2,7 +2,7 @@ package com.weez.mercury.common
 
 object Util {
 
-  class RandomIdGenerator(len: Int) {
+  class SecureIdGenerator(len: Int) {
 
     import org.parboiled.common.Base64
     import java.security.SecureRandom

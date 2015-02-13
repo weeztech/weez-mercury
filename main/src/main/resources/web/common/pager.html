@@ -1,10 +1,10 @@
 <link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
 <link rel="import" href="../bower_components/core-scroll-threshold/core-scroll-threshold.html">
 <link rel="import" href="../bower_components/paper-icon-button/paper-icon-button.html">
-<link rel="import" href="common-resizable.html">
-<link rel="import" href="common-remote.html">
+<link rel="import" href="watcher.html">
+<link rel="import" href="remote.html">
 
-<polymer-element name="common-pager" vertical layout>
+<polymer-element name="pager-box" vertical layout>
   <template>
     <style>
       :host {
@@ -49,7 +49,7 @@
       loading: false,
       created: function () {
         this.args = {};
-        this.remote = document.createElement('common-remote');
+        this.remote = document.createElement('remote-call');
         this.remote.mode = 'singleton';
       },
       domReady: function () {
@@ -85,10 +85,10 @@
         if (this.api) {
           this.remote.request(this.api, args).then(this.afterQuery.bind(this));
         } else {
-          this.fire('common-query', args);
+          this.fire('pager-query', args);
           var result = args.result;
           delete args.result;
-          if (!result) throw new Error('no response on common-query');
+          if (!result) throw new Error('no response on pager-query');
           if (result.then) {
             result.then(this.afterQuery.bind(this));
           } else {
@@ -119,27 +119,25 @@
 </polymer-element>
 
 <link rel="import" href="../bower_components/core-collapse/core-collapse.html">
-<link rel="import" href="common-search-input.html">
-<link rel="import" href="common-selection.html">
-<link rel="import" href="common-capture.html">
+<link rel="import" href="search-input.html">
 
-<polymer-element name="common-search-pager" extends="common-pager">
+<polymer-element name="pager-search-box" extends="pager-box">
   <template>
     <style>
       :host {
         display: block;
       }
-      common-search-input {
+      search-input {
         width: 100%;
       }
     </style>
-    <common-search-input value="{{keywords}}"></common-search-input>
+    <search-input value="{{keywords}}"></search-input>
     <core-collapse opened?="{{!collapse || active}}">
       <div vertical layout style="height: {{listHeight}}px">
         <shadow></shadow>
       </div>
     </core-collapse>
-    <common-capture active="{{active}}"></common-capture>
+    <watcher-capture active="{{active}}"></watcher-capture>
   </template>
   <script>
     Polymer({
@@ -159,9 +157,9 @@
   </script>
 </polymer-element>
 
-<link rel="import" href="common-selection.html">
+<link rel="import" href="selection.html">
 
-<polymer-element name="common-search-selector" extends="common-search-pager">
+<polymer-element name="pager-search-selector" extends="pager-search-box">
   <template>
     <div id="selectedList">
       <content select="selectedList"></content>
@@ -169,10 +167,10 @@
     <div id="selectList">
       <shadow></shadow>
     </div>
-    <common-selection keyprop="{{keyprop}}" items="{{items}}" selected="{{selected}}" multi?="{{multi}}">
-      <common-selector target="{{$.selectList}}"></common-selector>
-      <common-selector target="{{$.selectedList}}"></common-selector>
-    </common-selection>
+    <selection-set keyprop="{{keyprop}}" items="{{items}}" selected="{{selected}}" multi?="{{multi}}">
+      <selection-selector target="{{$.selectList}}"></selection-selector>
+      <selection-selector target="{{$.selectedList}}"></selection-selector>
+    </selection-set>
   </template>
   <script>
     Polymer({

@@ -1,6 +1,6 @@
-<link rel="import" href="common-controller.html">
+<link rel="import" href="controller.html">
 
-<polymer-element name="common-selection" hidden>
+<polymer-element name="selection-set" hidden>
   <script>
     Polymer({
       publish: {
@@ -106,7 +106,7 @@
   </script>
 </polymer-element>
 
-<polymer-element name="common-selector" extends="common-controller">
+<polymer-element name="selection-selector" extends="controller-base">
   <script>
     Polymer({
       publish: {
@@ -114,15 +114,15 @@
         model: ''
       },
       targetDelegates: {
-        'common-select': 'commonSelectAction',
-        'common-deselect': 'commonDeselectAction'
+        'selection-select': 'selectAction',
+        'selection-deselect': 'deselectAction'
       },
       itemOf: function (el) {
         var m = el.templateInstance.model;
         if (this.model) m = m[this.model];
         return m;
       },
-      commonSelectAction: function (e) {
+      selectAction: function (e) {
         var el = e.path[0];
         while (!el.templateInstance_)
           el = el.parentNode;
@@ -160,7 +160,7 @@
           this.parentNode.select(item);
         }
       },
-      commonDeselectAction: function (e) {
+      deselectAction: function (e) {
         var el = e.path[0];
         while (!el.templateInstance_)
           el = el.parentNode;

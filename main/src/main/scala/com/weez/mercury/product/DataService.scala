@@ -15,7 +15,7 @@ object DataService extends RemoteService {
         mo.description = o.description
       }
     }
-    modelWith("items" -> items)
+    complete(model("items" -> items))
   }
 
   def availableRooms: QueryCall = c => {
@@ -26,7 +26,7 @@ object DataService extends RemoteService {
         "price" -> r.price,
         "description" -> r.description)
     }
-    modelWith("items" -> items)
+    complete(model("items" -> items))
   }
 
   def availableDevices: QueryCall = c => {
@@ -39,7 +39,7 @@ object DataService extends RemoteService {
         "title" -> pm.title,
         "description" -> pm.description)
     }
-    modelWith("items" -> items)
+    complete(model("items" -> items))
   }
 }
 

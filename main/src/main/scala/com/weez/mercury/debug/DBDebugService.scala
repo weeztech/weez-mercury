@@ -64,10 +64,10 @@ object DBDebugService extends RemoteService {
             }
           }
         } else {
-          failWith("not root collection")
+          complete(fail("not root collection"))
         }
       case _ =>
-        failWith("not found")
+        complete(fail("not found"))
     }
   }
 
