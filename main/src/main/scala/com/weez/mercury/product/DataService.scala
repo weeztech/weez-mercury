@@ -140,50 +140,7 @@ case class RentOutOrder(datetime: DateTime,
                         state: Int,
                         rooms: Seq[RentOutRoomItem],
                         assistants: Seq[RentOutAssistantItem],
-                        products: Seq[RentOutOrderProductItem]) extends Entity with ProductFlowBiz {
-  def productFlows() = {
-    val self = this
-    products flatMap { item =>
-      (item.outs map { o =>
-        new ProductFlow {
-          def bizRef = self
-
-          def serialNumber = o.serialNumber
-
-          def toStock = self.customer
-
-          def datetime = o.datetime
-
-          def product = item.product
-
-          def fromStock = o.from
-
-          def totalValue = o.totalValue
-
-          def quantity = o.quantity
-        }
-      }) ++ (item.returns map { r =>
-        new ProductFlow {
-          def bizRef = self
-
-          def serialNumber = r.serialNumber
-
-          def toStock = r.to
-
-          def datetime = r.datetime
-
-          def product = item.product
-
-          def fromStock = self.customer
-
-          def totalValue = r.totalValue
-
-          def quantity = r.quantity
-        }
-      })
-    }
-  }
-}
+                        products: Seq[RentOutOrderProductItem]) extends Entity
 
 object RentOutOrderState {
   final val Booking = 10
@@ -197,11 +154,23 @@ object RentOutOrderCollection extends RootCollection[RentOutOrder] {
   val byNumber = defUniqueIndex("by-number", _.number)
   val byNoneClosed = defIndexEx("by-none-closed") { (o, db) =>
     import RentOutOrderState._
+    var result = Set.empty[(Int, DateTime)]
     if (o.state == Booking || o.state == Open) {
-      Set(Tuple2(o.state, o.datetime))
-    } else {
-      Set.empty[(Int, DateTime)]
+      result += o.state -> o.datetime
     }
+    result
+  }
+  extractTo(ProductFlowDataBoard) { (o, db) =>
+    var result = List.empty[ProductFlow]
+    for (p <- o.products) {
+      for (out <- p.outs) {
+        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.serialNumber, out.quantity, out.totalValue)
+      }
+      for (ret <- p.returns) {
+        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.serialNumber, ret.quantity, ret.totalValue)
+      }
+    }
+    result
   }
 }
 

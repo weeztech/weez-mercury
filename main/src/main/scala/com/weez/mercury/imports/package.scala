@@ -13,6 +13,8 @@ package object imports extends com.github.nscala_time.time.Imports {
   type EntityCollection[V <: Entity] = common.EntityCollection[V]
   type RootCollection[V <: Entity] = common.RootCollection[V]
   type DataView[K, V] = common.DataView[K, V]
+  type DataBoard[D] = common.DataBoard[D]
+  type CanMerge[Repr<:CanMerge[Repr]] = common.CanMerge[Repr]
   type IndexBase[K, V] = common.IndexBase[K, V]
   type Index[K, V <: Entity] = common.Index[K, V]
   type UniqueIndex[K, V <: Entity] = common.UniqueIndex[K, V]

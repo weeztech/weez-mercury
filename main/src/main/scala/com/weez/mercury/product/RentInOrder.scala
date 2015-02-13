@@ -31,30 +31,7 @@ case class RentInOrder(datetime: DateTime,
                        number: String,
                        provider: Ref[Provider],
                        remark: String,
-                       items: Seq[RentInOrderItem]) extends Entity with ProductFlowBiz {
-  def productFlows() = {
-    val self = this
-    items map { item =>
-      new ProductFlow {
-        def bizRef = self
-
-        def serialNumber = item.serialNumber
-
-        def toStock = item.stock
-
-        def datetime = self.datetime
-
-        def product = item.product
-
-        def fromStock = self.provider
-
-        def totalValue = item.totalValue
-
-        def quantity = item.quantity
-      }
-    }
-  }
-}
+                       items: Seq[RentInOrderItem]) extends Entity
 
 object RentInOrderHelper {
 
@@ -135,7 +112,13 @@ object RentInOrderHelper {
   }
 }
 
-object RentInOrderCollection extends RootCollection[RentInOrder]
+object RentInOrderCollection extends RootCollection[RentInOrder] {
+  extractTo(ProductFlowDataBoard) { (o, db) =>
+    o.items.map { item =>
+      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
+    }
+  }
+}
 
 /**
  * 租入归还单子项
@@ -164,29 +147,12 @@ case class RentInReturn(datetime: DateTime,
                         number: String,
                         provider: Ref[Provider],
                         remark: String,
-                        items: Seq[RentInReturnItem]) extends Entity with ProductFlowBiz {
-  def productFlows() = {
-    val self = this
-    items map { item =>
-      new ProductFlow {
-        def bizRef = self
+                        items: Seq[RentInReturnItem]) extends Entity
 
-        def serialNumber = item.serialNumber
-
-        def toStock = self.provider
-
-        def datetime = self.datetime
-
-        def product = item.product
-
-        def fromStock = item.stock
-
-        def totalValue = item.totalValue
-
-        def quantity = item.quantity
-      }
+object RentInReturnCollection extends RootCollection[RentInReturn] {
+  extractTo(ProductFlowDataBoard) { (o, db) =>
+    o.items.map { item =>
+      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
     }
   }
 }
-
-object RentInReturnCollection extends RootCollection[RentInReturn]

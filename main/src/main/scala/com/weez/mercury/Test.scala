@@ -50,6 +50,7 @@ object Test {
       case ModelResponse(m) =>
         //call("debug.DBDebugService.listCollectionMetas", "prefix" -> "")
         call("debug.DBDebugService.listRootCollection", "sid" -> m.sid, "collectionName" -> MetaCollection.name)
+        //call("product.TestService.init", "sid" -> m.sid)
       case _ => ???
     }
     futu.onComplete { result =>

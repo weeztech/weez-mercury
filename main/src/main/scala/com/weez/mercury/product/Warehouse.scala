@@ -1,6 +1,5 @@
 package com.weez.mercury.product
 
-import com.github.nscala_time.time.Imports._
 import com.weez.mercury.common.RefSome
 import com.weez.mercury.imports._
 import com.weez.mercury.common.DTOHelper._
@@ -28,28 +27,17 @@ object ProviderCollection extends RootCollection[Provider] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-trait ProductFlowBiz {
-  def productFlows(): Seq[ProductFlow]
-}
+case class ProductFlow(bizRefID: Long,
+                       datetime: DateTime,
+                       fromStockID: Long,
+                       toStockID: Long,
+                       productID: Long,
+                       serialNumber: String,
+                       quantity: Int,
+                       totalValue: Int)
 
-trait ProductFlow {
+object ProductFlowDataBoard extends DataBoard[ProductFlow]
 
-  def bizRef: Entity
-
-  def datetime: DateTime
-
-  def fromStock: Ref[Entity]
-
-  def toStock: Ref[Entity]
-
-  def product: Ref[Product]
-
-  def quantity: Int
-
-  def totalValue: Int
-
-  def serialNumber: String
-}
 
 /**
  * 库存明细账－主键部分
@@ -71,7 +59,7 @@ final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateT
  */
 @packable
 final case class StockAccountValue(quantity: Int,
-                                   totalValue: Int) {
+                                   totalValue: Int) extends CanMerge[StockAccountValue] {
 
   @inline def +(that: StockAccountValue) = StockAccountValue(this.quantity + that.quantity, this.totalValue + that.totalValue)
 
@@ -79,105 +67,57 @@ final case class StockAccountValue(quantity: Int,
 
   @inline def isEmpty = quantity == 0 && totalValue == 0
 
-  @inline def isDefined = !isEmpty
-
-  @inline def asOption = if (isEmpty) None else Some(this)
-
-  @inline def asStockSummaryAccountValue() = {
-    if (quantity > 0)
-      StockSummaryAccountValue(quantity, totalValue, 0, 0)
-    else
-      StockSummaryAccountValue(0, 0, quantity, totalValue)
-  }
+  @inline def neg() = StockAccountValue(-quantity, -totalValue)
 }
 
 
 object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
-  override def name: String = "stock-account"
 
-  val productFlowCollections = Seq(
-    RentInOrderCollection, //租入
-    RentInReturnCollection, //租入归还
-    PurchaseOrderCollection, //采购
-    PurchaseReturnCollection, //采购退货
-    RentOutOrderCollection //出租业务
-  )
-
-  private def defExtractors(): Unit = {
-    def extractor(biz: ProductFlowBiz, db: DBSessionQueryable) = {
-      var result = Map.empty[StockAccountKey, StockAccountValue]
-      var qty = 0
-      var totalValue = 0
-      biz.productFlows() groupBy { o =>
-        StockAccountKey(o.toStock.id, o.product.id, o.datetime, o.fromStock.id, o.bizRef.id)
-      } foreach { case (k, pfs) =>
-        qty = 0
-        totalValue = 0
-        pfs foreach { pf =>
-          qty += pf.quantity
-          totalValue += pf.totalValue
-        }
-        result = result.updated(k, StockAccountValue(qty, totalValue))
-        result = result.updated(k.revert(), StockAccountValue(-qty, -totalValue))
-      }
-      result
-    }
-    for (s <- productFlowCollections) {
-      defExtractor(s)(extractor)
-    }
+  extractFrom(ProductFlowDataBoard) { (o, db) =>
+    val k = StockAccountKey(o.toStockID, o.productID, o.datetime, o.fromStockID, o.bizRefID)
+    val v = StockAccountValue(o.quantity, o.totalValue)
+    Map(k -> v, k.revert() -> v.neg())
   }
-
-  defExtractors()
 }
 
 @packable
 final case class StockSummaryAccountKey(stockID: Long, productID: Long, datetime: DateTime)
 
 @packable
-final case class StockSummaryAccountValue(quantityIn: Int, totalPriceIn: Int, quantityOut: Int, totalPriceOut: Int) {
+final case class StockSummaryAccountValue(quantityIn: Int, totalPriceIn: Int, quantityOut: Int, totalPriceOut: Int) extends CanMerge[StockSummaryAccountValue] {
   @inline def +(that: StockSummaryAccountValue) = StockSummaryAccountValue(this.quantityIn + that.quantityIn, this.totalPriceIn + that.totalPriceIn, this.quantityOut + that.quantityOut, this.totalPriceOut + that.totalPriceOut)
 
   @inline def -(that: StockSummaryAccountValue) = StockSummaryAccountValue(this.quantityIn - that.quantityIn, this.totalPriceIn - that.totalPriceIn, this.quantityOut - that.quantityOut, this.totalPriceOut - that.totalPriceOut)
 
   @inline def isEmpty = quantityIn == 0 && totalPriceIn == 0 && quantityOut == 0 && totalPriceOut == 0
 
-  @inline def isDefined = !isEmpty
-
-  @inline def asOption = if (isEmpty) None else Some(this)
+  @inline def neg() = StockSummaryAccountValue(-quantityIn, -totalPriceIn, -quantityOut, -totalPriceOut)
 }
 
 sealed abstract class StockSummaryAccount extends DataView[StockSummaryAccountKey, StockSummaryAccountValue] {
-  override protected def defMerger = Some(
-    new Merger[StockSummaryAccountValue] {
-      def sub(v1: StockSummaryAccountValue, v2: StockSummaryAccountValue) = (v1 - v2).asOption
-
-      def add(v1: StockSummaryAccountValue, v2: StockSummaryAccountValue) = (v1 + v2).asOption
-    }
-  )
 
   def dateFold(datetime: DateTime): DateTime
 
-  defExtractor(StockAccount) {
-    (k, v, db) => Map(
-      StockSummaryAccountKey(k.stockID, k.productID, dateFold(k.datetime)) -> v.asStockSummaryAccountValue()
-    )
+  extractFrom(ProductFlowDataBoard) { (o, db) =>
+    val k = StockSummaryAccountKey(o.toStockID, o.productID, o.datetime)
+    val v = StockSummaryAccountValue(o.quantity, o.totalValue, 0, 0)
+    val k2 = StockSummaryAccountKey(o.fromStockID, o.productID, o.datetime)
+    val v2 = StockSummaryAccountValue(0, 0, o.quantity, o.totalValue)
+    Map(k -> v, k2 -> v2)
   }
 }
 
 object StockDailyAccount extends StockSummaryAccount {
-  def name: String = "stock-account-daily"
 
   def dateFold(datetime: DateTime) = datetime.dayFloor
 }
 
 object StockMonthlyAccount extends StockSummaryAccount {
-  def name: String = "stock-account-monthly"
 
   def dateFold(datetime: DateTime) = datetime.monthFloor
 }
 
 object StockYearlyAccount extends StockSummaryAccount {
-  def name: String = "stock-account-yearly"
 
   def dateFold(datetime: DateTime) = datetime.yearFloor
 }
@@ -189,31 +129,15 @@ case class ProductSNTraceKey(serialNumber: String, datetime: DateTime, bizRefID:
 case class ProductSNTraceValue(productID: Long, fromStockID: Long, toStockID: Long)
 
 object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
-  override def name: String = "product-sn-trace"
-
-  private def defExtractors(): Unit = {
-    def extractor(biz: ProductFlowBiz, db: DBSessionQueryable) = {
-      var result = Map.empty[ProductSNTraceKey, ProductSNTraceValue]
-      for (x <- biz.productFlows()) {
-        val sn = x.serialNumber
-        if ((sn ne null) && !sn.isEmpty) {
-          val k = ProductSNTraceKey(x.serialNumber, x.datetime, x.bizRef.id)
-          val v = ProductSNTraceValue(x.product.id, x.fromStock.id, x.toStock.id)
-          result = result.updated(k, v)
-        }
-      }
-      result
-    }
-    for (s <- StockAccount.productFlowCollections) {
-      defExtractor(s)(extractor)
-    }
+  extractFrom(ProductFlowDataBoard) { (o, db) =>
+    val k = ProductSNTraceKey(o.serialNumber, o.datetime, o.bizRefID)
+    val v = ProductSNTraceValue(o.productID, o.fromStockID, o.toStockID)
+    Map(k -> v)
   }
-
-  defExtractors()
 }
 
 object TestService extends RemoteService {
-  lazy val productIDs = new Array[Long](10000)
+  lazy val productIDs = new Array[Long](1000)
   lazy val providerIDs = new Array[Long](100)
   lazy val warehouseIDs = new Array[Long](5)
   lazy val customerIDs = new Array[Long](1000)
