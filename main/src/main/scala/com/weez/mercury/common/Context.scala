@@ -361,7 +361,7 @@ abstract class DataView[K: Packer, V: Packer : TypeTag] {
 
   @inline protected final def extractFrom[E <: Entity](collection: EntityCollection[E])(f: (E, DBSessionQueryable) => Map[K, V]) = collection.extractTo(this)(f)
 
-  @inline protected final def extractFrom[D](dataBoard: DataBoard[D])(f: (D, DBSessionQueryable) => Map[K, V]): Unit = new DataBoard2DataViewExtractor(dataBoard.impl, impl, f)
+  @inline protected final def extractFrom[D](dataBoard: DataBoard[D])(f: (D, DBSessionQueryable) => Seq[(K, V)]): Unit = new DataBoard2DataViewExtractor(dataBoard.impl, impl, f)
 
   private[common] val impl = newDataView[K, V](this)
 }
@@ -369,7 +369,7 @@ abstract class DataView[K: Packer, V: Packer : TypeTag] {
 abstract class DataBoard[D] {
   @inline protected final def extractFrom[E <: Entity](collection: EntityCollection[E])(f: (E, DBSessionQueryable) => Seq[D]) = collection.extractTo(this)(f)
 
-  @inline protected final def extractTo[DK, DV](dataView: DataView[DK, DV])(f: (D, DBSessionQueryable) => Map[DK, DV]): Unit = new DataBoard2DataViewExtractor(impl, dataView.impl, f)
+  @inline protected final def extractTo[DK, DV](dataView: DataView[DK, DV])(f: (D, DBSessionQueryable) => Seq[(DK, DV)]): Unit = new DataBoard2DataViewExtractor(impl, dataView.impl, f)
 
   private[common] val impl = new DataBoardImpl[D]
 }

@@ -76,7 +76,7 @@ object StockAccount extends DataView[StockAccountKey, StockAccountValue] {
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val k = StockAccountKey(o.toStockID, o.productID, o.datetime, o.fromStockID, o.bizRefID)
     val v = StockAccountValue(o.quantity, o.totalValue)
-    Map(k -> v, k.revert() -> v.neg())
+    (k, v) ::(k.revert(), v.neg()) :: Nil
   }
 }
 
@@ -103,7 +103,7 @@ sealed abstract class StockSummaryAccount extends DataView[StockSummaryAccountKe
     val v = StockSummaryAccountValue(o.quantity, o.totalValue, 0, 0)
     val k2 = StockSummaryAccountKey(o.fromStockID, o.productID, o.datetime)
     val v2 = StockSummaryAccountValue(0, 0, o.quantity, o.totalValue)
-    Map(k -> v, k2 -> v2)
+    (k, v) ::(k2, v2) :: Nil
   }
 }
 
@@ -132,7 +132,7 @@ object ProductSNTrace extends DataView[ProductSNTraceKey, ProductSNTraceValue] {
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val k = ProductSNTraceKey(o.serialNumber, o.datetime, o.bizRefID)
     val v = ProductSNTraceValue(o.productID, o.fromStockID, o.toStockID)
-    Map(k -> v)
+    (k, v) :: Nil
   }
 }
 
