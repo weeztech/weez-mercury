@@ -153,72 +153,59 @@ object HttpServer {
   import akka.util.ByteString
 
   class DecodeActor(tcp: ActorRef, uploadContext: UploadContextImpl) extends Actor with ActorLogging {
-
-    import scala.concurrent.duration._
-
     val highWaterMark = 200 * 1024
     val `multipart/form-data` = ContentTypeRange(MediaTypes.`multipart/form-data`)
-    val receiver = uploadContext.receiver
-    var bufferQueue: AsyncQueue[ByteString, ByteString] = new BufferQueue(highWaterMark, tcp)
-
-    var stateReceiving = false
-    var stateUploading = false
+    val bufferQueue = new BufferQueue(highWaterMark, tcp)
+    var input: Pipe.Readable0[ByteString] = _
+    val watcher = new Pipe.EmptyReceiver[ByteString] {
+      override def onError(ex: Throwable) = {
+        self ! Failure(ex)
+      }
+    }
 
     override def preStart() = {
-      stateReceiving = true
-      stateUploading = true
       context.watch(tcp)
-      self ! UploadResume
+    }
+
+    override def postStop() = {
+      input = null
     }
 
     def receive = {
-      case x: ChunkedRequestStart if stateReceiving =>
-        x.request.header[HttpHeaders.`Content-Type`] match {
-          case Some(h) if `multipart/form-data`.matches(h.contentType) =>
-            bufferQueue = bufferQueue >> new MultipartFormDataDecoder(h.contentType)
+      case x: ChunkedRequestStart =>
+        import context.dispatcher
+        input =
+          x.request.header[HttpHeaders.`Content-Type`] match {
+            case Some(h) if `multipart/form-data`.matches(h.contentType) =>
+              val decoder = new MultipartFormDataDecoder(h.contentType)
+              decoder << bufferQueue
+              decoder
+            case _ =>
+              bufferQueue
+          }
+        uploadContext.input = input
+        uploadContext.receiver(uploadContext)
+        if (input.receiver == null) {
+          uploadContext.fail(new IllegalStateException("no receiver attached"))
+          context.become(dropRequest)
+        } else {
+          input.watch(watcher)
+          bufferQueue.enqueue(x.message.entity.data.toByteString)
         }
-        bufferQueue.enqueue(x.message.entity.data.toByteString)
-      case x: MessageChunk if stateReceiving =>
+      case x: MessageChunk =>
         bufferQueue.enqueue(x.data.toByteString)
-      case x: ChunkedMessageEnd if stateReceiving =>
+      case x: ChunkedMessageEnd =>
         bufferQueue.end()
         context.unwatch(tcp)
-        stateReceiving = false
-      case UploadResume if stateUploading =>
-        bufferQueue.dequeue {
-          case QueueItem(x) =>
-          //receiver ! UploadData(x)
-          case QueueError(ex) =>
-            //receiver ! UploadCancelled
-            uploadContext.fail(ex)
-            //context.become(afterUpload)
-            stateUploading = false
-          case QueueFinish =>
-            //receiver ! UploadEnd
-            //context.become(afterUpload)
-            stateUploading = false
-        }
-      case Terminated(x) if x == tcp =>
-        if (!uploadContext.isComplete)
-          uploadContext.fail(ErrorCode.NetworkError.exception)
-        if (receiver == null) {
-          context.stop(self)
-        } else {
-          //receiver ! UploadCancelled
-        }
-      case Terminated(x) if x == receiver =>
-        if (stateUploading) {
-          log.error(s"upload receiver crashed, from remote call: ${uploadContext.api}")
-          uploadContext.fail(throw new IllegalStateException("upload receiver crashed"))
-          if (stateReceiving)
-            context.become(dropRequest)
-        }
-      case x: UploadResult =>
-        uploadContext.complete(x)
-        if (stateReceiving)
-          context.become(dropRequest)
-        else
-          context.stop(self)
+        input.unwatch(watcher)
+        context.stop(self)
+      case Terminated(_) =>
+        input.unwatch(watcher)
+        input.cancel(ErrorCode.NetworkError.exception)
+        context.stop(self)
+      case _: Failure[_] =>
+        input.unwatch(watcher)
+        context.become(dropRequest)
     }
 
     def dropRequest: Receive = {
@@ -226,58 +213,86 @@ object HttpServer {
         context.unwatch(tcp)
         context.stop(self)
       case _: HttpRequestPart => // drop
+      case Terminated(_) =>
+        context.stop(self)
     }
   }
 
-  class BufferQueue(highWaterMark: Int, tcp: ActorRef) extends AsyncQueue.AbstractQueue[ByteString, ByteString] {
+  class BufferQueue(highWaterMark: Int, tcp: ActorRef) extends Pipe.Readable[ByteString] with Pipe.Readable0[ByteString] {
     private val builder = ByteString.newBuilder
     private var suspend = false
     private var size = 0
 
-    protected def enqueue0(buf: ByteString) = {
+    def read0() = {
+      if (builder.length > 0) {
+        val buf = builder.result()
+        builder.clear()
+        size = 0
+        if (suspend) {
+          suspend = false
+          tcp ! Tcp.ResumeReading
+        }
+        completeRead(buf)
+      }
+    }
+
+    def enqueue(buf: ByteString) = this.synchronized {
       builder.append(buf)
       size += buf.length
       if (size > highWaterMark && !suspend) {
         suspend = true
         tcp ! Tcp.SuspendReading
       }
+      read0()
     }
 
-    protected def dequeue0(): ByteString = {
-      if (builder.length == 0) notReady()
-      val buf = builder.result()
+    def end() = this.synchronized {
+      readEnd = true
+      if (readPending)
+        completeRead(null)
+    }
+
+    override protected def onReadError(ex: Throwable) = {
+      super.onReadError(ex)
       builder.clear()
-      size -= buf.length
-      if (suspend && size < highWaterMark) {
-        suspend = false
-        tcp ! Tcp.ResumeReading
-      }
-      buf
     }
   }
 
-  class MultipartFormDataDecoder(contentType: ContentType) extends AsyncQueue.AbstractQueue[ByteString, ByteString] {
+  class MultipartFormDataDecoder(contentType: ContentType) extends Pipe.Readable0[ByteString] with Pipe.Writable0[ByteString] {
 
     import spray.http._
     import spray.httpx.unmarshalling._
 
     private val builder = ByteString.newBuilder
+    private var decoded: ByteString = null
 
-    override def enqueue0(buf: ByteString) = {
+    override def write0(buf: ByteString) = {
       builder.append(buf)
+      completeWrite()
     }
 
-    override def dequeue0() = {
-      if (!isEnd) notReady()
+    override def end0() = {
       val buf = builder.result()
       builder.clear()
       val entity = HttpEntity(contentType, HttpData(buf))
       Deserializer.MultipartFormDataUnmarshaller(entity) match {
         case Right(x) =>
           if (x.fields.length != 1) ErrorCode.InvalidRequest.raise
-          x.fields.head.entity.data.toByteString
+          val dec = x.fields.head.entity.data.toByteString
+          if (readPending)
+            completeRead(dec)
+          else
+            decoded = dec
         case Left(ex) =>
           throw new IllegalArgumentException(ex.toString)
+      }
+      completeWrite()
+    }
+
+    override def read0() = {
+      if (decoded != null) {
+        completeRead(decoded)
+        decoded = null
       }
     }
   }

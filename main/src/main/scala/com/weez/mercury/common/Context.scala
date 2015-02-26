@@ -8,7 +8,7 @@ import EntityCollections._
 trait Context {
   implicit val executor: ExecutionContext
 
-  def response: Response
+  def api: String
 
   def complete(response: Response): Unit
 
@@ -26,7 +26,7 @@ trait Context {
 trait RemoteCallContext extends Context with RangeImplicits {
   implicit val context: this.type = this
 
-  def api: String
+  def response: Response
 
   def log: LoggingAdapter
 
@@ -51,31 +51,16 @@ case class FutureResponse(x: Future[Response]) extends Response
 
 case class FailureResponse(ex: Throwable) extends InstantResponse
 
-
 trait UploadContext extends Context {
 
   import akka.util.ByteString
 
   def id: String
 
-  def queue: AsyncDequeue[ByteString]
+  def content: Pipe.Readable[ByteString]
 
   def sessionState: Option[SessionState]
 }
-
-case object UploadResume
-
-case object UploadCancelled
-
-case class UploadData(buf: akka.util.ByteString)
-
-case object UploadEnd
-
-sealed trait UploadResult
-
-case class UploadSuccess(response: InstantResponse) extends UploadResult
-
-case class UploadFailure(ex: Throwable) extends UploadResult
 
 sealed trait ContextType[C] {
   def withSessionState: Boolean

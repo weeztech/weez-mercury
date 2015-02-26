@@ -26,10 +26,6 @@ package object imports extends com.github.nscala_time.time.Imports {
   type Packer[T] = common.Packer[T]
   val Packer = common.Packer
   type UploadContext = common.UploadContext
-  type UploadData = common.UploadData
-  val UploadData = common.UploadData
-  val UploadEnd = common.UploadEnd
-  val UploadResume = common.UploadResume
   type Response = common.Response
   type ModelResponse = common.ModelResponse
   val ModelResponse = common.ModelResponse

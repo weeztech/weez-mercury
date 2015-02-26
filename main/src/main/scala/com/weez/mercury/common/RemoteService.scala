@@ -89,36 +89,37 @@ trait RemoteService {
       import akka.util.ByteString
       val filePath = if (useIdAsFileName) path / uc.id else path
       try {
+        import uc.executor
         if (!overwrite && filePath.exists)
           throw new IllegalStateException("file exists")
         val file = filePath.openFile(create = true, write = true, truncate = true)
         var offset = 0L
-
-        def receive(x: QueueState[ByteString]): Unit = {
-          x match {
-            case QueueItem(buf) =>
-              import uc.executor
-              file.write(buf, offset).onComplete {
-                case Success(off) =>
-                  offset = off
-                  uc.queue.dequeue(receive)
-                case Failure(ex) =>
-                  uc.complete(fail(ex))
-              }
-            case QueueError(ex) =>
-              file.close()
-              try filePath.deleteIfExists() catch {
-                case NonFatal(_) =>
-              }
-              uc.complete(fail(ex))
-            case QueueFinish =>
-              file.close()
-              f(uc, filePath)
-              assert(uc.response != null)
+        val content = uc.content
+        content.read(new Pipe.Receiver[ByteString] {
+          def onReceive(buf: ByteString) = {
+            file.write(buf, offset).onComplete {
+              case Success(off) =>
+                offset = off
+                content.resume()
+              case Failure(ex) =>
+                content.cancel(ex)
+            }
           }
-        }
 
-        uc.queue.dequeue(receive)
+          def onEnd() = {
+            file.close()
+            f(uc, filePath)
+          }
+
+          def onError(ex: Throwable) = {
+            file.close()
+            try filePath.deleteIfExists() catch {
+              case NonFatal(_) =>
+            }
+            uc.complete(fail(ex))
+          }
+        })
+        content.resume()
       } catch {
         case NonFatal(ex) =>
           uc.complete(fail(ex))

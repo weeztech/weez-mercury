@@ -74,39 +74,22 @@ class TTLCleanerActor(config: Config) extends Actor with ActorLogging {
 
 }
 
-trait ContextImpl extends Context {
-  var api: String = _
-  var response: Response = _
-
-  def app: ServiceManager
-
-  def complete(response: Response) = {
-    if (this.response != null) throw new IllegalStateException("already responsed")
-    this.response = response
-  }
-
-  @inline def acceptUpload(receiver: UploadContext => Unit) = app.remoteCallManager.registerUpload(this, receiver)
-
-  def futureQuery[T](f: DBSessionQueryable => T) = app.remoteCallManager.internalFutureCall(permitUpdate = false, f)
-
-  def futureUpdate[T](f: DBSessionUpdatable => T) = app.remoteCallManager.internalFutureCall(permitUpdate = true, f)
-
-  @inline def tempDir = app.tempDir
-}
-
-final class RemoteCallContextImpl(val app: ServiceManager, val executor: ExecutionContext) extends ContextImpl with RemoteCallContext with SessionState with DBSessionUpdatable {
+final class RemoteCallContextImpl(val app: ServiceManager, val executor: ExecutionContext) extends RemoteCallContext with SessionState with DBSessionUpdatable {
 
   import akka.event.LoggingAdapter
 
-  var promise = Promise[InstantResponse]()
-  var callId: Int = 0
+  var sessionState: SessionState = _
+  var dbSessionQuery: DBSessionQueryable = _
+  var dbSessionUpdate: DBSessionUpdatable = _
+  var disposed = false
+
   var request: ModelObject = _
   var peer: String = _
   var log: LoggingAdapter = _
-  var sessionState: SessionState = _
+  var api: String = _
+  var response: Response = _
 
-  var dbSessionQuery: DBSessionQueryable = _
-  var dbSessionUpdate: DBSessionUpdatable = _
+  private def check() = require(!disposed)
 
   def setSession(_session: Session) = {
     sessionState = new SessionState {
@@ -116,27 +99,80 @@ final class RemoteCallContextImpl(val app: ServiceManager, val executor: Executi
     }
   }
 
-  @inline def session = sessionState.session
+  def complete(r: Response) = {
+    check()
+    if (response != null) throw new IllegalStateException("already responsed")
+    response = r
+  }
 
-  @inline def sessionsByPeer(peer: String) = sessionState.sessionsByPeer(peer)
+  def acceptUpload(receiver: UploadContext => Unit) = {
+    check()
+    app.remoteCallManager.registerUpload(this, receiver)
+  }
+
+  def futureQuery[T](f: DBSessionQueryable => T) = {
+    check()
+    app.remoteCallManager.internalFutureCall(permitUpdate = false, f)
+  }
+
+  def futureUpdate[T](f: DBSessionUpdatable => T) = {
+    check()
+    app.remoteCallManager.internalFutureCall(permitUpdate = true, f)
+  }
+
+  def tempDir = {
+    check()
+    app.tempDir
+  }
+
+  def session = {
+    check()
+    sessionState.session
+  }
+
+  def sessionsByPeer(peer: String) = {
+    check()
+    sessionState.sessionsByPeer(peer)
+  }
 
 
-  @inline def get[K: Packer, V: Packer](key: K) = dbSessionQuery.get[K, V](key)
+  def get[K: Packer, V: Packer](key: K) = {
+    check()
+    dbSessionQuery.get[K, V](key)
+  }
 
-  @inline def exists[K: Packer](key: K) = dbSessionQuery.exists(key)
+  def exists[K: Packer](key: K) = {
+    check()
+    dbSessionQuery.exists(key)
+  }
 
-  @inline def newCursor() = dbSessionQuery.newCursor()
+  def newCursor() = {
+    check()
+    dbSessionQuery.newCursor()
+  }
 
-  @inline def getMeta(name: String)(implicit db: DBSessionQueryable) = dbSessionQuery.getMeta(name)
+  def getMeta(name: String)(implicit db: DBSessionQueryable) = {
+    check()
+    dbSessionQuery.getMeta(name)
+  }
 
-  @inline def newEntityId() = dbSessionUpdate.newEntityId()
+  def newEntityId() = {
+    check()
+    dbSessionUpdate.newEntityId()
+  }
 
-  @inline def put[K: Packer, V: Packer](key: K, value: V) = dbSessionUpdate.put(key, value)
+  def put[K: Packer, V: Packer](key: K, value: V) = {
+    check()
+    dbSessionUpdate.put(key, value)
+  }
 
-  @inline def del[K: Packer](key: K) = dbSessionUpdate.del(key)
+  def del[K: Packer](key: K) = {
+    check()
+    dbSessionUpdate.del(key)
+  }
 
-  def unuse(): Unit = {
-    promise = null
+  def dispose(): Unit = {
+    disposed = true
     api = null
     request = null
     peer = null
@@ -151,18 +187,47 @@ final class RemoteCallContextImpl(val app: ServiceManager, val executor: Executi
 class UploadContextImpl(val id: String,
                         val app: ServiceManager,
                         val executor: ExecutionContext,
-                        val receiver: UploadContext => Unit) extends ContextImpl with UploadContext {
-  var sessionState: Option[SessionState] = None
-  private var disposed = false
+                        val receiver: UploadContext => Unit) extends UploadContext {
+
+  import akka.util.ByteString
+
   private val promise = Promise[InstantResponse]()
+  private var disposed = false
+  var input: Pipe.Readable[ByteString] = null
 
-  private def check(): Unit = require(!disposed)
+  var api: String = _
+  var sessionState: Option[SessionState] = None
 
-  def upstream = ???
+  private def check() = require(!disposed)
 
-  def queue = ???
+  def content = {
+    check()
+    input
+  }
 
-  def isComplete = disposed
+  def complete(r: Response) = {
+    app.remoteCallManager.processResponse(promise, r)
+  }
+
+  def tempDir = {
+    check()
+    app.tempDir
+  }
+
+  def acceptUpload(receiver: UploadContext => Unit) = {
+    check()
+    app.remoteCallManager.registerUpload(this, receiver)
+  }
+
+  def futureQuery[T](f: DBSessionQueryable => T) = {
+    check()
+    app.remoteCallManager.internalFutureCall(permitUpdate = false, f)
+  }
+
+  def futureUpdate[T](f: DBSessionUpdatable => T) = {
+    check()
+    app.remoteCallManager.internalFutureCall(permitUpdate = true, f)
+  }
 
   def setSession(sid: Option[String]) = {
     sessionState = sid map { x =>
@@ -185,18 +250,9 @@ class UploadContextImpl(val id: String,
     dispose()
   }
 
-  def complete(result: UploadResult) = {
-    result match {
-      case UploadSuccess(x) => promise.success(x)
-      case UploadFailure(ex) => promise.failure(ex)
-    }
-    dispose()
-  }
-
   private def dispose() = {
     disposed = true
     api = null
-    response = null
     sessionState match {
       case Some(x) =>
         app.sessionManager.returnAndUnlockSession(x.session)

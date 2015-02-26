@@ -88,7 +88,6 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
         case Some(wp) =>
           val p = Promise[InstantResponse]()
           wp.post(RemoteCallTask { c =>
-            c.promise = p
             c.api = api
             c.peer = peer
             if (session != null)
@@ -99,7 +98,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
             } finally {
               if (session != null)
                 app.sessionManager.returnAndUnlockSession(session)
-              processResponse(c, c.response)
+              processResponse(p, c.response)
             }
           })
           p.future
@@ -110,21 +109,21 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
     }
   }
 
-  private def processResponse(c: RemoteCallContextImpl, resp: Response): Unit = {
+  def processResponse(promise: Promise[InstantResponse], resp: Response): Unit = {
     resp match {
-      case null => c.promise.failure(throw new IllegalStateException("no response"))
-      case x: InstantResponse => c.promise.success(x)
+      case null => promise.failure(throw new IllegalStateException("no response"))
+      case x: InstantResponse => promise.success(x)
       case FutureResponse(x) =>
         import scala.util._
         implicit val executor = internalFutureExecutor
         x.onComplete {
-          case Success(r) => processResponse(c, r)
-          case Failure(ex) => c.promise.failure(ex)
+          case Success(r) => processResponse(promise, r)
+          case Failure(ex) => promise.failure(ex)
         }
     }
   }
 
-  def registerUpload(c: ContextImpl, handler: UploadContext => Unit) = {
+  def registerUpload(c: Context, handler: UploadContext => Unit) = {
     uploads.synchronized {
       val id = uploadIdGen.newId
       val sid = c match {
@@ -237,7 +236,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
                 task.f(c)
                 trans.commit()
               } finally {
-                c.unuse()
+                c.dispose()
                 trans.close()
                 done(self)
               }
@@ -252,7 +251,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
                 c.log = log
                 task.f(c)
               } finally {
-                c.unuse()
+                c.dispose()
                 done(self)
               }
             case InternalFutureTask(x) =>
