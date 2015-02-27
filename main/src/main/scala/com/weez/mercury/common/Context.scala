@@ -307,14 +307,6 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
 final case class KeyValue[K, V](key: K, value: V)
 
-trait Merger[V] {
-  def isEmpty(v1: V): Boolean
-
-  def add(v1: V, v2: V): V
-
-  def neg(v1: V): V
-}
-
 trait CanMerge[Repr <: CanMerge[Repr]] extends Equals {
   def isEmpty: Boolean
 
@@ -327,6 +319,8 @@ trait CanMerge[Repr <: CanMerge[Repr]] extends Equals {
 
 import scala.reflect.runtime.universe._
 
+trait NotMergeInDB
+
 @collect
 abstract class DataView[K: Packer, V: Packer : TypeTag] {
 
@@ -336,7 +330,7 @@ abstract class DataView[K: Packer, V: Packer : TypeTag] {
 
   @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]] = impl(forward)
 
-  @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[KeyValue[K, V]] = impl(key)
+  @inline final def get(key: K)(implicit db: DBSessionQueryable): Option[KeyValue[K, V]] = impl(key)
 
   @inline final def contains(key: K)(implicit db: DBSessionQueryable): Boolean = impl.contains(key)
 

@@ -6,11 +6,11 @@ import com.github.nscala_time.time.Imports._
 import com.weez.mercury.product.RentInOrderCollection._
 
 @packable
-case class PurchaseOrderItem(product: Ref[Product],
-                             serialNumber: String,
+case class PurchaseOrderItem(stock: Ref[Warehouse],
+                             product: Ref[Product],
                              quantity: Int,
                              totalValue: Int,
-                             stock: Ref[Warehouse],
+                             singleProducts: Seq[SingleProductInfo],
                              remark: String)
 
 @packable
@@ -24,17 +24,25 @@ case class PurchaseOrder(datetime: DateTime,
 object PurchaseOrderCollection extends RootCollection[PurchaseOrder] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
+      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.quantity, item.totalValue)
+    }
+  }
+  extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    o.items.flatMap { item =>
+      val tv = item.totalValue / item.quantity
+      item.singleProducts.map { s =>
+        SingleProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+      }
     }
   }
 }
 
 @packable
-case class PurchaseReturnItem(product: Ref[Product],
-                              serialNumber: String,
+case class PurchaseReturnItem(stock: Ref[Warehouse],
+                              product: Ref[Product],
                               quantity: Int,
                               totalValue: Int,
-                              stock: Ref[Warehouse],
+                              singleProducts: Seq[SingleProductInfo],
                               remark: String)
 
 @packable
@@ -47,7 +55,15 @@ case class PurchaseReturn(datetime: DateTime,
 object PurchaseReturnCollection extends RootCollection[PurchaseReturn] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
+      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.quantity, item.totalValue)
+    }
+  }
+  extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    o.items.flatMap { item =>
+      val tv = item.totalValue / item.quantity
+      item.singleProducts.map { s =>
+        SingleProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+      }
     }
   }
 

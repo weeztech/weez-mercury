@@ -50,6 +50,9 @@ case class Product(code: String,
                    price: Int,
                    rentPrice: Int) extends Entity
 
+@packable
+case class SingleProductInfo(serialNumber: String, prevBizRefID: Long, nextBizRefID: Long)
+
 object ProductCollection extends RootCollection[Product] {
   val byCode = defUniqueIndex("by-code", _.code)
   val byTitle = defUniqueIndex("by-title", _.title)
@@ -102,25 +105,44 @@ case class RentOutAssistantItem(assistant: Ref[Assistant],
 @packable
 case class RentOutProduct(datetime: DateTime,
                           quantity: Int,
-                          serialNumber: String,
                           from: Ref[Warehouse],
                           totalValue: Int,
                           remark: String)
 
 @packable
+case class RentOutSingleProduct(datetime: DateTime,
+                                serialNumber: String,
+                                from: Ref[Warehouse],
+                                prevBizRefID: Long,
+                                totalValue: Int,
+                                remark: String)
+
+@packable
 case class RentOutProductReturn(datetime: DateTime,
                                 quantity: Int,
-                                serialNumber: String,
                                 to: Ref[Warehouse],
                                 totalValue: Int,
                                 remark: String)
 
 @packable
+case class RentOutSingleProductReturn(datetime: DateTime,
+                                      serialNumber: String,
+                                      to: Ref[Warehouse],
+                                      nextBizRefID: Long,
+                                      totalValue: Int,
+                                      remark: String)
+
+@packable
 case class RentOutProductDamage(datetime: DateTime,
                                 quantity: Int,
-                                serialNumber: String,
                                 totalValue: Int,
                                 remark: String)
+
+@packable
+case class RentOutSingleProductDamage(datetime: DateTime,
+                                      serialNumber: String,
+                                      totalValue: Int,
+                                      remark: String)
 
 @packable
 case class RentOutOrderProductItem(product: Ref[Product],
@@ -129,7 +151,11 @@ case class RentOutOrderProductItem(product: Ref[Product],
                                    startTime: DateTime,
                                    endTime: DateTime,
                                    outs: Seq[RentOutProduct],
+                                   outSingles: Seq[RentOutSingleProduct],
                                    returns: Seq[RentOutProductReturn],
+                                   returnSingles: Seq[RentOutSingleProductReturn],
+                                   damages: Seq[RentOutProductDamage],
+                                   damageSingles: Seq[RentOutSingleProductDamage],
                                    remark: String)
 
 @packable
@@ -164,10 +190,30 @@ object RentOutOrderCollection extends RootCollection[RentOutOrder] {
     var result = List.empty[ProductFlow]
     for (p <- o.products) {
       for (out <- p.outs) {
-        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.serialNumber, out.quantity, out.totalValue)
+        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.quantity, out.totalValue)
       }
       for (ret <- p.returns) {
-        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.serialNumber, ret.quantity, ret.totalValue)
+        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.quantity, ret.totalValue)
+      }
+      for (out <- p.outSingles) {
+        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, 1, out.totalValue)
+      }
+      for (ret <- p.returnSingles) {
+        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, 1, ret.totalValue)
+      }
+    }
+    result
+  }
+  extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    var result = List.empty[SingleProductFlow]
+    for (p <- o.products) {
+      for (out <- p.outSingles) {
+        result ::= SingleProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.serialNumber,
+          out.totalValue, p.returnSingles.exists(_.serialNumber == out.serialNumber))
+      }
+      for (ret <- p.returnSingles) {
+        result ::= SingleProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.serialNumber,
+          ret.totalValue, ret.nextBizRefID != 0l)
       }
     }
     result

@@ -8,6 +8,9 @@ object DTOHelper {
 
   final class RefsHelper(private val self: ModelObject) extends AnyVal with Dynamic {
     def selectDynamic[T <: Entity](name: String): Ref[T] = {
+      if (!self.hasProperty(name)) {
+        return RefEmpty
+      }
       val rf: ModelObject = self.selectDynamic(name)
       if (rf eq null) {
         return RefEmpty
@@ -23,7 +26,22 @@ object DTOHelper {
   }
 
   final class SeqsHelper(private val self: ModelObject) extends AnyVal with Dynamic {
-    @inline def selectDynamic(name: String) = self.selectDynamic[Seq[ModelObject]](name)
+    @inline def selectDynamic(name: String): Seq[ModelObject] = {
+      if (!self.hasProperty(name)) {
+        return List.empty
+      }
+      self.selectDynamic[Seq[ModelObject]](name)
+    }
+
+  }
+
+  final class OptionsHelper(private val self: ModelObject) extends AnyVal with Dynamic {
+    @inline def selectDynamic(name: String): Option[ModelObject] = {
+      if (!self.hasProperty(name)) {
+        return None
+      }
+      Option(self.selectDynamic[ModelObject](name))
+    }
 
   }
 
@@ -31,6 +49,8 @@ object DTOHelper {
     @inline def refs = new RefsHelper(self)
 
     @inline def seqs = new SeqsHelper(self)
+
+    @inline def options = new OptionsHelper(self)
   }
 
   implicit final class RefHelper[E <: Entity](private val self: Ref[E]) extends AnyVal {
@@ -48,6 +68,18 @@ object DTOHelper {
         f(mo, e)
       }
       mo
+    }
+  }
+
+  implicit final class OptionHelper[T](private val self: Option[T]) extends AnyVal {
+    def asMO(f: (ModelObject, T) => Unit)(implicit db: DBSessionQueryable): Any = {
+      if (self.isEmpty) {
+        null
+      } else {
+        val mo = new ModelObject(Map.empty[String, Any])
+        f(mo, self.get)
+        mo
+      }
     }
   }
 

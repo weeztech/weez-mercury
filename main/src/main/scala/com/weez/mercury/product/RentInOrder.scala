@@ -8,19 +8,19 @@ import com.weez.mercury.common.DTOHelper._
 /**
  * 租入单子项
  * @param product 商品
- * @param serialNumber 单品序号
  * @param quantity 数量
+ * @param singleProducts 单品信息
  * @param totalValue 租入物品总价值
  * @param rentPrice 租金价格/每件日
  * @param stock 存入仓库
  */
 @packable
-case class RentInOrderItem(product: Ref[Product],
-                           serialNumber: String,
+case class RentInOrderItem(stock: Ref[Warehouse],
+                           product: Ref[Product],
                            quantity: Int,
                            totalValue: Int,
+                           singleProducts: Seq[SingleProductInfo],
                            rentPrice: Int,
-                           stock: Ref[Warehouse],
                            remark: String)
 
 /**
@@ -50,7 +50,11 @@ object RentInOrderHelper {
           mo.title = o.title
           mo.code = o.code
         }
-        mo.serialNumber = o.serialNumber
+        mo.singleProductTrace = o.singleProducts.asMO { (mo, o) =>
+          mo.serialNumber = o.serialNumber
+          mo.prevBizRefID = o.prevBizRefID
+          mo.nextBizRefID = o.nextBizRefID
+        }
         mo.quantity = o.quantity
         mo.totalValue = o.totalValue
         mo.rentPrice = o.rentPrice
@@ -76,7 +80,13 @@ object RentInOrderHelper {
         mo =>
           RentInOrderItem(
             product = mo.refs.product,
-            serialNumber = mo.serialNumber,
+            singleProducts = mo.seqs.singleProducts.map { mo =>
+              SingleProductInfo(
+                serialNumber = mo.serialNumber,
+                prevBizRefID = mo.prevBizRefID,
+                nextBizRefID = mo.nextBizRefID
+              )
+            },
             quantity = mo.quantity,
             rentPrice = mo.rentPrice,
             totalValue = mo.totalValue,
@@ -115,7 +125,15 @@ object RentInOrderHelper {
 object RentInOrderCollection extends RootCollection[RentInOrder] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
+      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.quantity, item.totalValue)
+    }
+  }
+  extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    o.items.flatMap { item =>
+      val tv = item.totalValue / item.quantity
+      item.singleProducts.map { s =>
+        SingleProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+      }
     }
   }
 }
@@ -124,19 +142,20 @@ object RentInOrderCollection extends RootCollection[RentInOrder] {
  * 租入归还单子项
  * @param product 商品
  * @param quantity 数量
+ * @param singleProducts 单品信息
  * @param duration 租期
  * @param stock 归还仓库
  * @param totalValue 物品总价值
  * @param rentPrice 租金价格/每件日
  */
 @packable
-case class RentInReturnItem(product: Ref[Product],
-                            serialNumber: String,
+case class RentInReturnItem(stock: Ref[Warehouse],
+                            product: Ref[Product],
                             quantity: Int,
                             totalValue: Int,
+                            singleProducts: Seq[SingleProductInfo],
                             rentPrice: Int,
                             duration: Int,
-                            stock: Ref[Warehouse],
                             remark: String)
 
 /**
@@ -152,7 +171,15 @@ case class RentInReturn(datetime: DateTime,
 object RentInReturnCollection extends RootCollection[RentInReturn] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.serialNumber, item.quantity, item.totalValue)
+      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.quantity, item.totalValue)
+    }
+  }
+  extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    o.items.flatMap { item =>
+      val tv = item.totalValue / item.quantity
+      item.singleProducts.map { s =>
+        SingleProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+      }
     }
   }
 }
