@@ -141,7 +141,6 @@ object HttpServer {
             case ModelResponse(x) => complete(JsonModel.to(x).toString())(ctx)
             case FileResponse(x) => (getFromFile(x): Route)(ctx)
             case ResourceResponse(x) => (getFromResource(x): Route)(ctx)
-            case StreamResponse(x) => ???
             case FailureResponse(ex) => exceptionHandler(ex)(ctx)
           }
         case Failure(ex) => exceptionHandler(ex)(ctx)

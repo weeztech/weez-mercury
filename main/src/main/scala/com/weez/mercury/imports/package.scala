@@ -33,8 +33,6 @@ package object imports extends com.github.nscala_time.time.Imports {
   val ResourceResponse = common.ResourceResponse
   type FileResponse = common.FileResponse
   val FileResponse = common.FileResponse
-  type StreamResponse = common.StreamResponse
-  val StreamResponse = common.StreamResponse
   type FutureResponse = common.FutureResponse
   val FutureResponse = common.FutureResponse
   type FailureResponse = common.FailureResponse

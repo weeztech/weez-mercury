@@ -1,8 +1,6 @@
 package com.weez.mercury.common
 
 import scala.concurrent._
-import akka.actor.Actor
-import akka.event.LoggingAdapter
 import EntityCollections._
 
 trait Context {
@@ -24,6 +22,8 @@ trait Context {
 }
 
 trait RemoteCallContext extends Context with RangeImplicits {
+  import akka.event.LoggingAdapter
+
   implicit val context: this.type = this
 
   def response: Response
@@ -44,8 +44,6 @@ case class FileResponse(path: String) extends InstantResponse
 case class ResourceResponse(url: String) extends InstantResponse
 
 case class ModelResponse(obj: ModelObject) extends InstantResponse
-
-case class StreamResponse(actor: () => Actor) extends InstantResponse
 
 case class FutureResponse(x: Future[Response]) extends Response
 
