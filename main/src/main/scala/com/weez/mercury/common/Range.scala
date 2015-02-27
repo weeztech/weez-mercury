@@ -78,11 +78,13 @@ object Range {
             arr(offset + 1) = TYPE_MIN
             arr
           } else {
-            var elemEnd = offset + 1
-            while (elemEnd < end - 1) {
-              elemEnd = offset + Packer.getLengthByType(buf, elemEnd)
+            var off = offset + 1
+            var lastElem = off
+            while (off < end - 1) {
+              lastElem = off
+              off += Packer.getLengthByType(buf, off)
             }
-            succeed(buf, elemEnd)(end - 1)
+            succeed(buf, lastElem)(end - 1)
           }
       }
     }
