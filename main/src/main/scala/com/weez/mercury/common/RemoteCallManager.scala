@@ -7,7 +7,7 @@ class RemoteCallManager(app: ServiceManager, config: Config) {
   import scala.concurrent._
   import akka.actor._
 
-  def remoteCalls: Map[String, RemoteCall] = {
+  val remoteCalls: Map[String, RemoteCall] = {
     import scala.reflect.runtime.universe._
     val mirror = runtimeMirror(this.getClass.getClassLoader)
     val builder = Map.newBuilder[String, RemoteCall]
