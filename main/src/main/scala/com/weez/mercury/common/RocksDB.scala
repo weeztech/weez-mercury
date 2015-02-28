@@ -47,8 +47,10 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
 
   @inline def packer[T: Packer] = implicitly[Packer[T]]
 
-  class CursorImpl(itor: RocksIterator) extends DBCursor {
-
+  final class CursorImpl(transaction: Transaction) extends DBCursor {
+    private[common] var nextCursor: CursorImpl = _
+    private[common] var prevCursor: CursorImpl = _
+    private var itor = transaction.openCursor(this)
     private var valid: Boolean = _ //cache
 
 
@@ -83,14 +85,63 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
 
     def isValid = valid
 
-    def close() = itor.dispose()
+    def close() = {
+      if (itor ne null) {
+        transaction.closeCursor(this, itor)
+        itor = null
+      }
+    }
   }
 
   class Transaction(log: LoggingAdapter) extends DBTransaction {
+    private[common] def closeCursor(cursor: CursorImpl, ri: RocksIterator): Unit = {
+      if (cursor eq openedCursors) {
+        val next = cursor.nextCursor
+        openedCursors = next
+        if (next ne null) {
+          next.prevCursor = null
+          cursor.nextCursor = null
+        }
+      } else {
+        val prev = cursor.prevCursor
+        val next = cursor.nextCursor
+        prev.nextCursor = next
+        if (next ne null) {
+          next.prevCursor = prev
+          cursor.nextCursor = null
+        }
+        cursor.prevCursor = null
+      }
+      if (riCache ne null) {
+        ri.dispose()
+      } else {
+        riCache = ri
+      }
+    }
+
+    private var riCache: RocksIterator = _
+
+    private[common] def openCursor(cursor: CursorImpl): RocksIterator = {
+      val opened = openedCursors
+      if (opened ne null) {
+        opened.prevCursor = cursor
+      }
+      cursor.nextCursor = opened
+      openedCursors = cursor
+      if (riCache ne null) {
+        val r = riCache
+        riCache = null
+        r
+      } else {
+        db.newIterator()
+      }
+    }
+
     val snapshot = db.getSnapshot
     val readOption = new ReadOptions()
 
-    var dbIterators: List[RocksIterator] = Nil
+    var openedCursors: CursorImpl = null
+
     var writeBatch: WriteBatch = _
 
     def get(key: Array[Byte]) = db.get(readOption, key)
@@ -105,16 +156,7 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
       writeBatch.remove(key)
     }
 
-    def newCursor(): DBCursor = {
-      val iterator = db.newIterator()
-      dbIterators = iterator :: dbIterators
-      new CursorImpl(iterator) {
-        override def close() = {
-          dbIterators = dbIterators.filterNot(_ eq iterator)
-          super.close()
-        }
-      }
-    }
+    def newCursor(): DBCursor = new CursorImpl(this)
 
     def put(key: Array[Byte], value: Array[Byte]): Unit = {
       if (writeBatch == null)
@@ -134,8 +176,13 @@ private class RocksDBDatabase(g: GlobalSettings, path: String) extends Database 
     }
 
     def close(): Unit = {
-      dbIterators.foreach(_.dispose())
-      dbIterators = Nil
+      while (openedCursors ne null) {
+        openedCursors.close()
+      }
+      if (riCache ne null) {
+        riCache.dispose()
+        riCache = null
+      }
       db.releaseSnapshot(snapshot)
       snapshot.dispose()
       readOption.dispose()

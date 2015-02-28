@@ -52,8 +52,8 @@ object RentInOrderHelper {
         }
         mo.singleProductTrace = o.singleProducts.asMO { (mo, o) =>
           mo.serialNumber = o.serialNumber
-          mo.prevBizRefID = o.prevBizRefID
-          mo.nextBizRefID = o.nextBizRefID
+          mo.prevBiz = o.prevBiz.asMO()
+          mo.nextBiz = o.nextBiz.asMO()
         }
         mo.quantity = o.quantity
         mo.totalValue = o.totalValue
@@ -83,8 +83,8 @@ object RentInOrderHelper {
             singleProducts = mo.seqs.singleProducts.map { mo =>
               SingleProductInfo(
                 serialNumber = mo.serialNumber,
-                prevBizRefID = mo.prevBizRefID,
-                nextBizRefID = mo.nextBizRefID
+                prevBiz = mo.refs.prevBiz,
+                nextBiz = mo.refs.nextBiz
               )
             },
             quantity = mo.quantity,
@@ -124,15 +124,17 @@ object RentInOrderHelper {
 
 object RentInOrderCollection extends RootCollection[RentInOrder] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, item.quantity, item.totalValue)
+      ProductFlow(bizRef, o.datetime, o.provider, item.stock, item.product, item.quantity, item.totalValue)
     }
   }
   extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     o.items.flatMap { item =>
       val tv = item.totalValue / item.quantity
       item.singleProducts.map { s =>
-        SingleProductFlow(o.id, o.datetime, o.provider.id, item.stock.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+        SingleProductFlow(bizRef, o.datetime, o.provider, item.stock, item.product, s.serialNumber, tv, s.nextBiz.isDefined)
       }
     }
   }
@@ -170,15 +172,17 @@ case class RentInReturn(datetime: DateTime,
 
 object RentInReturnCollection extends RootCollection[RentInReturn] {
   extractTo(ProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     o.items.map { item =>
-      ProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, item.quantity, item.totalValue)
+      ProductFlow(bizRef, o.datetime, item.stock, o.provider, item.product, item.quantity, item.totalValue)
     }
   }
   extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     o.items.flatMap { item =>
       val tv = item.totalValue / item.quantity
       item.singleProducts.map { s =>
-        SingleProductFlow(o.id, o.datetime, item.stock.id, o.provider.id, item.product.id, s.serialNumber, tv, s.nextBizRefID != 0l)
+        SingleProductFlow(bizRef, o.datetime, item.stock, o.provider, item.product, s.serialNumber, tv, s.nextBiz.isDefined)
       }
     }
   }

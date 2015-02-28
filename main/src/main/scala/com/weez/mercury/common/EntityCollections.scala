@@ -209,25 +209,36 @@ private object EntityCollections {
       //全文检索和反向索引
       var oldRefs = Set.empty[Long]
       var newRefs = Set.empty[Long]
-      var oldTexts = List.empty[String]
-      var newTexts = List.empty[String]
+      //var oldTexts = List.empty[String]
+      //var newTexts = List.empty[String]
 
       def search(e: Any, isNew: Boolean): Unit = e match {
+        case p: Iterable[_] =>
+          p.foreach(e => search(e, isNew))
+        case r: Ref[_] =>
+          if (r.isDefined) {
+            if (isNew)
+              newRefs += r.id
+            else
+              oldRefs += r.id
+          }
         case p: Product =>
           var i = p.productArity - 1
           while (i >= 0) {
             search(p.productElement(i), isNew)
             i -= 1
           }
-        case p: Iterable[_] =>
-          p.foreach(e => search(e, isNew))
-        case r: Ref[_] => if (r.isDefined) if (isNew) newRefs += r.id else oldRefs += r.id
-        case s: String => if (s.length > 0) if (isNew) newTexts ::= s else oldTexts ::= s
+        //        case s: String => if (s.length > 0) {
+        //          if (isNew)
+        //            newTexts ::= s
+        //          else
+        //            oldTexts ::= s
+        //}
         case _ =>
       }
       search(oldEntity, isNew = false)
       search(newEntity, isNew = true)
-      FullTextSearchIndex.update(entityID, oldTexts, newTexts)
+      //FullTextSearchIndex.update(entityID, oldTexts, newTexts)
       RefReverseIndex.update(entityID, oldRefs, newRefs)
       //extractor
       if (newEntity eq null) {
@@ -723,11 +734,11 @@ private object EntityCollections {
   }
 
   trait ExtractorTarget[T] {
-    def targetExtractBoth[S](oldS: S, newS: S, extractor: Extractor[S, T], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
+    def targetExtractBoth(oldT: T, newT: T, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
 
-    def targetExtractOld[S](oldS: S, extractor: Extractor[S, T], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
+    def targetExtractOld(oldT: T, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
 
-    def targetExtractNew[S](newS: S, extractor: Extractor[S, T], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
+    def targetExtractNew(newT: T, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit
 
     val targetExtractors = new AtomicReference[Extractor[_, T]]
 
@@ -778,7 +789,7 @@ private object EntityCollections {
 
     @inline
     final def doExtractBoth(oldS: S, newS: S, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      target.targetExtractBoth(oldS, newS, this, tracer)
+      target.targetExtractBoth(extract(oldS, tracer.useOld()), extract(newS, tracer.useNew()), tracer)
     }
 
     @inline
@@ -788,12 +799,13 @@ private object EntityCollections {
 
     @inline
     final def doExtractNew(newS: S, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      target.targetExtractNew(newS, this, tracer)
+      val newT = extract(newS, tracer.useNew())
+      target.targetExtractNew(newT, tracer)
     }
 
     @inline
     final def doExtractOld(oldS: S, tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      target.targetExtractOld(oldS, this, tracer)
+      target.targetExtractOld(extract(oldS, tracer.useOld()), tracer)
     }
   }
 
@@ -878,9 +890,7 @@ private object EntityCollections {
 
     @inline final def get(k: DK)(implicit db: DBSessionQueryable): Option[DV] = get(DataViewKey(getDataViewID, k))
 
-    def targetExtractBoth[S](oldS: S, newS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      val oldKV = extractor.extract(oldS, tracer.useOld())
-      val newKV = extractor.extract(newS, tracer.useNew())
+    def targetExtractBoth(oldKV: Map[DK, DV], newKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
       for ((k, v) <- newKV) {
         val ov = oldKV.get(k)
         if (ov.isEmpty || ov.get != v) {
@@ -895,15 +905,15 @@ private object EntityCollections {
       ExtractorReverseIndex.update(getDataViewID, tracer)
     }
 
-    def targetExtractOld[S](oldS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      for ((k, _) <- extractor.extract(oldS, tracer.useOld())) {
+    def targetExtractOld(oldKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for ((k, _) <- oldKV) {
         del(k)
       }
       ExtractorReverseIndex.update(getDataViewID, tracer)
     }
 
-    def targetExtractNew[S](newS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      for ((k, v) <- extractor.extract(newS, tracer.useNew())) {
+    def targetExtractNew(newKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for ((k, v) <- newKV) {
         put(k, v)
       }
       ExtractorReverseIndex.update(getDataViewID, tracer)
@@ -1034,38 +1044,36 @@ private object EntityCollections {
       }
     }
 
-    override def targetExtractOld[S](oldS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+    override def targetExtractOld(oldKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
       if (noDBMerge) {
-        super.targetExtractOld(oldS, extractor, tracer)
+        super.targetExtractOld(oldKV, tracer)
       } else {
         val viewID = getDataViewID
-        for ((k, v) <- extractor.extract(oldS, tracer.useOld())) {
+        for ((k, v) <- oldKV) {
           putOld(DataViewKey(viewID, k), v)
         }
       }
     }
 
-    override def targetExtractNew[S](newS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+    override def targetExtractNew(newKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
       if (noDBMerge) {
-        super.targetExtractNew(newS, extractor, tracer)
+        super.targetExtractNew(newKV, tracer)
       } else {
         val viewID = getDataViewID
-        for ((k, v) <- extractor.extract(newS, tracer.useNew())) {
+        for ((k, v) <- newKV) {
           putNew(DataViewKey(viewID, k), v)
         }
       }
     }
 
-    override def targetExtractBoth[S](oldS: S, newS: S, extractor: Extractor[S, Map[DK, DV]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+    override def targetExtractBoth(oldKV: Map[DK, DV], newKV: Map[DK, DV], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
       if (noDBMerge) {
-        super.targetExtractBoth(oldS, newS, extractor, tracer)
+        super.targetExtractBoth(oldKV, newKV, tracer)
       } else {
         val viewID = getDataViewID
-        val ot = extractor.extract(oldS, tracer.useOld())
-        val nt = extractor.extract(newS, tracer.useNew())
-        for ((k, v) <- nt) {
+        for ((k, v) <- newKV) {
           val fk = DataViewKey(viewID, k)
-          val ov = ot.get(k)
+          val ov = oldKV.get(k)
           if (ov.isEmpty) {
             putNew(fk, v)
           } else if (v != ov.get) {
@@ -1082,8 +1090,8 @@ private object EntityCollections {
             }
           }
         }
-        for ((k, v) <- ot) {
-          if (!nt.contains(k)) {
+        for ((k, v) <- oldKV) {
+          if (!newKV.contains(k)) {
             putOld(DataViewKey(viewID, k), v)
           }
         }
@@ -1106,16 +1114,30 @@ private object EntityCollections {
       false
     }
 
-    override def targetExtractBoth[S](oldS: S, newS: S, extractor: Extractor[S, Seq[D]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      foreachSourceExtractor(_.doExtractBoth(extractor.extract(oldS, tracer.useOld()), extractor.extract(newS, tracer.useNew()), tracer))
+    override def targetExtractBoth(oldT: Seq[D], newT: Seq[D], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      val oldRefIDs = tracer.oldRefIDs
+      val newRefIDs = tracer.newRefIDs
+      foreachSourceExtractor { se =>
+        tracer.oldRefIDs = oldRefIDs
+        tracer.newRefIDs = newRefIDs
+        se.doExtractBoth(oldT, newT, tracer)
+      }
     }
 
-    override def targetExtractOld[S](oldS: S, extractor: Extractor[S, Seq[D]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      foreachSourceExtractor(_.doExtractOld(extractor.extract(oldS, tracer.useOld()), tracer))
+    override def targetExtractOld(oldT: Seq[D], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      val oldRefIDs = tracer.oldRefIDs
+      foreachSourceExtractor { se =>
+        tracer.oldRefIDs = oldRefIDs
+        se.doExtractOld(oldT, tracer)
+      }
     }
 
-    override def targetExtractNew[S](newS: S, extractor: Extractor[S, Seq[D]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      foreachSourceExtractor(_.doExtractNew(extractor.extract(newS, tracer.useNew()), tracer))
+    override def targetExtractNew(newT: Seq[D], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      val newRefIDs = tracer.newRefIDs
+      foreachSourceExtractor { se =>
+        tracer.newRefIDs = newRefIDs
+        se.doExtractNew(newT, tracer)
+      }
     }
   }
 
@@ -1123,11 +1145,9 @@ private object EntityCollections {
                                                    (implicit val fullKeyPacker: Packer[FK])
     extends Extractor[E, Set[FK]](host, null) with DBObject with ExtractorTarget[Set[FK]] with IndirectExtract {
 
-    def targetExtractBoth[S](oldS: S, newS: S, extractor: Extractor[S, Set[FK]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      val ot: Set[FK] = extractor.extract(oldS, tracer.useOld())
-      val nt: Set[FK] = extractor.extract(newS, tracer.useNew())
-      for (fk <- nt) {
-        if (!ot.contains(fk)) {
+    def targetExtractBoth(oldFK: Set[FK], newFK: Set[FK], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for (fk <- newFK) {
+        if (!oldFK.contains(fk)) {
           if (unique) {
             db.put(fk, tracer.rootEntityID)
           } else {
@@ -1135,21 +1155,23 @@ private object EntityCollections {
           }
         }
       }
-      for (fk <- ot) {
-        if (!nt.contains(fk)) {
+      for (fk <- oldFK) {
+        if (!newFK.contains(fk)) {
           db.del(fk)
         }
       }
       ExtractorReverseIndex.update(getIndexID, tracer)
     }
 
-    def targetExtractOld[S](oldS: S, extractor: Extractor[S, Set[FK]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      extractor.extract(oldS, tracer.useOld()).foreach(db.del(_))
+    def targetExtractOld(oldFK: Set[FK], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for (fk <- oldFK) {
+        db.del(fk)
+      }
       ExtractorReverseIndex.update(getIndexID, tracer)
     }
 
-    def targetExtractNew[S](newS: S, extractor: Extractor[S, Set[FK]], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
-      extractor.extract(newS, tracer.useNew()) foreach { fk =>
+    def targetExtractNew(newFK: Set[FK], tracer: RefTracer)(implicit db: DBSessionUpdatable): Unit = {
+      for (fk <- newFK) {
         if (unique) {
           db.put(fk, tracer.rootEntityID)
         } else {

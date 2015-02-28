@@ -29,21 +29,21 @@ object ProviderCollection extends RootCollection[Provider] {
   val byCode = defUniqueIndex("by-code", _.code)
 }
 
-case class ProductFlow(bizRefID: Long,
+case class ProductFlow(bizRef: Ref[Entity],
                        datetime: DateTime,
-                       fromStockID: Long,
-                       toStockID: Long,
-                       productID: Long,
+                       fromStock: Ref[Entity],
+                       toStock: Ref[Entity],
+                       product: Ref[Product],
                        quantity: Int,
                        totalValue: Int)
 
 object ProductFlowDataBoard extends DataBoard[ProductFlow]
 
-case class SingleProductFlow(bizRefID: Long,
+case class SingleProductFlow(bizRef: Ref[Entity],
                              datetime: DateTime,
-                             fromStockID: Long,
-                             toStockID: Long,
-                             productID: Long,
+                             fromStock: Ref[Entity],
+                             toStock: Ref[Entity],
+                             product: Ref[Product],
                              serialNumber: String,
                              totalValue: Int,
                              away: Boolean)
@@ -52,15 +52,15 @@ object SingleProductFlowDataBoard extends DataBoard[SingleProductFlow]
 
 /**
  * 库存明细账－主键部分
- * @param stockID 库ID，可能是仓库，或部门
- * @param productID 物品ID
+ * @param stock 库，可能是仓库，或部门
+ * @param product 物品
  * @param datetime 发生时间
- * @param peerStockID 对应库ID
- * @param bizRefID 业务参考ID，各种单据的ID
+ * @param peerStock 对应库
+ * @param bizRef 业务参考，各种单据
  */
 @packable
-final case class StockAccountKey(stockID: Long, productID: Long, datetime: DateTime, peerStockID: Long, bizRefID: Long) {
-  def revert() = StockAccountKey(peerStockID, productID, datetime, stockID, bizRefID)
+final case class StockAccountKey(stock: Ref[Entity], product: Ref[Product], datetime: DateTime, peerStock: Ref[Entity], bizRef: Ref[Entity]) {
+  def revert() = StockAccountKey(peerStock, product, datetime, stock, bizRef)
 }
 
 /**
@@ -85,21 +85,21 @@ final case class ProductQV(quantity: Int,
 object StockAccount extends DataView[StockAccountKey, ProductQV] with NotMergeInDB {
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
-    val k = StockAccountKey(o.toStockID, o.productID, o.datetime, o.fromStockID, o.bizRefID)
+    val k = StockAccountKey(o.toStock, o.product, o.datetime, o.fromStock, o.bizRef)
     val v = ProductQV(o.quantity, o.totalValue)
     (k, v) ::(k.revert(), v.neg()) :: Nil
   }
 
   val SummaryAccounts = Seq(StockDailyAccount, StockYearlyAccount, StockMonthlyAccount)
 
-  def inventory(stockID: Long, productID: Long, dt: DateTime)(implicit db: DBSessionQueryable): ProductQV = {
+  def inventory(stock: Ref[Entity], product: Ref[Product], dt: DateTime)(implicit db: DBSessionQueryable): ProductQV = {
     val base = new ProductSummaryQVBuffer()
     SummaryAccounts foreach { sa =>
-      sa.sum(stockID, productID, dt, base)
+      sa.sum(stock, product, dt, base)
     }
     import com.weez.mercury.common.Range._
     val day = dt.dayFloor
-    val range = StockAccountKey(stockID, productID, day, 0, 0) +-+ StockAccountKey(stockID, productID, day.plusDays(1), 0, 0)
+    val range = StockAccountKey(stock, product, day, RefEmpty, RefEmpty) +-+ StockAccountKey(stock, product, day.plusDays(1), RefEmpty, RefEmpty)
     val cur = this(range)
     try {
       while (cur.isValid) {
@@ -114,7 +114,7 @@ object StockAccount extends DataView[StockAccountKey, ProductQV] with NotMergeIn
 }
 
 @packable
-final case class StockSummaryAccountKey(stockID: Long, productID: Long, datetime: DateTime)
+final case class StockSummaryAccountKey(stock: Ref[Entity], product: Ref[Product], datetime: DateTime)
 
 @packable
 final case class ProductSummaryQV(quantityIn: Int, totalPriceIn: Int, quantityOut: Int, totalPriceOut: Int) extends CanMerge[ProductSummaryQV] {
@@ -204,20 +204,20 @@ class ProductSummaryQVBuffer {
 final class MappedPSQVBuffer {
   private val map = mutable.LongMap.empty[ProductSummaryQVBuffer]
 
-  def add(key: Long, qv: ProductSummaryQV): Unit = {
-    map.getOrElseUpdate(key, new ProductSummaryQVBuffer()) + qv
+  def add(key: Ref[Entity], qv: ProductSummaryQV): Unit = {
+    map.getOrElseUpdate(key.id, new ProductSummaryQVBuffer()) + qv
   }
 
-  def add(key: Long, qv: ProductQV): Unit = {
-    map.getOrElseUpdate(key, new ProductSummaryQVBuffer()) + qv
+  def add(key: Ref[Entity], qv: ProductQV): Unit = {
+    map.getOrElseUpdate(key.id, new ProductSummaryQVBuffer()) + qv
   }
 
-  def sub(key: Long, qv: ProductQV): Unit = {
-    map.getOrElseUpdate(key, new ProductSummaryQVBuffer()) - qv
+  def sub(key: Ref[Entity], qv: ProductQV): Unit = {
+    map.getOrElseUpdate(key.id, new ProductSummaryQVBuffer()) - qv
   }
 
   def toMap = {
-    map.mapValues(_.toQV).toMap[Long, ProductQV]
+    map.map { case (k, v) => (RefSome[Entity](k), v.toQV)}.toMap[Ref[Entity], ProductQV]
   }
 }
 
@@ -233,16 +233,16 @@ sealed abstract class StockSummaryAccount extends DataView[StockSummaryAccountKe
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val dt = dateFold(o.datetime)
-    val k = StockSummaryAccountKey(o.toStockID, o.productID, dt)
+    val k = StockSummaryAccountKey(o.toStock, o.product, dt)
     val v = ProductSummaryQV(o.quantity, o.totalValue, 0, 0)
-    val k2 = StockSummaryAccountKey(o.fromStockID, o.productID, dt)
+    val k2 = StockSummaryAccountKey(o.fromStock, o.product, dt)
     val v2 = ProductSummaryQV(0, 0, o.quantity, o.totalValue)
     (k, v) ::(k2, v2) :: Nil
   }
 
-  def sum(stockID: Long, productID: Long, dt: DateTime, buf: ProductSummaryQVBuffer)(implicit db: DBSessionQueryable): Unit = {
+  def sum(stock: Ref[Entity], product: Ref[Product], dt: DateTime, buf: ProductSummaryQVBuffer)(implicit db: DBSessionQueryable): Unit = {
     import com.weez.mercury.common.Range._
-    val range = StockSummaryAccountKey(stockID, productID, parentDateFold(dt)) +-- StockSummaryAccountKey(stockID, productID, dateFold(dt))
+    val range = StockSummaryAccountKey(stock, product, parentDateFold(dt)) +-- StockSummaryAccountKey(stock, product, dateFold(dt))
     for (kv <- this(range)) {
       buf + kv.value
     }
@@ -257,75 +257,76 @@ object StockMonthlyAccount extends StockSummaryAccount with MonthlyDateFold
 object StockYearlyAccount extends StockSummaryAccount with YearlyDateFold
 
 @packable
-final case class ProductAccountKey(productID: Long, datetime: DateTime, fromStockID: Long, toStockID: Long, bizRefID: Long)
+final case class ProductAccountKey(product: Ref[Product], datetime: DateTime,
+                                   fromStock: Ref[Entity], toStock: Ref[Entity], bizRef: Ref[Entity])
 
 object ProductAccount extends DataView[ProductAccountKey, ProductQV] with NotMergeInDB {
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
-    val k = ProductAccountKey(o.productID, o.datetime, o.fromStockID, o.toStockID, o.bizRefID)
+    val k = ProductAccountKey(o.product, o.datetime, o.fromStock, o.toStock, o.bizRef)
     val v = ProductQV(o.quantity, o.totalValue)
     (k, v) :: Nil
   }
 
   val SummaryAccounts = Seq(ProductDailyAccount, ProductYearlyAccount, ProductMonthlyAccount)
 
-  def inventory(productID: Long, dt: DateTime)(implicit db: DBSessionQueryable): ProductQV = {
+  def inventory(product: Ref[Product], dt: DateTime)(implicit db: DBSessionQueryable): ProductQV = {
     val buf = new ProductSummaryQVBuffer
     for (sa <- SummaryAccounts) {
-      sa.sum(productID, dt, buf)
+      sa.sum(product, dt, buf)
     }
     import com.weez.mercury.common.Range._
     val day = dt.dayFloor
-    val range = ProductAccountKey(productID, day, 0, 0, 0) +-+ ProductAccountKey(productID, day.plusDays(1), 0, 0, 0)
+    val range = ProductAccountKey(product, day, RefEmpty, RefEmpty, RefEmpty) --- ProductAccountKey(product, day.plusDays(1), RefEmpty, RefEmpty, RefEmpty)
     for (kv <- this(range)) {
       buf + kv.value
     }
     buf.toQV
   }
 
-  def inventoryByStock(productID: Long, dt: DateTime)(implicit db: DBSessionQueryable): Map[Long, ProductQV] = {
+  def inventoryByStock(product: Ref[Product], dt: DateTime)(implicit db: DBSessionQueryable): Map[Ref[Entity], ProductQV] = {
     val buf = new MappedPSQVBuffer
     for (sa <- SummaryAccounts) {
-      sa.sum(productID, dt, buf)
+      sa.sum(product, dt, buf)
     }
     import com.weez.mercury.common.Range._
     val day = dt.dayFloor
-    val range = ProductAccountKey(productID, day, 0, 0, 0) +-+ ProductAccountKey(productID, day.plusDays(1), 0, 0, 0)
+    val range = ProductAccountKey(product, day, RefEmpty, RefEmpty, RefEmpty) --- ProductAccountKey(product, day.plusDays(1), RefEmpty, RefEmpty, RefEmpty)
     for (kv <- this(range)) {
-      buf.add(kv.key.toStockID, kv.value)
-      buf.sub(kv.key.fromStockID, kv.value)
+      buf.add(kv.key.toStock, kv.value)
+      buf.sub(kv.key.fromStock, kv.value)
     }
     buf.toMap
   }
 }
 
 @packable
-final case class ProductSummaryAccountKey(productID: Long, datetime: DateTime, stockID: Long)
+final case class ProductSummaryAccountKey(product: Ref[Product], datetime: DateTime, stock: Ref[Entity])
 
 sealed abstract class ProductSummaryAccount extends DataView[ProductSummaryAccountKey, ProductSummaryQV] with DateFold {
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val dt = dateFold(o.datetime)
-    val k = ProductSummaryAccountKey(o.productID, dt, o.toStockID)
+    val k = ProductSummaryAccountKey(o.product, dt, o.toStock)
     val v = ProductSummaryQV(o.quantity, o.totalValue, 0, 0)
-    val k2 = ProductSummaryAccountKey(o.productID, dt, o.fromStockID)
+    val k2 = ProductSummaryAccountKey(o.product, dt, o.fromStock)
     val v2 = ProductSummaryQV(0, 0, o.quantity, o.totalValue)
     (k, v) ::(k2, v2) :: Nil
   }
 
-  def sum(productID: Long, dt: DateTime, buf: ProductSummaryQVBuffer)(implicit db: DBSessionQueryable): Unit = {
+  def sum(product: Ref[Product], dt: DateTime, buf: ProductSummaryQVBuffer)(implicit db: DBSessionQueryable): Unit = {
     import com.weez.mercury.common.Range._
-    val range = ProductSummaryAccountKey(productID, parentDateFold(dt), 0l) +-- ProductSummaryAccountKey(productID, dateFold(dt), 0)
+    val range = ProductSummaryAccountKey(product, parentDateFold(dt), RefEmpty) --- ProductSummaryAccountKey(product, dateFold(dt), RefEmpty)
     for (kv <- this(range)) {
       buf + kv.value
     }
   }
 
-  def sum(productID: Long, dt: DateTime, buf: MappedPSQVBuffer)(implicit db: DBSessionQueryable) = {
+  def sum(product: Ref[Product], dt: DateTime, buf: MappedPSQVBuffer)(implicit db: DBSessionQueryable) = {
     import com.weez.mercury.common.Range._
-    val range = ProductSummaryAccountKey(productID, parentDateFold(dt), 0l) +-- ProductSummaryAccountKey(productID, dateFold(dt), 0)
+    val range = ProductSummaryAccountKey(product, parentDateFold(dt), RefEmpty) --- ProductSummaryAccountKey(product, dateFold(dt), RefEmpty)
     for (kv <- this(range)) {
-      buf.add(kv.key.stockID, kv.value)
+      buf.add(kv.key.stock, kv.value)
     }
   }
 }
@@ -338,32 +339,32 @@ object ProductYearlyAccount extends ProductSummaryAccount with YearlyDateFold
 
 
 @packable
-final case class SingleProductAccountKey(serialNumber: String, datetime: DateTime, bizRefID: Long)
+final case class SingleProductAccountKey(serialNumber: String, datetime: DateTime, bizRef: Ref[Entity])
 
 @packable
-final case class SingleProductAccountValue(productID: Long, fromStockID: Long, toStockID: Long)
+final case class SingleProductAccountValue(product: Ref[Product], fromStock: Ref[Entity], toStock: Ref[Entity])
 
 object SingleProductAccount extends DataView[SingleProductAccountKey, SingleProductAccountValue] {
   extractFrom(SingleProductFlowDataBoard) { (o, db) =>
-    val k = SingleProductAccountKey(o.serialNumber, o.datetime, o.bizRefID)
-    val v = SingleProductAccountValue(o.productID, o.fromStockID, o.toStockID)
+    val k = SingleProductAccountKey(o.serialNumber, o.datetime, o.bizRef)
+    val v = SingleProductAccountValue(o.product, o.fromStock, o.toStock)
     (k, v) :: Nil
   }
 }
 
 @packable
-final case class SingleProductByStockInventoryKey(stockID: Long, productID: Long, datetime: DateTime, serialNumber: String)
+final case class SingleProductByStockInventoryKey(stock: Ref[Entity], product: Ref[Product], datetime: DateTime, serialNumber: String)
 
 @packable
-final case class SingleProductByStockInventoryValue(fromStockID: Long, bizRefID: Long)
+final case class SingleProductByStockInventoryValue(fromStock: Ref[Entity], bizRef: Ref[Entity])
 
 object SingleProductInventoryByStock extends DataView[SingleProductByStockInventoryKey, SingleProductByStockInventoryValue] {
   extractFrom(SingleProductFlowDataBoard) { (o, db) =>
     if (o.away) {
       List.empty
     } else {
-      val k = SingleProductByStockInventoryKey(o.toStockID, o.productID, o.datetime, o.serialNumber)
-      val v = SingleProductByStockInventoryValue(o.fromStockID, o.bizRefID)
+      val k = SingleProductByStockInventoryKey(o.toStock, o.product, o.datetime, o.serialNumber)
+      val v = SingleProductByStockInventoryValue(o.fromStock, o.bizRef)
       (k, v) :: Nil
     }
   }

@@ -11,6 +11,7 @@ package object imports extends com.github.nscala_time.time.Imports {
   type Entity = common.Entity
   type Ref[+T <: Entity] = common.Ref[T]
   val RefSome = common.RefSome
+  val RefEmpty = common.RefEmpty
   type EntityCollection[V <: Entity] = common.EntityCollection[V]
   type RootCollection[V <: Entity] = common.RootCollection[V]
   type DataView[K, V] = common.DataView[K, V]

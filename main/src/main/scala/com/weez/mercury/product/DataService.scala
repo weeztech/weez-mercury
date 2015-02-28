@@ -51,7 +51,7 @@ case class Product(code: String,
                    rentPrice: Int) extends Entity
 
 @packable
-case class SingleProductInfo(serialNumber: String, prevBizRefID: Long, nextBizRefID: Long)
+case class SingleProductInfo(serialNumber: String, prevBiz: Ref[Entity], nextBiz: Ref[Entity])
 
 object ProductCollection extends RootCollection[Product] {
   val byCode = defUniqueIndex("by-code", _.code)
@@ -113,7 +113,7 @@ case class RentOutProduct(datetime: DateTime,
 case class RentOutSingleProduct(datetime: DateTime,
                                 serialNumber: String,
                                 from: Ref[Warehouse],
-                                prevBizRefID: Long,
+                                prevBizRef: Ref[Entity],
                                 totalValue: Int,
                                 remark: String)
 
@@ -128,7 +128,7 @@ case class RentOutProductReturn(datetime: DateTime,
 case class RentOutSingleProductReturn(datetime: DateTime,
                                       serialNumber: String,
                                       to: Ref[Warehouse],
-                                      nextBizRefID: Long,
+                                      nextBizRef: Ref[Entity],
                                       totalValue: Int,
                                       remark: String)
 
@@ -187,33 +187,35 @@ object RentOutOrderCollection extends RootCollection[RentOutOrder] {
     result
   }
   extractTo(ProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     var result = List.empty[ProductFlow]
     for (p <- o.products) {
       for (out <- p.outs) {
-        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.quantity, out.totalValue)
+        result ::= ProductFlow(bizRef, out.datetime, out.from, o.customer, p.product, out.quantity, out.totalValue)
       }
       for (ret <- p.returns) {
-        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.quantity, ret.totalValue)
+        result ::= ProductFlow(bizRef, ret.datetime, o.customer, ret.to, p.product, ret.quantity, ret.totalValue)
       }
       for (out <- p.outSingles) {
-        result ::= ProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, 1, out.totalValue)
+        result ::= ProductFlow(bizRef, out.datetime, out.from, o.customer, p.product, 1, out.totalValue)
       }
       for (ret <- p.returnSingles) {
-        result ::= ProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, 1, ret.totalValue)
+        result ::= ProductFlow(bizRef, ret.datetime, o.customer, ret.to, p.product, 1, ret.totalValue)
       }
     }
     result
   }
   extractTo(SingleProductFlowDataBoard) { (o, db) =>
+    val bizRef = o.newRef()
     var result = List.empty[SingleProductFlow]
     for (p <- o.products) {
       for (out <- p.outSingles) {
-        result ::= SingleProductFlow(o.id, out.datetime, out.from.id, o.customer.id, p.product.id, out.serialNumber,
+        result ::= SingleProductFlow(bizRef, out.datetime, out.from, o.customer, p.product, out.serialNumber,
           out.totalValue, p.returnSingles.exists(_.serialNumber == out.serialNumber))
       }
       for (ret <- p.returnSingles) {
-        result ::= SingleProductFlow(o.id, ret.datetime, o.customer.id, ret.to.id, p.product.id, ret.serialNumber,
-          ret.totalValue, ret.nextBizRefID != 0l)
+        result ::= SingleProductFlow(bizRef, ret.datetime, o.customer, ret.to, p.product, ret.serialNumber,
+          ret.totalValue, ret.nextBizRef.isDefined)
       }
     }
     result

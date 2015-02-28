@@ -55,13 +55,13 @@ object Test {
   def testInit(call: String => Future[InstantResponse]) = {
     call("product.TestService.init").flatMap {
       case ModelResponse(_) =>
-        testBy(call)
+        testAccount(call)
     }
   }
 
   def testBy(call: String => Future[InstantResponse]) = {
     val p = Promise[ModelResponse]()
-    var tryTimes = 1000
+    var tryTimes = 10000
     val allStart = System.nanoTime()
     def doCall(): Unit = {
       call("product.TestService.buyProducts").onComplete {
@@ -84,7 +84,7 @@ object Test {
   def testAccount(call: String => Future[InstantResponse]) = {
     val tryTimes = new AtomicInteger(1000)
     val allStart = System.nanoTime()
-    val partials = new AtomicInteger(30)
+    val partials = new AtomicInteger(3)
     val p = Promise[ModelResponse]()
     def doCall(): Unit = {
       call("product.TestService.showProductAccount").onComplete {
@@ -279,7 +279,7 @@ object TestService extends RemoteService {
           totalValue = price * qty,
           remark = "product",
           singleProducts = items(qty) {
-            SingleProductInfo(randomSN(), 0, 0)
+            SingleProductInfo(randomSN(), RefEmpty, RefEmpty)
           }
         )
       }
@@ -289,19 +289,23 @@ object TestService extends RemoteService {
   }
   val showProductAccount: QueryCall = { c =>
     import c._
-    val invent = mutable.Map.empty[(Long, Long), ProductQV]
+    try{
+    val invent = mutable.Map.empty[(Ref[Entity],Ref[Product]), ProductQV]
     for (x <- 1 to 20) {
-      val pid = randomProduct().id
-      val sid = randomWarehouse().id
-      invent.getOrElseUpdate((sid, pid), {
-        StockAccount.inventory(sid, pid, datetime)
+      val product = randomProduct()
+      val stock = randomWarehouse()
+      invent.getOrElseUpdate((stock,product), {
+        StockAccount.inventory(stock,product, datetime)
       })
     }
     var account = List.empty[ModelObject]
-    for (((sid, pid), qv) <- invent) {
-      account ::= ModelObject("wh" -> WarehouseCollection(sid).get.title,
-        "product" -> ProductCollection(pid).get.title, "qty" -> qv.quantity)
+    for (((stock,product), qv) <- invent) {
+      account ::= ModelObject("wh" -> stock().asInstanceOf[Warehouse].title,
+        "product" -> product().title, "qty" -> qv.quantity)
     }
     complete(model("account" -> account))
+    }catch{
+      case e=> e.printStackTrace()
+    }
   }
 }

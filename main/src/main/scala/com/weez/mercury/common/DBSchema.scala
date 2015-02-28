@@ -12,7 +12,7 @@ object DBType {
   import shapeless._
 
   implicit val typeRefPacker: Packer[DBTypeRef] = Packer.poly[DBTypeRef,
-    String.type :: Int.type :: Long.type :: Double.type :: Boolean.type :: DateTime.type :: Raw.type ::
+    String.type :: Int.type :: Long.type :: Double.type :: Boolean.type :: DateTime.type :: Raw.type :: AbstractEntity.type ::
       Coll :: Tuple :: Ref :: Struct :: HNil].asInstanceOf[Packer[DBTypeRef]]
 
   sealed abstract class SimpleType(val typeCode: Int, name: String) extends DBType with DBTypeRef {
@@ -33,6 +33,8 @@ object DBType {
 
   object Raw extends SimpleType(7, "Raw")
 
+  object AbstractEntity extends SimpleType(10, "AbstractEntity")
+
   def fromTypeCode(typeCode: Int): SimpleType = {
     typeCode match {
       case String.typeCode => String
@@ -42,6 +44,7 @@ object DBType {
       case Boolean.typeCode => Boolean
       case DateTime.typeCode => DateTime
       case Raw.typeCode => Raw
+      case AbstractEntity.typeCode => AbstractEntity
     }
   }
 
@@ -250,7 +253,12 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
       val tType = tpe.baseType(traversableType.typeSymbol)
       DBType.Coll(getTypeRef(tType.typeArgs(0), tpe.typeSymbol.fullName))
     } else if (tpe <:< refType) {
-      DBType.Ref(getTypeRef(tpe.typeArgs.head, ref))
+      val entityTpe = tpe.typeArgs.head
+      if (entityTpe =:= entityType) {
+        DBType.Ref(DBType.AbstractEntity)
+      } else {
+        DBType.Ref(getTypeRef(entityTpe, ref))
+      }
     } else {
       resolvedStructTypes.get(tpe.typeSymbol.fullName) match {
         case Some(x) =>

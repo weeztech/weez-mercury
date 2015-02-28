@@ -54,6 +54,10 @@ object DTOHelper {
   }
 
   implicit final class RefHelper[E <: Entity](private val self: Ref[E]) extends AnyVal {
+    def asMO()(implicit db: DBSessionQueryable): ModelObject = {
+      asMO { (mo, o) =>}
+    }
+
     def asMO(f: (ModelObject, E) => Unit)(implicit db: DBSessionQueryable): ModelObject = {
       val mo = new ModelObject(Map.empty[String, Any])
       val e = {
