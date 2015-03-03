@@ -515,17 +515,25 @@ private object EntityCollections {
             host.update(value)
           }
 
-          override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
+          def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
             import Range._
-            Cursor[Long](Tuple1(getIndexID).asRange, forward = true).map(id => host.get1(id))
+            new RawKVCursor[V](Tuple1(getIndexID).asRange, forward = false) {
+              override def buildValue(): V = {
+                host.get1(Packer.of[Long].unapply(rawValue))
+              }
+            }
           }
 
-          override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
+          def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
             val r = if (canUse.shouldTuple)
               range.map(r => (getIndexID, Tuple1(r)))
             else
               range.map(r => (getIndexID, r))
-            Cursor[Long](r, forward).map(id => host.get1(id))
+            new RawKVCursor[V](r, forward) {
+              override def buildValue(): V = {
+                host.get1(Packer.of[Long].unapply(rawValue))
+              }
+            }
           }
         }
       }
@@ -545,17 +553,25 @@ private object EntityCollections {
             keyGetter(s, tracer).map(k => Tuple3(indexID, k, s.id)).toSet
           }
 
-          override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
+          def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
             import Range._
-            Cursor[Long](Tuple1(getIndexID).asRange, forward = true).map(id => host.get1(id))
+            new RawKVCursor[V](Tuple1(getIndexID).asRange, forward = true) {
+              override def buildValue(): V = {
+                host.get1(fullKeyPacker.unapply(rawKey)._3)
+              }
+            }
           }
 
-          override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
+          def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
             val r = if (canUse.shouldTuple)
               range.map(r => (getIndexID, Tuple1(r)))
             else
               range.map(r => (getIndexID, r))
-            Cursor[Long](r, forward).map(id => host.get1(id))
+            new RawKVCursor[V](r, forward) {
+              override def buildValue(): V = {
+                host.get1(fullKeyPacker.unapply(rawKey)._3)
+              }
+            }
           }
         }
       }
@@ -617,7 +633,11 @@ private object EntityCollections {
 
         override def apply()(implicit db: DBSessionQueryable): Cursor[V] = {
           import Range._
-          Cursor[Long]((rawIndex.getIndexID, owner.id).asRange, forward = true).map(id => subHost.get1(id).entity)
+          new RawKVCursor[V]((rawIndex.getIndexID, owner.id).asRange, forward = true) {
+            override def buildValue(): V = {
+              get1(Packer.of[Long].unapply(rawValue)).entity
+            }
+          }
         }
 
         override def apply[P: Packer](range: Range[P], forward: Boolean)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V] = {
@@ -625,7 +645,11 @@ private object EntityCollections {
             range.map(r => (rawIndex.getIndexID, owner.id, Tuple1(r)))
           else
             range.map(r => (rawIndex.getIndexID, owner.id, r))
-          Cursor[Long](r, forward).map(id => subHost.get1(id).entity)
+          new RawKVCursor[V](r, forward) {
+            override def buildValue(): V = {
+              get1(Packer.of[Long].unapply(rawValue)).entity
+            }
+          }
         }
       }
     }
@@ -649,7 +673,7 @@ private object EntityCollections {
           import Range._
           new RawKVCursor[V]((rawIndex.getIndexID, owner.id).asRange, forward = true) {
             override def buildValue(): V = {
-              subHost.get1(rawIndex.fullKeyPacker.unapply(rawKey)._4).entity
+              get1(rawIndex.fullKeyPacker.unapply(rawKey)._4).entity
             }
           }
         }
@@ -661,7 +685,7 @@ private object EntityCollections {
             range.map(r => (rawIndex.getIndexID, owner.id, r))
           new RawKVCursor[V](r, forward = true) {
             override def buildValue(): V = {
-              subHost.get1(rawIndex.fullKeyPacker.unapply(rawKey)._4).entity
+              get1(rawIndex.fullKeyPacker.unapply(rawKey)._4).entity
             }
           }
         }
