@@ -133,8 +133,8 @@ class DBTypeCollector(types: Map[String, Seq[Symbol]]) {
   val entityType = typeOf[Entity]
   val collType = typeOf[EntityCollection[_]]
   val rootCollType = typeOf[RootCollection[_]]
-  val indexBaseType = typeOf[IndexBase[_, _]]
-  val uniqueIndexType = typeOf[UniqueIndex[_, _]]
+  val indexBaseType = typeOf[View[_, _]]
+  val uniqueIndexType = typeOf[UniqueView[_, _]]
 
   def clear() = {
     resolvedMetas.clear()

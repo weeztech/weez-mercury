@@ -21,10 +21,10 @@ object DataService extends RemoteService {
   def availableRooms: QueryCall = c => {
     import c._
     val items = RoomCollection.byTitle().map { r =>
-      ModelObject("id" -> r.id,
-        "title" -> r.title,
-        "price" -> r.price,
-        "description" -> r.description)
+      ModelObject("id" -> r.value.id,
+        "title" -> r.value.title,
+        "price" -> r.value.price,
+        "description" -> r.value.description)
     }
     complete(model("items" -> items))
   }
@@ -32,12 +32,12 @@ object DataService extends RemoteService {
   def availableDevices: QueryCall = c => {
     import c._
     val keyword: String = request.keywords
-    val items = ProductCollection.byTitle().filter(_.title.indexOf(keyword) >= 0)
+    val items = ProductCollection.byTitle().filter(_.value.title.indexOf(keyword) >= 0)
       .drop(request.start).take(request.count).map { pm =>
-      ModelObject("id" -> pm.id,
-        "title" -> pm.code,
-        "title" -> pm.title,
-        "description" -> pm.description)
+      ModelObject("id" -> pm.value.id,
+        "title" -> pm.value.code,
+        "title" -> pm.value.title,
+        "description" -> pm.value.description)
     }
     complete(model("items" -> items))
   }

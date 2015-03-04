@@ -22,6 +22,7 @@ trait Context {
 }
 
 trait RemoteCallContext extends Context with RangeImplicits {
+
   import akka.event.LoggingAdapter
 
   implicit val context: this.type = this
@@ -103,39 +104,22 @@ trait DBSessionUpdatable extends DBSessionQueryable {
   def del[K: Packer](key: K): Unit
 }
 
-trait IndexBase[K, V] {
+final case class KeyValue[K, V](key: K, value: V)
+
+trait View[K, V] {
 
   import com.weez.mercury.macros.TuplePrefixed
 
-  def apply()(implicit db: DBSessionQueryable): Cursor[V]
+  def apply()(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]]
 
-  def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[V]
+  def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[KeyValue[K, V]]
 }
 
-/**
- * RootCollection.Index : (indexID:Int, userKey: K, entityID: Long) -> Long
- * SubCollection.Index : (indexID:Int, ownerID: Long, userKey: K, entityID: Long) -> Long
- * @tparam K Key
- * @tparam V Entity
- */
-trait Index[K, V <: Entity] extends IndexBase[K, V]
-
-
-/**
- * RootCollection.UniqueIndex : (indexID:Int, userKey: K) ->Long
- * SubCollection.UniqueIndex : (indexID:Int, ownerID: Long, userKey: K) -> Long
- * @tparam K Key
- * @tparam V Entity
- */
-trait UniqueIndex[K, V <: Entity] extends IndexBase[K, V] {
+trait UniqueView[K, V] extends View[K, V] {
   self =>
   def apply(key: K)(implicit db: DBSessionQueryable): Option[V]
 
   def contains(key: K)(implicit db: DBSessionQueryable): Boolean
-
-  def delete(key: K)(implicit db: DBSessionUpdatable): Unit
-
-  def update(value: V)(implicit db: DBSessionUpdatable): Unit
 }
 
 trait Ref[+T <: Entity] extends Equals {
@@ -208,62 +192,22 @@ trait EntityCollection[V <: Entity] {
 
   def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity]
 
-  protected def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V]
+  protected def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueView[K, V]
 
-  protected def defUniqueIndexEx[K: Packer](name: String)(getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V]
+  protected def defUniqueIndexEx[K: Packer](name: String)(getKey: (V, DBSessionQueryable) => Set[K]): UniqueView[K, V]
 
-  protected def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V]
+  protected def defIndex[K: Packer](name: String, getKey: V => K): View[K, V]
 
-  protected def defIndexEx[K: Packer](name: String)(getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V]
-
-  @inline protected[common] final def extractTo[D](dataBoard: DataBoard[D])(f: (V, DBSessionQueryable) => Seq[D]): Unit = newEntity2DataBoardExtractor(this, dataBoard.impl, f)
-
-  @inline protected[common] final def extractTo[DK, DV](dataView: DataView[DK, DV])(f: (V, DBSessionQueryable) => Map[DK, DV]): Unit = newEntity2DataViewExtractor(this, dataView.impl, f)
+  protected def defIndexEx[K: Packer](name: String)(getKeys: (V, DBSessionQueryable) => Set[K]): View[K, V]
 }
 
 object Collections {
 
   def entity(id: Long)(implicit db: DBSessionQueryable): Option[Entity] = getEntityO[Entity](id)
 
-  def scanFX(word: String)(implicit db: DBSessionQueryable): Cursor[Entity] = FullTextSearchIndex.scan(word, null.asInstanceOf[HostCollectionImpl[Entity]])
+  def scanFX(word: String)(implicit db: DBSessionQueryable): Cursor[Entity] = FullTextSearchIndex.scan(word, null.asInstanceOf[RootCollectionImpl[Entity]])
 
-  def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity] = RefReverseIndex.scan(id, null.asInstanceOf[HostCollectionImpl[Entity]])
-}
-
-
-trait SubEntityPair[O <: Entity, V <: Entity] extends Entity {
-  val owner: Ref[O]
-  val entity: V
-}
-
-abstract class SubCollection[O <: Entity, V <: Entity : Packer](ownerRef: Ref[O]) extends EntityCollection[V] {
-  def this(owner: O) = this(owner.newRef())
-
-  @inline final def insert(value: V)(implicit db: DBSessionUpdatable): Long = host.insert(ownerRef, value)
-
-  @inline final def update(value: V)(implicit db: DBSessionUpdatable): Unit = host.update(ownerRef, value)
-
-  @inline final def delete(value: V)(implicit db: DBSessionUpdatable): Unit = host.delete(value.id)
-
-  @inline final def apply(word: String)(implicit db: DBSessionQueryable): Cursor[V] = FullTextSearchIndex.scan(word, host).map(v => v.entity)
-
-  @inline final def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[V] = RefReverseIndex.scan(id, host).map(e => e.entity)
-
-  @inline final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = host.defUniqueIndex[K](ownerRef, name, getKey)
-
-  @inline final def defUniqueIndexEx[K: Packer](name: String)(getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V] = host.defUniqueIndexEx[K](ownerRef, name, getKey)
-
-  @inline final def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V] = host.defIndex[K](ownerRef, name, getKey)
-
-  @inline final def defIndexEx[K: Packer](name: String)(getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V] = host.defIndexEx[K](ownerRef, name, getKeys)
-
-  @inline final def addListener(listener: EntityCollectionListener[SubEntityPair[O, V]]) = host.addListener(listener)
-
-  @inline final def removeListener(listener: EntityCollectionListener[SubEntityPair[O, V]]) = host.removeListener(listener)
-
-  @inline final override def newEntityID()(implicit db: DBSessionUpdatable): Long = host.newEntityID()
-
-  private[common] lazy val host = forSubCollection[O, V](this)
+  def scanRefers(id: Long)(implicit db: DBSessionQueryable): Cursor[Entity] = RefReverseIndex.scan(id, null.asInstanceOf[RootCollectionImpl[Entity]])
 }
 
 abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] {
@@ -294,18 +238,24 @@ abstract class RootCollection[V <: Entity : Packer] extends EntityCollection[V] 
 
   @inline final def removeListener(listener: EntityCollectionListener[V]) = impl.removeListener(listener)
 
-  @inline protected final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueIndex[K, V] = impl.defUniqueIndex(name, getKey)
+  @inline protected final def defUniqueIndex[K: Packer](name: String, getKey: V => K): UniqueView[K, V] = impl.defUniqueIndex(name, getKey)
 
-  @inline protected final def defUniqueIndexEx[K: Packer](name: String)(getKey: (V, DBSessionQueryable) => Set[K]): UniqueIndex[K, V] = impl.defUniqueIndexEx(name, getKey)
+  @inline protected final def defUniqueIndexEx[K: Packer](name: String)(getKey: (V, DBSessionQueryable) => Set[K]): UniqueView[K, V] = impl.defUniqueIndexEx(name, getKey)
 
-  @inline protected final def defIndexEx[K: Packer](name: String)(getKeys: (V, DBSessionQueryable) => Set[K]): Index[K, V] = impl.defIndexEx[K](name, getKeys)
+  @inline protected final def defIndexEx[K: Packer](name: String)(getKeys: (V, DBSessionQueryable) => Set[K]): View[K, V] = impl.defIndexEx[K](name, getKeys)
 
-  @inline protected final def defIndex[K: Packer](name: String, getKey: V => K): Index[K, V] = impl.defIndex[K](name, getKey)
+  @inline protected final def defIndex[K: Packer](name: String, getKey: V => K): View[K, V] = impl.defIndex[K](name, getKey)
 
-  private[common] val impl = newHost[V](this)
+  @inline protected[common] final def extractTo[D](dataBoard: DataBoard[D])(f: (V, DBSessionQueryable) => Seq[D]): Unit = new Entity2DataBoardExtractor(impl, dataBoard.impl, f)
+
+  @inline protected[common] final def extractTo[DK, DV](dataView: DataView[DK, DV])(f: (V, DBSessionQueryable) => Map[DK, DV]): Unit = new Entity2DataViewExtractor(impl, dataView.impl, f)
+
+  private[common] val impl = RootCollectionImpl[V](this)
 }
 
-final case class KeyValue[K, V](key: K, value: V)
+trait FullTextSupport {
+  self: RootCollection[_] =>
+}
 
 trait CanMerge[Repr <: CanMerge[Repr]] extends Equals {
   def isEmpty: Boolean
@@ -319,32 +269,33 @@ trait CanMerge[Repr <: CanMerge[Repr]] extends Equals {
 
 import scala.reflect.runtime.universe._
 
-trait NotMergeInDB
-
 @collect
-abstract class DataView[K: Packer, V: Packer : TypeTag] {
+abstract class DataView[K: Packer, V: Packer : TypeTag] extends UniqueView[K, V] {
 
   import com.weez.mercury.macros.TuplePrefixed
 
-  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]] = apply(forward = true)
-
-  @inline final def apply(forward: Boolean)(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]] = impl(forward)
-
-  @inline final def get(key: K)(implicit db: DBSessionQueryable): Option[KeyValue[K, V]] = impl(key)
+  @inline final def apply(key: K)(implicit db: DBSessionQueryable): Option[V] = impl.get(key)
 
   @inline final def contains(key: K)(implicit db: DBSessionQueryable): Boolean = impl.contains(key)
 
+  @inline final def apply()(implicit db: DBSessionQueryable): Cursor[KeyValue[K, V]] = impl()
+
   @inline final def apply[P: Packer](range: Range[P], forward: Boolean = true)(implicit db: DBSessionQueryable, canUse: TuplePrefixed[K, P]): Cursor[KeyValue[K, V]] = impl(range, forward)
 
-  @inline protected final def extractFrom[E <: Entity](collection: EntityCollection[E])(f: (E, DBSessionQueryable) => Map[K, V]) = collection.extractTo(this)(f)
+
+  @inline protected final def extractFrom[E <: Entity](collection: RootCollection[E])(f: (E, DBSessionQueryable) => Map[K, V]) = collection.extractTo(this)(f)
 
   @inline protected final def extractFrom[D](dataBoard: DataBoard[D])(f: (D, DBSessionQueryable) => Seq[(K, V)]): Unit = new DataBoard2DataViewExtractor(dataBoard.impl, impl, f)
 
-  private[common] val impl = newDataView[K, V](this)
+  private[common] val impl = DataViewImpl[K, V](this)
+}
+
+trait NoMergeInDB {
+  self: DataView[_, _] =>
 }
 
 abstract class DataBoard[D] {
-  @inline protected final def extractFrom[E <: Entity](collection: EntityCollection[E])(f: (E, DBSessionQueryable) => Seq[D]) = collection.extractTo(this)(f)
+  @inline protected final def extractFrom[E <: Entity](collection: RootCollection[E])(f: (E, DBSessionQueryable) => Seq[D]) = collection.extractTo(this)(f)
 
   @inline protected final def extractTo[DK, DV](dataView: DataView[DK, DV])(f: (D, DBSessionQueryable) => Seq[(DK, DV)]): Unit = new DataBoard2DataViewExtractor(impl, dataView.impl, f)
 

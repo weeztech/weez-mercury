@@ -1,6 +1,5 @@
 package com.weez.mercury.product
 
-import com.weez.mercury.common.{NotMergeInDB, RefSome}
 import com.weez.mercury.imports._
 import com.weez.mercury.common.Range._
 import com.weez.mercury.common.DTOHelper._
@@ -82,7 +81,7 @@ final case class ProductQV(quantity: Int,
 }
 
 
-object StockAccount extends DataView[StockAccountKey, ProductQV] with NotMergeInDB {
+object StockAccount extends DataView[StockAccountKey, ProductQV] with NoMergeInDB {
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val k = StockAccountKey(o.toStock, o.product, o.datetime, o.fromStock, o.bizRef)
@@ -260,7 +259,7 @@ object StockYearlyAccount extends StockSummaryAccount with YearlyDateFold
 final case class ProductAccountKey(product: Ref[Product], datetime: DateTime,
                                    fromStock: Ref[Entity], toStock: Ref[Entity], bizRef: Ref[Entity])
 
-object ProductAccount extends DataView[ProductAccountKey, ProductQV] with NotMergeInDB {
+object ProductAccount extends DataView[ProductAccountKey, ProductQV] with NoMergeInDB {
 
   extractFrom(ProductFlowDataBoard) { (o, db) =>
     val k = ProductAccountKey(o.product, o.datetime, o.fromStock, o.toStock, o.bizRef)

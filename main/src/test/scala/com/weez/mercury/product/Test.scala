@@ -211,7 +211,7 @@ object TestService extends RemoteService {
     initCustomers(c)
     initProviders(c)
     initProducts(c)
-    datetime = MaxProductFlowDate.get(true).map(_.value.dt).getOrElse {
+    datetime = MaxProductFlowDate(true).map(_.value.dt).getOrElse {
       new DateTime
     }
     complete(model())
@@ -289,23 +289,19 @@ object TestService extends RemoteService {
   }
   val showProductAccount: QueryCall = { c =>
     import c._
-    try{
-    val invent = mutable.Map.empty[(Ref[Entity],Ref[Product]), ProductQV]
+    val invent = mutable.Map.empty[(Ref[Entity], Ref[Product]), ProductQV]
     for (x <- 1 to 20) {
       val product = randomProduct()
       val stock = randomWarehouse()
-      invent.getOrElseUpdate((stock,product), {
-        StockAccount.inventory(stock,product, datetime)
+      invent.getOrElseUpdate((stock, product), {
+        StockAccount.inventory(stock, product, datetime)
       })
     }
     var account = List.empty[ModelObject]
-    for (((stock,product), qv) <- invent) {
+    for (((stock, product), qv) <- invent) {
       account ::= ModelObject("wh" -> stock().asInstanceOf[Warehouse].title,
         "product" -> product().title, "qty" -> qv.quantity)
     }
     complete(model("account" -> account))
-    }catch{
-      case e=> e.printStackTrace()
-    }
   }
 }

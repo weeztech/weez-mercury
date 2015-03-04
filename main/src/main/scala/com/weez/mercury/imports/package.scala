@@ -17,11 +17,10 @@ package object imports extends com.github.nscala_time.time.Imports {
   type DataView[K, V] = common.DataView[K, V]
   type DataBoard[D] = common.DataBoard[D]
   type CanMerge[Repr <: CanMerge[Repr]] = common.CanMerge[Repr]
-  type NotMergeInDB = common.NotMergeInDB
-  type IndexBase[K, V] = common.IndexBase[K, V]
-  type Index[K, V <: Entity] = common.Index[K, V]
-  type UniqueIndex[K, V <: Entity] = common.UniqueIndex[K, V]
-  type SubCollection[O <: Entity, V <: Entity] = common.SubCollection[O, V]
+  type NoMergeInDB = common.NoMergeInDB
+  type FullTextSupport = common.FullTextSupport
+  type View[K, V] = common.View[K, V]
+  type UniqueView[K, V <: Entity] = common.UniqueView[K, V]
   type collect = common.collect
   type ModelObject = common.ModelObject
   val ModelObject = common.ModelObject
